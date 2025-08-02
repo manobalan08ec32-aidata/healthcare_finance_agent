@@ -71,6 +71,9 @@ class AgentState(TypedDict):
             'original_question': '',
             'current_question': '',
             
+            # Question history
+            'user_questions_history': [],
+            
             # Current state
             'current_agent': None,
             'previous_agent': None,

@@ -240,11 +240,6 @@ def extract_step_details(node_name, node_state):
         if node_state.get('selection_confidence'):
             details.append(f"Confidence: {node_state['selection_confidence']:.1%}")
     
-    elif node_name == 'sql_generator_agent':
-        details.append("Generating SQL for 'what' question")
-        if node_state.get('selected_dataset'):
-            details.append(f"Using: {node_state['selected_dataset'].split('.')[-1]}")
-    
     elif node_name == 'root_cause_agent':
         details.append("Analyzing 'why' question")
         if node_state.get('current_question'):
@@ -276,12 +271,6 @@ def extract_step_results(node_name, node_state):
             'reasoning': node_state.get('selection_reasoning', '')[:100] + '...' if node_state.get('selection_reasoning') else ''
         }
     
-    elif node_name == 'sql_generator_agent':
-        results = {
-            'sql_generated': bool(node_state.get('generated_sql')),
-            'has_results': bool(node_state.get('query_results'))
-        }
-    
     elif node_name == 'root_cause_agent':
         results = {
             'analysis_completed': bool(node_state.get('root_cause_analysis')),
@@ -308,9 +297,7 @@ def add_final_response():
         last_step = st.session_state.workflow_steps[-1]
         agent_name = last_step.get('agent')
         
-        if agent_name == 'sql_generator_agent':
-            content = "✅ **SQL Analysis Complete!**\n\nGenerated SQL query and retrieved results for your 'what' question."
-        elif agent_name == 'root_cause_agent':
+        if agent_name == 'root_cause_agent':
             content = "✅ **Root Cause Analysis Complete!**\n\nAnalyzed the underlying causes for your 'why' question."
         elif agent_name == 'router_agent':
             dataset = last_step.get('results', {}).get('selected_dataset', 'Unknown')

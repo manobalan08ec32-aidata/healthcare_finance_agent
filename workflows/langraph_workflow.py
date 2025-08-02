@@ -34,7 +34,6 @@ class HealthcareFinanceWorkflow:
         # Add nodes
         workflow.add_node("navigation_controller", self._navigation_controller_node)
         workflow.add_node("router_agent", self._router_agent_node)
-        workflow.add_node("sql_generator_agent", self._sql_generator_node)
         workflow.add_node("root_cause_agent", self._root_cause_node)
         workflow.add_node("user_clarification", self._user_clarification_node)
         workflow.add_node("workflow_complete", self._workflow_complete_node)
@@ -42,13 +41,12 @@ class HealthcareFinanceWorkflow:
         # Set entry point
         workflow.set_entry_point("navigation_controller")
         
-        # Navigation routes to three possible agents
+        # Navigation routes to two possible agents based on question type
         workflow.add_conditional_edges(
             "navigation_controller",
             self._route_from_navigation,
             {
                 "router_agent": "router_agent",
-                "sql_generator_agent": "sql_generator_agent", 
                 "root_cause_agent": "root_cause_agent"
             }
         )
@@ -65,7 +63,6 @@ class HealthcareFinanceWorkflow:
         )
         
         # Other nodes complete the workflow
-        workflow.add_edge("sql_generator_agent", "workflow_complete")
         workflow.add_edge("root_cause_agent", "workflow_complete")
         workflow.add_edge("user_clarification", "workflow_complete")
         workflow.add_edge("workflow_complete", END)
@@ -75,7 +72,7 @@ class HealthcareFinanceWorkflow:
     # ============ NODE IMPLEMENTATIONS ============
     
     def _navigation_controller_node(self, state: AgentState) -> AgentState:
-        """Navigation Controller: Question rewriting + routing"""
+        """Navigation Controller: Question rewriting + simple routing"""
         
         print(f"\n🧭 Navigation Controller: Processing question")
         
@@ -83,7 +80,7 @@ class HealthcareFinanceWorkflow:
             # Process user query
             nav_result = self.nav_controller.process_user_query(state)
             
-            # Update state
+            # Update state with results
             state.update({
                 'current_agent': 'navigation_controller',
                 'current_question': nav_result['rewritten_question'],
@@ -91,7 +88,14 @@ class HealthcareFinanceWorkflow:
                 'next_agent': nav_result['next_agent']
             })
             
-            print(f"  ✅ Question: {nav_result['rewritten_question']}")
+            # Add rewritten question to history (using Annotated append)
+            state = {
+                **state,
+                'user_questions_history': nav_result['rewritten_question']
+            }
+            
+            print(f"  ✅ Original: {state.get('original_question', '')}")
+            print(f"  ✅ Rewritten: {nav_result['rewritten_question']}")
             print(f"  ✅ Type: {nav_result['question_type']}")
             print(f"  ✅ Next Agent: {nav_result['next_agent']}")
             
@@ -146,23 +150,6 @@ class HealthcareFinanceWorkflow:
             print(f"  ❌ Router failed: {str(e)}")
             state['errors'].append(f"Router error: {str(e)}")
             return state
-    
-    def _sql_generator_node(self, state: AgentState) -> AgentState:
-        """SQL Generator Agent: Generate and execute SQL for 'what' questions"""
-        
-        print(f"\n🔧 SQL Generator: Creating query")
-        
-        # Placeholder for Phase 2
-        state.update({
-            'current_agent': 'sql_generator_agent',
-            'generated_sql': f"-- SQL for: {state['current_question']}\n-- Using: {state.get('selected_dataset', 'unknown_table')}",
-            'query_results': "Mock results for what question"
-        })
-        
-        print(f"  ✅ SQL generated for 'what' question")
-        print(f"  ✅ Dataset: {state.get('selected_dataset', 'unknown')}")
-        
-        return state
     
     def _root_cause_node(self, state: AgentState) -> AgentState:
         """Root Cause Agent: Analyze 'why' questions"""
@@ -224,13 +211,14 @@ class HealthcareFinanceWorkflow:
     # ============ ROUTING FUNCTIONS ============
     
     def _route_from_navigation(self, state: AgentState) -> str:
-        """Route from navigation based on next_agent decision"""
+        """Route from navigation based on question type"""
         
+        question_type = state.get('question_type', 'what')
         next_agent = state.get('next_agent', 'router_agent')
         
-        print(f"  🔀 Navigation routing to: {next_agent}")
+        print(f"  🔀 Navigation routing: {question_type} → {next_agent}")
         
-        if next_agent in ['router_agent', 'sql_generator_agent', 'root_cause_agent']:
+        if next_agent in ['router_agent', 'root_cause_agent']:
             return next_agent
         else:
             return 'router_agent'  # Fallback

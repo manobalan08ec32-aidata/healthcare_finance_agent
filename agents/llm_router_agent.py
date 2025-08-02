@@ -4,118 +4,246 @@ from state_schema import AgentState
 from databricks_client import DatabricksClient
 
 class LLMRouterAgent:
-    """LLM-powered dataset selection agent with intelligent reasoning"""
+    """Simplified router agent with direct vector search and LLM selection"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
         
     def select_dataset(self, state: AgentState) -> Dict[str, any]:
-        """Intelligent dataset selection using LLM reasoning"""
+        """Simplified dataset selection: Direct vector search → LLM selection"""
         
-        # 1. Get vector search results
-        search_results = self._perform_intelligent_vector_search(state)
+        user_question = state['user_question']
         
-        # 2. Use LLM to analyze and select optimal dataset
+        print(f"🔍 Step 1: Direct vector search for: '{user_question}'")
+        
+        # 1. Direct vector search with user question
+        search_results = self._direct_vector_search(user_question)
+        
+        if not search_results:
+            raise Exception("No datasets found in vector search")
+        
+        print(f"  → Found {len(search_results)} datasets")
+        
+        # 2. LLM selection from search results
+        print(f"🧠 Step 2: LLM dataset selection from top results")
         selection_result = self._llm_dataset_selection(search_results, state)
         
-        # 3. Validate selection and provide alternatives
-        validation_result = self._validate_and_enhance_selection(selection_result, state)
+        # 3. Check if result is ambiguous (needs user clarification)
+        if selection_result.get('requires_clarification', False):
+            print(f"❓ Step 3: Ambiguous result - preparing for user clarification")
+            return self._prepare_clarification_interrupt(selection_result, search_results, state)
         
-        return validation_result
+        print(f"✅ Step 3: Clear selection made")
+        return selection_result
     
-    def _perform_intelligent_vector_search(self, state: AgentState) -> List[Dict]:
-        """Use LLM to create optimal search queries for vector search"""
+    def _direct_vector_search(self, user_question: str, num_results: int = 5) -> List[Dict]:
+        """Direct vector search against specified index"""
         
-        search_query_prompt = f"""
-        Healthcare Finance Vector Search Query Generation:
+        try:
+            # Direct call to vector search with user's exact question
+            search_results = self.db_client.vector_search_tables(
+                query_text=user_question,
+                num_results=num_results
+            )
+            
+            # Parse table_kg JSON if it exists
+            for result in search_results:
+                if result.get('table_kg'):
+                    try:
+                        result['table_kg_parsed'] = json.loads(result['table_kg'])
+                    except json.JSONDecodeError:
+                        result['table_kg_parsed'] = {}
+                else:
+                    result['table_kg_parsed'] = {}
+            
+            return search_results
+            
+        except Exception as e:
+            raise Exception(f"Vector search failed: {str(e)}")
+    
+    def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
+        """Use LLM to select best dataset from search results"""
+        
+        # Prepare dataset information for LLM
+        dataset_options = []
+        for i, result in enumerate(search_results):
+            
+            # Extract column information
+            columns_info = result.get('table_kg_parsed', {}).get('columns', [])
+            
+            dataset_info = {
+                'rank': i + 1,
+                'table_name': result.get('table_name'),
+                'description': result.get('content', ''),
+                'column_count': len(columns_info),
+                'key_columns': [col.get('column_name', 'Unknown') for col in columns_info[:8]],
+                'sample_data_types': list(set([col.get('data_type', 'Unknown') for col in columns_info[:10]]))
+            }
+            
+            dataset_options.append(dataset_info)
+        
+        selection_prompt = f"""
+        Healthcare Finance Dataset Selection Task:
         
         User Question: "{state['user_question']}"
         
-        Context:
-        - Question Type: {state.get('flow_type', 'Unknown')}
-        - Previous Dataset: {state.get('selected_dataset', 'None')}
-        - Analysis Complexity: {state.get('complexity_level', 'Unknown')}
-        - Comparison Intent: {state.get('comparison_intent', 'None')}
+        Available Datasets (from vector search): {json.dumps(dataset_options, indent=2)}
         
-        You need to generate optimal search queries to find the best healthcare finance datasets.
+        Previous Context: {state.get('context_from_previous_query', 'None')}
+        User Preferences: {state.get('user_preferences', {})}
         
-        Available domain knowledge:
-        - Claims transaction data (member-level pharmacy/medical claims)
-        - Financial ledger data (budgets, forecasts, variances)
-        - Operational metrics (provider networks, utilization)
-        - Member demographics and enrollment
+        Analyze each dataset's suitability for answering the user's question.
         
-        Generate 2-3 search queries that will find the most relevant datasets:
-        1. Primary search - most directly relevant
-        2. Secondary search - broader context or related data
-        3. Fallback search - alternative perspective if needed
+        SELECTION CRITERIA:
+        1. RELEVANCE: How directly can this dataset answer the question?
+        2. COMPLETENESS: Does it have necessary data elements?
+        3. HEALTHCARE FINANCE FIT: Appropriate for the domain?
         
-        Consider:
-        - Semantic variations of user's intent
-        - Healthcare finance terminology
-        - Domain-specific synonyms
-        - Technical vs business language
+        CLARITY ASSESSMENT:
+        - If ONE dataset is clearly best (confidence >85%): Select it
+        - If multiple datasets could work equally well: Mark as ambiguous
         
         Respond with JSON:
         {{
-            "search_queries": [
-                {{
-                    "query_text": "specific search query text",
-                    "purpose": "what this search aims to find",
-                    "weight": 0.7
-                }}
+            "clear_selection": true/false,
+            "selected_dataset": "table_name" or null,
+            "selection_confidence": 0.95,
+            "selection_reasoning": "detailed explanation",
+            "requires_clarification": true/false,
+            "ambiguous_options": [
+                {{"table_name": "option1", "use_case": "when this would be better"}},
+                {{"table_name": "option2", "use_case": "when this would be better"}}
             ],
-            "search_strategy": "explanation of search approach",
-            "expected_dataset_types": ["type1", "type2"]
+            "clarification_question": "What specific aspect are you most interested in?"
         }}
         """
         
         try:
             llm_response = self.db_client.call_claude_api([
-                {"role": "user", "content": search_query_prompt}
+                {"role": "user", "content": selection_prompt}
             ])
             
-            search_config = json.loads(llm_response)
+            selection_result = json.loads(llm_response)
             
-            # Execute multiple searches and combine results
-            all_results = []
+            # Add metadata from search results
+            if selection_result.get('selected_dataset'):
+                selected_table = selection_result['selected_dataset']
+                selected_metadata = next(
+                    (ds for ds in search_results if ds['table_name'] == selected_table),
+                    search_results[0] if search_results else {}
+                )
+                
+                selection_result['dataset_metadata'] = {
+                    'table_name': selected_metadata.get('table_name'),
+                    'description': selected_metadata.get('content'),
+                    'table_kg': selected_metadata.get('table_kg'),
+                    'columns': selected_metadata.get('table_kg_parsed', {})
+                }
             
-            print(f"🔍 Executing {len(search_config['search_queries'])} intelligent searches...")
+            # Add all search results for reference
+            selection_result['available_datasets'] = search_results
             
-            for i, search_query in enumerate(search_config['search_queries'], 1):
-                try:
-                    print(f"  Search {i}: {search_query['query_text']}")
-                    
-                    # 🎯 ACTUAL VECTOR SEARCH CALL HERE
-                    results = self.db_client.vector_search_tables(
-                        search_query['query_text'], 
-                        num_results=3
-                    )
-                    
-                    print(f"    → Found {len(results)} datasets")
-                    
-                    # Add search metadata to results
-                    for result in results:
-                        result['search_purpose'] = search_query['purpose']
-                        result['search_weight'] = search_query['weight']
-                        result['search_query'] = search_query['query_text']
-                        
-                        # Add to consolidated results
-                        all_results.append(result)
-                    
-                except Exception as e:
-                    print(f"    ❌ Search query failed: {search_query['query_text']} - {e}")
-                    continue
+            return selection_result
             
-            # Remove duplicates and return top results
-            unique_results = self._deduplicate_search_results(all_results)
-            return unique_results[:5]  # Top 5 unique results
-            
+        except json.JSONDecodeError as e:
+            # Fallback to first result if LLM parsing fails
+            return self._fallback_selection(search_results, state)
         except Exception as e:
-            # Fallback to simple search
-            return self._fallback_vector_search(state)
+            raise Exception(f"LLM dataset selection failed: {str(e)}")
     
-    def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
+    def _prepare_clarification_interrupt(self, selection_result: Dict, search_results: List[Dict], 
+                                       state: AgentState) -> Dict:
+        """Prepare data for LangGraph interrupt to ask user for clarification"""
+        
+        ambiguous_options = selection_result.get('ambiguous_options', [])
+        clarification_question = selection_result.get('clarification_question', 
+                                                    "Which dataset would you prefer?")
+        
+        # Prepare user-friendly options
+        user_options = []
+        for option in ambiguous_options:
+            table_name = option.get('table_name')
+            use_case = option.get('use_case')
+            
+            # Find full metadata for this option
+            full_metadata = next(
+                (ds for ds in search_results if ds['table_name'] == table_name),
+                {}
+            )
+            
+            user_options.append({
+                'option_id': len(user_options) + 1,
+                'table_name': table_name,
+                'display_name': table_name.split('.')[-1],  # Show just table name
+                'use_case': use_case,
+                'description': full_metadata.get('content', '')[:150] + '...',
+                'column_count': len(full_metadata.get('table_kg_parsed', {}).get('columns', []))
+            })
+        
+        return {
+            'requires_clarification': True,
+            'clarification_question': clarification_question,
+            'user_options': user_options,
+            'selection_reasoning': selection_result.get('selection_reasoning'),
+            'available_datasets': search_results,
+            'interrupt_data': {
+                'type': 'dataset_clarification',
+                'question': clarification_question,
+                'options': user_options
+            }
+        }
+    
+    def process_user_clarification(self, user_choice: Dict, available_datasets: List[Dict]) -> Dict:
+        """Process user's clarification choice and return final selection"""
+        
+        selected_option_id = user_choice.get('option_id')
+        selected_table_name = user_choice.get('table_name')
+        
+        # Find the selected dataset
+        selected_metadata = next(
+            (ds for ds in available_datasets if ds['table_name'] == selected_table_name),
+            None
+        )
+        
+        if not selected_metadata:
+            raise Exception(f"Selected dataset {selected_table_name} not found")
+        
+        return {
+            'selected_dataset': selected_table_name,
+            'dataset_metadata': {
+                'table_name': selected_metadata.get('table_name'),
+                'description': selected_metadata.get('content'),
+                'table_kg': selected_metadata.get('table_kg'),
+                'columns': selected_metadata.get('table_kg_parsed', {})
+            },
+            'selection_confidence': 1.0,  # User made the choice
+            'selection_reasoning': f"User selected option {selected_option_id}: {selected_table_name}",
+            'user_clarified': True,
+            'available_datasets': available_datasets
+        }
+    
+    def _fallback_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
+        """Fallback selection when LLM fails"""
+        
+        if not search_results:
+            raise Exception("No datasets available for selection")
+        
+        # Select first result as fallback
+        selected = search_results[0]
+        
+        return {
+            'selected_dataset': selected.get('table_name'),
+            'selection_confidence': 0.6,
+            'selection_reasoning': 'Fallback selection - first available dataset',
+            'dataset_metadata': {
+                'table_name': selected.get('table_name'),
+                'description': selected.get('content'),
+                'table_kg': selected.get('table_kg', '{}'),
+                'columns': selected.get('table_kg_parsed', {})
+            },
+            'requires_clarification': False,
+            'available_datasets': search_results
+        }
         """Use LLM to intelligently select the best dataset"""
         
         # Prepare dataset information for LLM analysis
@@ -450,4 +578,3 @@ if __name__ == "__main__":
             
     print("\n" + "="*50)
     print("LLM Router Agent Testing Complete")
-                

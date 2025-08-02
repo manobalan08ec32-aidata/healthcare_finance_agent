@@ -24,87 +24,46 @@ class HealthcareFinanceWorkflow:
         self.app = self.workflow.compile(checkpointer=memory)
     
     def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow with nodes and edges"""
+        """Build the LangGraph workflow - Phase 1: Navigation + Router only"""
         
         # Create the graph
         workflow = StateGraph(AgentState)
         
-        # Add nodes (agents)
+        # Add Phase 1 nodes only
         workflow.add_node("navigation_controller", self._navigation_controller_node)
         workflow.add_node("router_agent", self._router_agent_node)
-        workflow.add_node("sql_template_agent", self._sql_template_agent_node)
-        workflow.add_node("sql_agent", self._sql_agent_node)
-        workflow.add_node("variance_detection_agent", self._variance_detection_agent_node)
-        workflow.add_node("root_cause_agent", self._root_cause_agent_node)
-        workflow.add_node("follow_up_agent", self._follow_up_agent_node)
-        workflow.add_node("memory_management", self._memory_management_node)
+        workflow.add_node("phase1_summary", self._phase1_summary_node)
         
         # Set entry point
         workflow.set_entry_point("navigation_controller")
         
-        # Add conditional edges based on routing decisions
+        # Simple Phase 1 flow: Navigation → Router → Summary → END
         workflow.add_conditional_edges(
             "navigation_controller",
-            self._route_from_navigation,
+            self._route_from_navigation_phase1,
             {
                 "router_agent": "router_agent",
-                "sql_template_agent": "sql_template_agent", 
-                "sql_agent": "sql_agent",
-                "variance_detection_agent": "variance_detection_agent",
-                "memory_management": "memory_management"
+                "phase1_summary": "phase1_summary"
             }
         )
         
-        # Router agent routes to SQL template agent
-        workflow.add_edge("router_agent", "sql_template_agent")
-        
-        # SQL template agent routes to SQL agent
-        workflow.add_edge("sql_template_agent", "sql_agent")
-        
-        # SQL agent can route to variance detection or follow-up
+        # Router agent can route to summary or require user input
         workflow.add_conditional_edges(
-            "sql_agent",
-            self._route_from_sql_agent,
+            "router_agent",
+            self._route_from_router_agent,
             {
-                "variance_detection_agent": "variance_detection_agent",
-                "follow_up_agent": "follow_up_agent",
+                "phase1_summary": "phase1_summary",
+                "user_clarification": "user_clarification",
                 "END": END
             }
         )
         
-        # Variance detection routes to root cause or follow-up
-        workflow.add_conditional_edges(
-            "variance_detection_agent", 
-            self._route_from_variance_detection,
-            {
-                "root_cause_agent": "root_cause_agent",
-                "follow_up_agent": "follow_up_agent",
-                "END": END
-            }
-        )
+        # Add user clarification node for dataset selection
+        workflow.add_node("user_clarification", self._user_clarification_node)
+        workflow.add_edge("user_clarification", "phase1_summary")
         
-        # Root cause agent routes to follow-up
-        workflow.add_edge("root_cause_agent", "follow_up_agent")
-        
-        # Follow-up agent ends or waits for user input
-        workflow.add_conditional_edges(
-            "follow_up_agent",
-            self._route_from_follow_up,
-            {
-                "END": END,
-                "navigation_controller": "navigation_controller"  # User selects follow-up
-            }
-        )
-        
-        # Memory management can end or route back
-        workflow.add_conditional_edges(
-            "memory_management",
-            self._route_from_memory_management,
-            {
-                "router_agent": "router_agent",
-                "END": END
-            }
-        )
+        # Summary node ends the workflow
+        workflow.add_edge("phase1_summary", END)
         
         return workflow
     
@@ -144,26 +103,43 @@ class HealthcareFinanceWorkflow:
             return state
     
     def _router_agent_node(self, state: AgentState) -> AgentState:
-        """Router Agent Node - Dataset selection"""
+        """Router Agent Node - Dataset selection with clarification support"""
         
         print(f"🎯 Router Agent: Selecting dataset for analysis")
         
         try:
             selection_result = self.router_agent.select_dataset(state)
             
-            # Update state with dataset selection
+            # Check if clarification is needed (interrupt workflow)
+            if selection_result.get('requires_clarification'):
+                print(f"  ❓ Clarification needed from user")
+                
+                # Set up interrupt data
+                state.update({
+                    'current_agent': 'router_agent',
+                    'previous_agent': state.get('current_agent'),
+                    'requires_user_input': True,
+                    'clarification_data': selection_result.get('interrupt_data'),
+                    'pending_selection_result': selection_result
+                })
+                
+                # Return state that will trigger interrupt
+                return state
+            
+            # Normal dataset selection completed
             state.update({
                 'current_agent': 'router_agent',
                 'previous_agent': state.get('current_agent'),
                 'selected_dataset': selection_result['selected_dataset'],
                 'dataset_metadata': selection_result['dataset_metadata'],
-                'selection_reasoning': selection_result['expert_reasoning'],
+                'selection_reasoning': selection_result['selection_reasoning'],
                 'available_datasets': selection_result.get('available_datasets', []),
-                'selection_confidence': selection_result.get('final_confidence', 0.8)
+                'selection_confidence': selection_result.get('selection_confidence', 0.8),
+                'requires_user_input': False
             })
             
             print(f"  → Selected: {selection_result['selected_dataset']}")
-            print(f"  → Confidence: {selection_result.get('final_confidence', 0.8):.1%}")
+            print(f"  → Confidence: {selection_result.get('selection_confidence', 0.8):.1%}")
             
             return state
             
@@ -176,253 +152,192 @@ class HealthcareFinanceWorkflow:
             state['last_error'] = str(e)
             return state
     
-    def _sql_template_agent_node(self, state: AgentState) -> AgentState:
-        """SQL Template Agent Node - Find existing SQL patterns"""
+    def process_user_clarification(self, user_choice: Dict, state: AgentState) -> AgentState:
+        """Process user's dataset clarification choice"""
         
-        print(f"📋 SQL Template Agent: Finding SQL patterns")
+        print(f"👤 Processing user clarification: {user_choice}")
         
         try:
-            # TODO: Implement SQL template search
-            # For now, placeholder implementation
+            pending_result = state.get('pending_selection_result', {})
+            available_datasets = pending_result.get('available_datasets', [])
+            
+            # Process the user's choice
+            final_selection = self.router_agent.process_user_clarification(
+                user_choice, available_datasets
+            )
+            
+            # Update state with final selection
             state.update({
-                'current_agent': 'sql_template_agent',
-                'previous_agent': state.get('current_agent'),
-                'sql_templates': [],  # Will be populated when implemented
-                'selected_template': None
+                'selected_dataset': final_selection['selected_dataset'],
+                'dataset_metadata': final_selection['dataset_metadata'],
+                'selection_reasoning': final_selection['selection_reasoning'],
+                'selection_confidence': final_selection['selection_confidence'],
+                'user_clarified': True,
+                'requires_user_input': False,
+                'clarification_data': None,
+                'pending_selection_result': None
             })
             
-            print(f"  → Templates found: 0 (placeholder - to be implemented)")
+            print(f"  ✅ User selected: {final_selection['selected_dataset']}")
             
             return state
             
         except Exception as e:
             state['errors'].append({
-                'agent': 'sql_template_agent',
-                'error': str(e), 
+                'agent': 'user_clarification',
+                'error': str(e),
                 'timestamp': self._get_timestamp()
             })
             return state
+    
+    # Remove unused nodes for Phase 1
+    def _sql_template_agent_node(self, state: AgentState) -> AgentState:
+        """Placeholder - Phase 2"""
+        return state
     
     def _sql_agent_node(self, state: AgentState) -> AgentState:
-        """SQL Agent Node - Generate and execute SQL"""
-        
-        print(f"💻 SQL Agent: Generating and executing SQL")
-        
-        try:
-            # TODO: Implement SQL generation and execution
-            # For now, placeholder implementation
-            state.update({
-                'current_agent': 'sql_agent',
-                'previous_agent': state.get('current_agent'),
-                'generated_sql': "-- Placeholder SQL to be generated",
-                'execution_status': 'pending',
-                'query_results': None
-            })
-            
-            print(f"  → SQL generated (placeholder)")
-            print(f"  → Execution status: pending")
-            
-            return state
-            
-        except Exception as e:
-            state['errors'].append({
-                'agent': 'sql_agent',
-                'error': str(e),
-                'timestamp': self._get_timestamp()
-            })
-            state['execution_status'] = 'failed'
-            return state
+        """Placeholder - Phase 2"""
+        return state
     
     def _variance_detection_agent_node(self, state: AgentState) -> AgentState:
-        """Variance Detection Agent Node - Analyze for significant variances"""
-        
-        print(f"📊 Variance Detection Agent: Analyzing results")
-        
-        try:
-            # TODO: Implement variance detection logic
-            # For now, placeholder implementation
-            state.update({
-                'current_agent': 'variance_detection_agent',
-                'previous_agent': state.get('current_agent'),
-                'variance_detected': False,  # Will be calculated when implemented
-                'variance_percentage': None,
-                'threshold_exceeded': False,
-                'requires_root_cause': False
-            })
-            
-            print(f"  → Variance detected: {state['variance_detected']}")
-            
-            return state
-            
-        except Exception as e:
-            state['errors'].append({
-                'agent': 'variance_detection_agent',
-                'error': str(e),
-                'timestamp': self._get_timestamp()
-            })
-            return state
+        """Placeholder - Phase 2"""
+        return state
     
     def _root_cause_agent_node(self, state: AgentState) -> AgentState:
-        """Root Cause Agent Node - Investigate variance causes"""
-        
-        print(f"🔍 Root Cause Agent: Investigating causes")
-        
-        try:
-            # TODO: Implement root cause analysis
-            # For now, placeholder implementation
-            state.update({
-                'current_agent': 'root_cause_agent',
-                'previous_agent': state.get('current_agent'),
-                'root_cause_steps': [],
-                'root_cause_findings': None,
-                'knowledge_graph_used': None
-            })
-            
-            print(f"  → Root cause analysis completed (placeholder)")
-            
-            return state
-            
-        except Exception as e:
-            state['errors'].append({
-                'agent': 'root_cause_agent',
-                'error': str(e),
-                'timestamp': self._get_timestamp()
-            })
-            return state
+        """Placeholder - Phase 3"""
+        return state
     
     def _follow_up_agent_node(self, state: AgentState) -> AgentState:
-        """Follow-up Agent Node - Generate next questions"""
-        
-        print(f"❓ Follow-up Agent: Generating suggestions")
-        
-        try:
-            # TODO: Implement follow-up question generation
-            # For now, placeholder implementation
-            state.update({
-                'current_agent': 'follow_up_agent',
-                'previous_agent': state.get('current_agent'),
-                'suggested_questions': [
-                    "Would you like to see a breakdown by time period?",
-                    "Shall we analyze by different dimensions?",
-                    "Do you want to investigate root causes?"
-                ],
-                'follow_up_context': {}
-            })
-            
-            print(f"  → Generated {len(state['suggested_questions'])} follow-up questions")
-            
-            return state
-            
-        except Exception as e:
-            state['errors'].append({
-                'agent': 'follow_up_agent',
-                'error': str(e),
-                'timestamp': self._get_timestamp()
-            })
-            return state
+        """Placeholder - Phase 3"""
+        return state
     
     def _memory_management_node(self, state: AgentState) -> AgentState:
-        """Memory Management Node - Clean up and preserve insights"""
+        """Placeholder - Future"""
+        return state
+    
+    def _phase1_summary_node(self, state: AgentState) -> AgentState:
+        """Phase 1 Summary Node - Summarize navigation and dataset selection"""
         
-        print(f"🧠 Memory Management: Processing memory actions")
+        print(f"📋 Phase 1 Summary: Completing analysis")
         
         try:
-            memory_actions = state.get('routing_decision', {}).get('memory_actions', {})
-            memory_action = memory_actions.get('memory_action', 'PRESERVE_ALL')
+            # Prepare summary of Phase 1 execution
+            routing_decision = state.get('routing_decision', {})
+            selected_dataset = state.get('selected_dataset')
+            selection_reasoning = state.get('selection_reasoning', '')
             
-            if memory_action == 'EXTRACT_INSIGHTS_AND_CLEAR':
-                # Extract insights before clearing
-                insights = self._extract_insights(state)
-                state['context_from_previous_query'] = insights
-                
-                # Clear transient data
-                transient_keys = ['query_results', 'sql_attempts', 'root_cause_steps']
-                for key in transient_keys:
-                    if key in state:
-                        del state[key]
-                        
-            elif memory_action == 'START_FRESH':
-                # Clear everything except core session info
-                preserve_keys = ['session_id', 'user_id', 'user_question', 'conversation_history', 'user_preferences']
-                new_state = {key: state[key] for key in preserve_keys if key in state}
-                state.clear()
-                state.update(new_state)
+            summary = {
+                'phase': 'Phase 1 Complete',
+                'question_analyzed': state.get('user_question'),
+                'flow_type': routing_decision.get('flow_type'),
+                'routing_confidence': routing_decision.get('confidence', 0.0),
+                'selected_dataset': selected_dataset,
+                'selection_confidence': state.get('selection_confidence', 0.0),
+                'next_phase_ready': bool(selected_dataset),
+                'recommendation': self._generate_phase1_recommendation(state)
+            }
             
             state.update({
-                'current_agent': 'memory_management',
-                'previous_agent': state.get('current_agent')
+                'current_agent': 'phase1_summary',
+                'previous_agent': state.get('current_agent'),
+                'phase1_summary': summary,
+                'workflow_complete': True
             })
             
-            print(f"  → Memory action: {memory_action}")
+            print(f"  ✅ Question Type: {summary['flow_type']}")
+            print(f"  ✅ Dataset Selected: {selected_dataset}")
+            print(f"  ✅ Ready for Phase 2: {summary['next_phase_ready']}")
             
             return state
             
         except Exception as e:
             state['errors'].append({
-                'agent': 'memory_management',
+                'agent': 'phase1_summary',
                 'error': str(e),
                 'timestamp': self._get_timestamp()
             })
             return state
     
-    # ============ ROUTING FUNCTIONS ============
+    def _generate_phase1_recommendation(self, state: AgentState) -> str:
+        """Generate recommendation for next steps"""
+        
+        flow_type = state.get('routing_decision', {}).get('flow_type')
+        selected_dataset = state.get('selected_dataset')
+        
+        if not selected_dataset:
+            return "⚠️  Dataset selection failed. Review question or try rephrasing."
+        
+        if flow_type == 'descriptive':
+            return "🎯 Ready for SQL generation to answer your 'what' question."
+        elif flow_type == 'analytical':
+            return "🔍 Ready for SQL execution and variance analysis for your 'why' question."
+        elif flow_type == 'comparative':
+            return "📊 Ready for comparison analysis with dynamic time period handling."
+        else:
+            return "🚀 Ready to proceed with SQL generation and analysis."
     
-    def _route_from_navigation(self, state: AgentState) -> str:
-        """Route from navigation controller based on decision"""
+    # ============ SIMPLIFIED ROUTING FUNCTIONS FOR PHASE 1 ============
+    
+    def _user_clarification_node(self, state: AgentState) -> AgentState:
+        """User Clarification Node - Handle dataset selection clarification"""
+        
+        print(f"❓ User Clarification: Waiting for user input")
+        
+        # This node will be called after user provides clarification
+        # The actual user input processing should happen before this node is reached
+        
+        state.update({
+            'current_agent': 'user_clarification',
+            'previous_agent': state.get('current_agent')
+        })
+        
+        print(f"  → User clarification processed")
+        
+        return state
+    
+    def _route_from_router_agent(self, state: AgentState) -> str:
+        """Route from router agent - handle clarification needs"""
+        
+        requires_user_input = state.get('requires_user_input', False)
+        has_selected_dataset = bool(state.get('selected_dataset'))
+        has_errors = len(state.get('errors', [])) > 0
+        
+        if has_errors:
+            print(f"  🔀 Router routing: END (errors occurred)")
+            return "END"
+        elif requires_user_input:
+            print(f"  🔀 Router routing: user_clarification (needs user input)")
+            return "user_clarification"  
+    def _route_from_navigation_phase1(self, state: AgentState) -> str:
+        """Simplified routing from navigation controller for Phase 1"""
         
         routing_decision = state.get('routing_decision', {})
         next_agent = routing_decision.get('next_agent', 'router_agent')
         
-        print(f"  🔀 Navigation routing: {next_agent}")
-        return next_agent
-    
-    def _route_from_sql_agent(self, state: AgentState) -> str:
-        """Route from SQL agent based on execution results and question type"""
-        
-        execution_status = state.get('execution_status')
-        flow_type = state.get('flow_type')
-        
-        if execution_status == 'failed':
-            return 'END'
-        elif flow_type == 'analytical' or 'why' in state.get('user_question', '').lower():
-            return 'variance_detection_agent'
+        # For Phase 1, we only support router_agent path
+        if next_agent == 'router_agent':
+            print(f"  🔀 Navigation routing: router_agent")
+            return "router_agent"
         else:
-            return 'follow_up_agent'
+            print(f"  🔀 Navigation routing: {next_agent} → router_agent (Phase 1 limitation)")
+            return "router_agent"
+    
+    # Remove unused routing functions for Phase 1
+    def _route_from_sql_agent(self, state: AgentState) -> str:
+        """Placeholder - Phase 2"""
+        return 'END'
     
     def _route_from_variance_detection(self, state: AgentState) -> str:
-        """Route from variance detection based on threshold analysis"""
-        
-        threshold_exceeded = state.get('threshold_exceeded', False)
-        requires_root_cause = state.get('requires_root_cause', False)
-        
-        if threshold_exceeded or requires_root_cause:
-            return 'root_cause_agent'
-        else:
-            return 'follow_up_agent'
+        """Placeholder - Phase 2"""
+        return 'END'
     
     def _route_from_follow_up(self, state: AgentState) -> str:
-        """Route from follow-up based on user selection"""
-        
-        user_selected = state.get('user_selected_followup')
-        
-        if user_selected:
-            # User selected a follow-up question - start new analysis
-            state['user_question'] = user_selected
-            state['user_selected_followup'] = None
-            return 'navigation_controller'
-        else:
-            return 'END'
+        """Placeholder - Phase 3"""
+        return 'END'
     
     def _route_from_memory_management(self, state: AgentState) -> str:
-        """Route from memory management"""
-        
-        routing_decision = state.get('routing_decision', {})
-        special_instructions = routing_decision.get('special_instructions', {})
-        
-        if special_instructions.get('dataset_selection_needed', False):
-            return 'router_agent'
-        else:
-            return 'END'
+        """Placeholder - Future"""
+        return 'END'
     
     # ============ UTILITY FUNCTIONS ============
     

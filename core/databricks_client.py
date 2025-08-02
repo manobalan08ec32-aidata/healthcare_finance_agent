@@ -58,7 +58,26 @@ class DatabricksClient:
         except Exception as e:
             raise Exception(f"Unexpected error in SQL execution: {str(e)}")
     
-    def vector_search_tables(self, query_text: str, num_results: int = 5) -> List[Dict]:
+    def vector_search_tables(self, query_text: str, num_results: int = 5, index_name: str = None) -> List[Dict]:
+        """Search table chunks using vector search with configurable index"""
+        
+        # Use provided index or default
+        search_index = index_name if index_name else self.VECTOR_TBL_INDEX
+        
+        sql_query = f"""
+        SELECT table_name, table_summary as content, table_kg 
+        FROM VECTOR_SEARCH(
+            index => '{search_index}',
+            query_text => '{query_text.replace("'", "''")}',
+            num_results => {num_results}
+        )
+        """
+        
+        try:
+            results = self.execute_sql(sql_query)
+            return results
+        except Exception as e:
+            raise Exception(f"Vector search failed: {str(e)}")_tables(self, query_text: str, num_results: int = 5) -> List[Dict]:
         """Search table chunks using vector search"""
         
         sql_query = f"""

@@ -64,14 +64,15 @@ def main():
         display_sidebar_info()
 
 def display_chat_interface(workflow):
-    """Display the main chat interface"""
+    """Display the main chat interface with proper layout"""
     
-    # Chat container
-    chat_container = st.container()
+    # Chat messages container (scrollable)
+    st.subheader("💬 Conversation")
     
-    with chat_container:
-        st.subheader("💬 Conversation")
-        
+    # Create a container for chat messages with fixed height
+    chat_messages_container = st.container()
+    
+    with chat_messages_container:
         # Display chat history
         if st.session_state.chat_history:
             for i, message in enumerate(st.session_state.chat_history):
@@ -80,9 +81,41 @@ def display_chat_interface(workflow):
             # Welcome message
             st.info("👋 Welcome! Ask me about healthcare finance data, claims analysis, or financial variances.")
     
-    # Input area (always at bottom)
+    # Add some space before input
+    st.markdown("<br>" * 2, unsafe_allow_html=True)
+    
+    # Input area - always at bottom using columns for better layout
     st.markdown("---")
-    display_chat_input(workflow)
+    
+    # Check if waiting for clarification
+    waiting_for_clarification = any(
+        msg.get('type') == 'clarification' and not msg.get('resolved', False)
+        for msg in st.session_state.chat_history
+    )
+    
+    if waiting_for_clarification:
+        st.warning("⏳ Please respond to the clarification request above before asking a new question.")
+    else:
+        # Create input form for better UX
+        with st.form(key="chat_form", clear_on_submit=True):
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                user_input = st.text_input(
+                    "Type your question...",
+                    placeholder="e.g., Why are Q3 pharmacy claims 15% higher than forecast?",
+                    key="chat_input_field"
+                )
+            
+            with col2:
+                # Add some vertical space to align button
+                st.markdown("<br>", unsafe_allow_html=True)
+                send_button = st.form_submit_button("Send 📤", type="primary")
+            
+            # Process user input
+            if send_button and user_input:
+                process_user_message(user_input, workflow)
+                st.rerun()
 
 def display_chat_message(message, index):
     """Display a single chat message"""
@@ -183,35 +216,8 @@ def display_clarification_message(message, index):
                     handle_clarification_response(option, index)
 
 def display_chat_input(workflow):
-    """Display chat input area"""
-    
-    # Check if waiting for clarification
-    waiting_for_clarification = any(
-        msg.get('type') == 'clarification' and not msg.get('resolved', False)
-        for msg in st.session_state.chat_history
-    )
-    
-    if waiting_for_clarification:
-        st.warning("⏳ Please respond to the clarification request above before asking a new question.")
-        return
-    
-    # Chat input
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        user_input = st.text_input(
-            "Type your question...",
-            placeholder="e.g., Why are Q3 pharmacy claims 15% higher than forecast?",
-            key="chat_input"
-        )
-    
-    with col2:
-        send_button = st.button("Send 📤", type="primary")
-    
-    # Process user input
-    if send_button and user_input:
-        process_user_message(user_input, workflow)
-        st.rerun()
+    """Display chat input area - REMOVED (now integrated into display_chat_interface)"""
+    pass  # This function is no longer needed
 
 def process_user_message(user_message: str, workflow):
     """Process user message and execute workflow"""

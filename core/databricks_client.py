@@ -43,18 +43,46 @@ class DatabricksClient:
             
             result = response.json()
             
-            # Extract data from Databricks response format
-            if 'result' in result and 'data_array' in result['result']:
-                columns = [col['name'] for col in result['result']['manifest']['schema']['columns']]
-                rows = result['result']['data_array']
+            # Debug: Print response structure
+            print(f"Databricks response keys: {result.keys()}")
+            
+            # Handle different response formats
+            if 'result' in result:
+                result_data = result['result']
                 
-                # Convert to list of dictionaries
-                return [dict(zip(columns, row)) for row in rows]
+                # Check for data_array format
+                if 'data_array' in result_data and 'manifest' in result_data:
+                    columns = [col['name'] for col in result_data['manifest']['schema']['columns']]
+                    rows = result_data['data_array']
+                    return [dict(zip(columns, row)) for row in rows]
+                
+                # Check for alternative format
+                elif 'data_array' in result_data:
+                    # Try without manifest
+                    rows = result_data['data_array']
+                    if rows and isinstance(rows[0], list):
+                        # Generate generic column names
+                        columns = [f'col_{i}' for i in range(len(rows[0]))]
+                        return [dict(zip(columns, row)) for row in rows]
+                    else:
+                        return rows if isinstance(rows, list) else []
+                
+                # Check for rows format
+                elif 'data' in result_data:
+                    return result_data['data']
+                
+                else:
+                    print(f"Unknown result format: {result_data.keys()}")
+                    return []
+            
             else:
+                print(f"No 'result' key in response: {result.keys()}")
                 return []
                 
         except requests.exceptions.RequestException as e:
             raise Exception(f"SQL execution failed: {str(e)}")
+        except KeyError as e:
+            raise Exception(f"Unexpected response format: Missing key {str(e)}")
         except Exception as e:
             raise Exception(f"Unexpected error in SQL execution: {str(e)}")
     
@@ -183,13 +211,32 @@ class DatabricksClient:
             return None
     
     def test_connection(self) -> bool:
-        """Test Databricks connection"""
+        """Test Databricks connection with better error handling"""
         
         try:
+            # Simple test query
             test_sql = "SELECT 1 as test_column"
             results = self.execute_sql(test_sql)
-            return len(results) > 0 and results[0]['test_column'] == 1
             
+            # Check if we got any results
+            if results and len(results) > 0:
+                # Check if result contains our test value
+                first_result = results[0]
+                test_value = None
+                
+                # Try different possible column names
+                if 'test_column' in first_result:
+                    test_value = first_result['test_column']
+                elif 'col_0' in first_result:
+                    test_value = first_result['col_0']
+                elif len(first_result) > 0:
+                    test_value = list(first_result.values())[0]
+                
+                return test_value == 1
+            else:
+                print("No results returned from test query")
+                return False
+                
         except Exception as e:
             print(f"Connection test failed: {str(e)}")
             return False

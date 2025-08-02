@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 import json
-from state_schema import AgentState
-from databricks_client import DatabricksClient
+from core.state_schema import AgentState
+from core.databricks_client import DatabricksClient
 
 class LLMRouterAgent:
     """Simplified router agent with direct vector search and LLM selection"""
@@ -12,7 +12,11 @@ class LLMRouterAgent:
     def select_dataset(self, state: AgentState) -> Dict[str, any]:
         """Simplified dataset selection: Direct vector search → LLM selection"""
         
-        user_question = state['user_question']
+        # Get user question from current_question (not user_question)
+        user_question = state.get('current_question', state.get('user_question', ''))
+        
+        if not user_question:
+            raise Exception("No user question found in state")
         
         print(f"🔍 Step 1: Direct vector search for: '{user_question}'")
         
@@ -62,24 +66,16 @@ class LLMRouterAgent:
             raise Exception(f"Vector search failed: {str(e)}")
     
     def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
-        """Use LLM to select best dataset from search results"""
+        """Use LLM to select best dataset from search results - simplified version"""
         
-        # Prepare dataset information for LLM
+        # Prepare simplified dataset information for LLM (only table_name and content)
         dataset_options = []
         for i, result in enumerate(search_results):
-            
-            # Extract column information
-            columns_info = result.get('table_kg_parsed', {}).get('columns', [])
-            
             dataset_info = {
                 'rank': i + 1,
                 'table_name': result.get('table_name'),
-                'description': result.get('content', ''),
-                'column_count': len(columns_info),
-                'key_columns': [col.get('column_name', 'Unknown') for col in columns_info[:8]],
-                'sample_data_types': list(set([col.get('data_type', 'Unknown') for col in columns_info[:10]]))
+                'description': result.get('content', '')
             }
-            
             dataset_options.append(dataset_info)
         
         selection_prompt = f"""
@@ -92,11 +88,11 @@ class LLMRouterAgent:
         Previous Context: {state.get('context_from_previous_query', 'None')}
         User Preferences: {state.get('user_preferences', {})}
         
-        Analyze each dataset's suitability for answering the user's question.
+        Analyze each dataset's suitability for answering the user's question based on the table name and description.
         
         SELECTION CRITERIA:
         1. RELEVANCE: How directly can this dataset answer the question?
-        2. COMPLETENESS: Does it have necessary data elements?
+        2. COMPLETENESS: Does the description suggest it has necessary data elements?
         3. HEALTHCARE FINANCE FIT: Appropriate for the domain?
         
         CLARITY ASSESSMENT:
@@ -578,3 +574,4 @@ if __name__ == "__main__":
             
     print("\n" + "="*50)
     print("LLM Router Agent Testing Complete")
+                

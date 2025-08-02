@@ -9,7 +9,7 @@ from core.llm_navigation_controller import LLMNavigationController
 from core.llm_router_agent import LLMRouterAgent
 
 class HealthcareFinanceWorkflow:
-    """Clean LangGraph workflow - Phase 1: Navigation + Router only"""
+    """Simplified LangGraph workflow with streaming support"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
@@ -26,244 +26,239 @@ class HealthcareFinanceWorkflow:
         self.app = self.workflow.compile(checkpointer=memory)
     
     def _build_workflow(self) -> StateGraph:
-        """Build the LangGraph workflow - Phase 1: Navigation + Router only"""
+        """Build the simplified workflow"""
         
         # Create the graph
         workflow = StateGraph(AgentState)
         
-        # Add Phase 1 nodes only
+        # Add nodes
         workflow.add_node("navigation_controller", self._navigation_controller_node)
         workflow.add_node("router_agent", self._router_agent_node)
+        workflow.add_node("sql_generator_agent", self._sql_generator_node)
+        workflow.add_node("root_cause_agent", self._root_cause_node)
         workflow.add_node("user_clarification", self._user_clarification_node)
-        workflow.add_node("phase1_summary", self._phase1_summary_node)
+        workflow.add_node("workflow_complete", self._workflow_complete_node)
         
         # Set entry point
         workflow.set_entry_point("navigation_controller")
         
-        # Simple Phase 1 flow: Navigation → Router → Summary → END
+        # Navigation routes to three possible agents
         workflow.add_conditional_edges(
             "navigation_controller",
-            self._route_from_navigation_phase1,
+            self._route_from_navigation,
             {
                 "router_agent": "router_agent",
-                "phase1_summary": "phase1_summary"
+                "sql_generator_agent": "sql_generator_agent", 
+                "root_cause_agent": "root_cause_agent"
             }
         )
         
-        # Router agent can route to summary or require user input
+        # Router agent can complete or require clarification
         workflow.add_conditional_edges(
             "router_agent",
-            self._route_from_router_agent,
+            self._route_from_router,
             {
-                "phase1_summary": "phase1_summary",
+                "workflow_complete": "workflow_complete",
                 "user_clarification": "user_clarification",
                 "END": END
             }
         )
         
-        # Add user clarification node for dataset selection
-        workflow.add_edge("user_clarification", "phase1_summary")
-        
-        # Summary node ends the workflow
-        workflow.add_edge("phase1_summary", END)
+        # Other nodes complete the workflow
+        workflow.add_edge("sql_generator_agent", "workflow_complete")
+        workflow.add_edge("root_cause_agent", "workflow_complete")
+        workflow.add_edge("user_clarification", "workflow_complete")
+        workflow.add_edge("workflow_complete", END)
         
         return workflow
     
     # ============ NODE IMPLEMENTATIONS ============
     
     def _navigation_controller_node(self, state: AgentState) -> AgentState:
-        """Navigation Controller Node"""
+        """Navigation Controller: Question rewriting + routing"""
         
-        agent_name = "navigation_controller"
-        start_time = time.time()
-        
-        print(f"🧭 Navigation Controller: Analyzing '{state['current_question']}'")
+        print(f"\n🧭 Navigation Controller: Processing question")
         
         try:
-            # Execute navigation controller
-            routing_decision = self.nav_controller.route_user_query(state)
+            # Process user query
+            nav_result = self.nav_controller.process_user_query(state)
             
-            # Update state with routing information
+            # Update state
             state.update({
-                'current_agent': agent_name,
-                'previous_agent': state.get('current_agent'),
-                'flow_type': routing_decision['flow_type'],
-                'transition_type': routing_decision.get('transition_type'),
-                'routing_decision': routing_decision
+                'current_agent': 'navigation_controller',
+                'current_question': nav_result['rewritten_question'],
+                'question_type': nav_result['question_type'],
+                'next_agent': nav_result['next_agent']
             })
             
-            print(f"  → Routing to: {routing_decision['next_agent']}")
-            print(f"  → Flow type: {routing_decision['flow_type']}")
+            print(f"  ✅ Question: {nav_result['rewritten_question']}")
+            print(f"  ✅ Type: {nav_result['question_type']}")
+            print(f"  ✅ Next Agent: {nav_result['next_agent']}")
             
             return state
             
         except Exception as e:
             print(f"  ❌ Navigation failed: {str(e)}")
             state['errors'].append(f"Navigation error: {str(e)}")
+            state['next_agent'] = 'router_agent'  # Fallback
             return state
     
     def _router_agent_node(self, state: AgentState) -> AgentState:
-        """Router Agent Node"""
+        """Router Agent: Dataset selection"""
         
-        agent_name = "router_agent"
-        start_time = time.time()
-        
-        print(f"🎯 Router Agent: Selecting dataset for analysis")
+        print(f"\n🎯 Router Agent: Selecting dataset")
         
         try:
             # Execute router agent
             selection_result = self.router_agent.select_dataset(state)
             
-            # Check if clarification is needed (interrupt workflow)
+            # Check for clarification
             if selection_result.get('requires_clarification'):
-                print(f"  ❓ Clarification needed from user")
-                
-                # Set up interrupt data
+                print(f"  ❓ User clarification needed")
                 state.update({
-                    'current_agent': agent_name,
-                    'previous_agent': state.get('current_agent'),
+                    'current_agent': 'router_agent',
                     'requires_user_input': True,
                     'clarification_data': selection_result.get('interrupt_data'),
                     'pending_selection_result': selection_result
                 })
-                
                 return state
             
-            # Normal dataset selection completed
+            # Update state with selection
             state.update({
-                'current_agent': agent_name,
-                'previous_agent': state.get('current_agent'),
+                'current_agent': 'router_agent',
                 'selected_dataset': selection_result['selected_dataset'],
                 'dataset_metadata': selection_result['dataset_metadata'],
                 'selection_reasoning': selection_result['selection_reasoning'],
-                'available_datasets': selection_result.get('available_datasets', []),
                 'selection_confidence': selection_result.get('selection_confidence', 0.8),
-                'requires_user_input': False
+                'metadata_context': {
+                    'table_name': selection_result['selected_dataset'],
+                    'description': selection_result['dataset_metadata'].get('description', ''),
+                    'metadata': selection_result['dataset_metadata']
+                }
             })
             
-            print(f"  → Selected: {selection_result['selected_dataset']}")
-            print(f"  → Confidence: {selection_result.get('selection_confidence', 0.8):.1%}")
+            print(f"  ✅ Selected: {selection_result['selected_dataset']}")
+            print(f"  ✅ Confidence: {selection_result.get('selection_confidence', 0.8):.1%}")
             
             return state
             
         except Exception as e:
-            print(f"  ❌ Dataset selection failed: {str(e)}")
-            state['errors'].append(f"Dataset selection error: {str(e)}")
+            print(f"  ❌ Router failed: {str(e)}")
+            state['errors'].append(f"Router error: {str(e)}")
             return state
     
-    def _user_clarification_node(self, state: AgentState) -> AgentState:
-        """User Clarification Node - Handle dataset selection clarification"""
+    def _sql_generator_node(self, state: AgentState) -> AgentState:
+        """SQL Generator Agent: Generate and execute SQL for 'what' questions"""
         
-        print(f"❓ User Clarification: Processing user input")
+        print(f"\n🔧 SQL Generator: Creating query")
         
+        # Placeholder for Phase 2
         state.update({
-            'current_agent': 'user_clarification',
-            'previous_agent': state.get('current_agent')
+            'current_agent': 'sql_generator_agent',
+            'generated_sql': f"-- SQL for: {state['current_question']}\n-- Using: {state.get('selected_dataset', 'unknown_table')}",
+            'query_results': "Mock results for what question"
         })
         
-        print(f"  → User clarification processed")
+        print(f"  ✅ SQL generated for 'what' question")
+        print(f"  ✅ Dataset: {state.get('selected_dataset', 'unknown')}")
         
         return state
     
-    def _phase1_summary_node(self, state: AgentState) -> AgentState:
-        """Phase 1 Summary Node - Summarize navigation and dataset selection"""
+    def _root_cause_node(self, state: AgentState) -> AgentState:
+        """Root Cause Agent: Analyze 'why' questions"""
         
-        print(f"📋 Phase 1 Summary: Completing analysis")
+        print(f"\n🔍 Root Cause Agent: Analyzing causes")
         
-        try:
-            # Prepare summary of Phase 1 execution
-            routing_decision = state.get('routing_decision', {})
-            selected_dataset = state.get('selected_dataset')
-            selection_reasoning = state.get('selection_reasoning', '')
-            
-            summary = {
-                'phase': 'Phase 1 Complete',
-                'question_analyzed': state.get('current_question'),
-                'flow_type': routing_decision.get('flow_type'),
-                'routing_confidence': routing_decision.get('confidence', 0.0),
-                'selected_dataset': selected_dataset,
-                'selection_confidence': state.get('selection_confidence', 0.0),
-                'next_phase_ready': bool(selected_dataset),
-                'recommendation': self._generate_phase1_recommendation(state)
-            }
-            
-            state.update({
-                'current_agent': 'phase1_summary',
-                'previous_agent': state.get('current_agent'),
-                'phase1_summary': summary,
-                'workflow_complete': True
-            })
-            
-            print(f"  ✅ Question Type: {summary['flow_type']}")
-            print(f"  ✅ Dataset Selected: {selected_dataset}")
-            print(f"  ✅ Ready for Phase 2: {summary['next_phase_ready']}")
-            
-            return state
-            
-        except Exception as e:
-            print(f"  ❌ Phase 1 summary failed: {str(e)}")
-            state['errors'].append(f"Summary error: {str(e)}")
-            return state
+        # Placeholder for Phase 2/3
+        state.update({
+            'current_agent': 'root_cause_agent',
+            'root_cause_analysis': f"Root cause analysis for: {state['current_question']}",
+            'variance_detected': True
+        })
+        
+        print(f"  ✅ Root cause analysis completed")
+        print(f"  ✅ Question: {state['current_question']}")
+        
+        return state
     
-    def _generate_phase1_recommendation(self, state: AgentState) -> str:
-        """Generate recommendation for next steps"""
+    def _user_clarification_node(self, state: AgentState) -> AgentState:
+        """User Clarification: Handle dataset clarification"""
         
-        routing_decision = state.get('routing_decision', {})
-        flow_type = routing_decision.get('flow_type')
-        selected_dataset = state.get('selected_dataset')
+        print(f"\n❓ User Clarification: Processing user choice")
         
-        if not selected_dataset:
-            return "⚠️  Dataset selection failed. Review question or try rephrasing."
+        state.update({
+            'current_agent': 'user_clarification'
+        })
         
-        if flow_type == 'descriptive':
-            return "🎯 Ready for SQL generation to answer your 'what' question."
-        elif flow_type == 'analytical':
-            return "🔍 Ready for SQL execution and variance analysis for your 'why' question."
-        elif flow_type == 'comparative':
-            return "📊 Ready for comparison analysis with dynamic time period handling."
+        print(f"  ✅ Clarification processed")
+        
+        return state
+    
+    def _workflow_complete_node(self, state: AgentState) -> AgentState:
+        """Workflow Complete: Final summary"""
+        
+        print(f"\n✅ Workflow Complete: Summarizing results")
+        
+        # Create summary
+        summary = {
+            'question_processed': state['current_question'],
+            'question_type': state.get('question_type'),
+            'agent_used': state.get('current_agent'),
+            'dataset_selected': state.get('selected_dataset'),
+            'has_results': bool(state.get('query_results') or state.get('root_cause_analysis')),
+            'completion_time': datetime.now().isoformat()
+        }
+        
+        state.update({
+            'current_agent': 'workflow_complete',
+            'workflow_complete': True,
+            'final_summary': summary
+        })
+        
+        print(f"  ✅ Question: {state['current_question']}")
+        print(f"  ✅ Type: {state.get('question_type')}")
+        print(f"  ✅ Agent: {summary['agent_used']}")
+        
+        return state
+    
+    # ============ ROUTING FUNCTIONS ============
+    
+    def _route_from_navigation(self, state: AgentState) -> str:
+        """Route from navigation based on next_agent decision"""
+        
+        next_agent = state.get('next_agent', 'router_agent')
+        
+        print(f"  🔀 Navigation routing to: {next_agent}")
+        
+        if next_agent in ['router_agent', 'sql_generator_agent', 'root_cause_agent']:
+            return next_agent
         else:
-            return "🚀 Ready to proceed with SQL generation and analysis."
+            return 'router_agent'  # Fallback
     
-    # ============ ROUTING FUNCTIONS FOR PHASE 1 ============
-    
-    def _route_from_navigation_phase1(self, state: AgentState) -> str:
-        """Simplified routing from navigation controller for Phase 1"""
-        
-        routing_decision = state.get('routing_decision', {})
-        next_agent = routing_decision.get('next_agent', 'router_agent')
-        
-        # For Phase 1, we only support router_agent path
-        if next_agent == 'router_agent':
-            print(f"  🔀 Navigation routing: router_agent")
-            return "router_agent"
-        else:
-            print(f"  🔀 Navigation routing: {next_agent} → router_agent (Phase 1 limitation)")
-            return "router_agent"
-    
-    def _route_from_router_agent(self, state: AgentState) -> str:
-        """Route from router agent - handle clarification needs"""
+    def _route_from_router(self, state: AgentState) -> str:
+        """Route from router based on completion state"""
         
         requires_user_input = state.get('requires_user_input', False)
         has_selected_dataset = bool(state.get('selected_dataset'))
         has_errors = len(state.get('errors', [])) > 0
         
         if has_errors:
-            print(f"  🔀 Router routing: END (errors occurred)")
+            print(f"  🔀 Router routing: END (errors)")
             return "END"
         elif requires_user_input:
-            print(f"  🔀 Router routing: user_clarification (needs user input)")
+            print(f"  🔀 Router routing: user_clarification")
             return "user_clarification"
         elif has_selected_dataset:
-            print(f"  🔀 Router routing: phase1_summary (dataset selected)")
-            return "phase1_summary"
+            print(f"  🔀 Router routing: workflow_complete")
+            return "workflow_complete"
         else:
-            print(f"  🔀 Router routing: END (no dataset selected)")
+            print(f"  🔀 Router routing: END (no dataset)")
             return "END"
     
     # ============ PUBLIC INTERFACE ============
     
     def run_workflow(self, user_question: str, session_id: str, user_id: str = "default_user") -> Dict:
-        """Run the complete workflow"""
+        """Run the workflow with detailed output"""
         
         start_time = time.time()
         
@@ -276,7 +271,7 @@ class HealthcareFinanceWorkflow:
         )
         
         print(f"\n🚀 Starting Healthcare Finance Workflow")
-        print(f"Question: {user_question}")
+        print(f"Original Question: {user_question}")
         print(f"Session: {session_id}")
         print("=" * 60)
         
@@ -289,7 +284,7 @@ class HealthcareFinanceWorkflow:
             total_duration = time.time() - start_time
             final_state['total_processing_time'] = total_duration
             
-            print("=" * 60)
+            print("\n" + "=" * 60)
             print(f"✅ Workflow completed successfully")
             print(f"Final agent: {final_state.get('current_agent')}")
             print(f"Total duration: {total_duration:.2f}s")
@@ -306,7 +301,7 @@ class HealthcareFinanceWorkflow:
         except Exception as e:
             error_duration = time.time() - start_time
             
-            print(f"❌ Workflow failed: {str(e)}")
+            print(f"\n❌ Workflow failed: {str(e)}")
             return {
                 'success': False,
                 'error': str(e),
@@ -314,60 +309,34 @@ class HealthcareFinanceWorkflow:
                 'duration': error_duration
             }
     
-    def process_user_clarification(self, user_choice: Dict, state: AgentState) -> AgentState:
-        """Process user's dataset clarification choice"""
+    def stream_workflow(self, user_question: str, session_id: str, user_id: str = "default_user"):
+        """Stream the workflow execution for real-time updates"""
         
-        print(f"👤 Processing user clarification: {user_choice}")
+        # Create initial state
+        initial_state = AgentState(
+            session_id=session_id,
+            user_id=user_id,
+            original_question=user_question,
+            current_question=user_question
+        )
         
-        try:
-            pending_result = state.get('pending_selection_result', {})
-            available_datasets = pending_result.get('available_datasets', [])
-            
-            # Process the user's choice
-            final_selection = self.router_agent.process_user_clarification(
-                user_choice, available_datasets
-            )
-            
-            # Update state with final selection
-            state.update({
-                'selected_dataset': final_selection['selected_dataset'],
-                'dataset_metadata': final_selection['dataset_metadata'],
-                'selection_reasoning': final_selection['selection_reasoning'],
-                'selection_confidence': final_selection['selection_confidence'],
-                'user_clarified': True,
-                'requires_user_input': False,
-                'clarification_data': None,
-                'pending_selection_result': None
-            })
-            
-            print(f"  ✅ User selected: {final_selection['selected_dataset']}")
-            
-            return state
-            
-        except Exception as e:
-            print(f"  ❌ Clarification processing failed: {str(e)}")
-            state['errors'].append(f"Clarification error: {str(e)}")
-            return state
+        config = {"configurable": {"thread_id": session_id}}
+        
+        # Stream the workflow execution
+        for step in self.app.stream(initial_state, config):
+            yield {
+                'step': step,
+                'timestamp': datetime.now().isoformat()
+            }
     
-    def _generate_final_response(self, state: AgentState) -> str:
-        """Generate final response based on workflow outcome"""
+    def get_workflow_status(self, session_id: str) -> Dict:
+        """Get current workflow status"""
         
-        if state.get('selected_dataset'):
-            dataset_name = state['selected_dataset'].split('.')[-1]
-            confidence = state.get('selection_confidence', 0.0)
-            
-            response = f"Analysis complete! Selected dataset '{dataset_name}' with {confidence:.1%} confidence. "
-            
-            if state.get('user_clarified'):
-                response += "Thank you for the clarification. "
-            
-            summary = state.get('phase1_summary', {})
-            if summary.get('recommendation'):
-                response += f"Next step: {summary['recommendation']}"
-            
-            return response
-        else:
-            return "Unable to complete analysis. Please try rephrasing your question."
+        return {
+            "session_id": session_id,
+            "status": "active",
+            "timestamp": datetime.now().isoformat()
+        }
 
 # Example usage
 if __name__ == "__main__":
@@ -379,8 +348,8 @@ if __name__ == "__main__":
     # Test questions
     test_questions = [
         "What are Q3 pharmacy claims costs?",
-        "Why are medical claims 18% higher than forecast?",
-        "Show me utilization trends by therapeutic class"
+        "Why are medical claims higher than expected?",
+        "Show me the details"  # Follow-up example
     ]
     
     for question in test_questions:
@@ -395,10 +364,11 @@ if __name__ == "__main__":
         )
         
         if result['success']:
-            print(f"✅ Success - Final agent: {result['final_state'].get('current_agent')}")
-            if result['final_state'].get('selected_dataset'):
-                print(f"📊 Selected dataset: {result['final_state']['selected_dataset']}")
-                print(f"🎯 Confidence: {result['final_state'].get('selection_confidence', 0):.1%}")
+            final_state = result['final_state']
+            print(f"\n📊 FINAL RESULTS:")
+            print(f"  - Question Type: {final_state.get('question_type')}")
+            print(f"  - Selected Dataset: {final_state.get('selected_dataset')}")
+            print(f"  - Final Agent: {final_state.get('current_agent')}")
         else:
             print(f"❌ Failed: {result['error']}")
             

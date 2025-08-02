@@ -4,240 +4,211 @@ from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
 
 class LLMNavigationController:
-    """LLM-powered navigation controller for intelligent routing decisions"""
+    """Simplified navigation controller with question rewriting and smart routing"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
+    
+    def process_user_query(self, state: AgentState) -> Dict[str, any]:
+        """Main processing: rewrite question + route to next agent"""
         
-    def route_user_query(self, state: AgentState) -> Dict[str, any]:
-        """Main routing logic using LLM intelligence"""
+        # Function 1: Rewrite question based on history if needed
+        rewritten_question = self._rewrite_question_from_history(state)
         
-        # 1. Analyze current question with full context
-        analysis_result = self._analyze_question_with_context(state)
-        
-        # 2. Make routing decision based on analysis
-        routing_decision = self._make_routing_decision(analysis_result, state)
+        # Function 2: Determine next agent based on context and question type
+        next_agent = self._determine_next_agent(state, rewritten_question)
         
         return {
-            **routing_decision,
-            'analysis_details': analysis_result
+            'rewritten_question': rewritten_question,
+            'next_agent': next_agent,
+            'question_type': self._get_question_type(rewritten_question)
         }
     
-    def _analyze_question_with_context(self, state: AgentState) -> Dict:
-        """Use LLM to comprehensively analyze the question and context"""
+    def _rewrite_question_from_history(self, state: AgentState) -> str:
+        """Function 1: Rewrite question based on conversation history"""
         
-        user_question = state.get('current_question', state.get('original_question', ''))
+        current_question = state.get('current_question', state.get('original_question', ''))
         
-        analysis_prompt = f"""
-        Healthcare Finance Question Analysis Task:
+        # Get last few conversation entries for context
+        conversation_history = state.get('conversation_history', [])
+        if not conversation_history or len(conversation_history) < 2:
+            # No meaningful history, return original question
+            return current_question
         
-        Current Question: "{user_question}"
+        # Get last 2-3 conversation entries
+        recent_history = conversation_history[-3:]
         
-        Previous Dataset Used: {state.get('selected_dataset', 'None')}
-        Previous Flow Type: {state.get('flow_type', 'None')}
+        # Build context for LLM
+        history_context = ""
+        for conv in recent_history:
+            if conv.get('user_question') and conv.get('agent_response'):
+                history_context += f"Previous Q: {conv['user_question']}\n"
+                history_context += f"Previous A: {conv['agent_response'][:200]}...\n\n"
         
-        Analyze this question across multiple dimensions:
+        rewrite_prompt = f"""
+        You have a healthcare finance question that might be a follow-up to previous conversation.
         
-        1. QUESTION TYPE CLASSIFICATION:
-           - Descriptive ("what", "how much", "show me") - seeks data/facts
-           - Analytical ("why", "what caused", "root cause") - seeks explanations
-           - Comparative ("vs", "compared to", "difference") - seeks comparisons
-           - Exploratory ("trend", "pattern", "insights") - seeks discoveries
-           - Follow-up (builds on previous question) - continues analysis
+        Current Question: "{current_question}"
         
-        2. CONTEXT ANALYSIS:
-           - Is this a completely new question or related to previous?
-           - Does it reference previous results implicitly?
-           - Is there a context switch (new topic/focus area)?
-           - What type of transition is this?
+        Recent Conversation History:
+        {history_context}
         
-        3. INTENT DETECTION:
-           - What is the user really trying to understand?
-           - What level of analysis depth is needed?
-           - Are there implicit comparison periods or benchmarks?
-           - Is variance analysis likely needed?
+        Task: If the current question is a follow-up that references previous context (like "why is that?", "show me more details", "what about X?" etc.), rewrite it to be self-contained.
         
-        4. COMPLEXITY ASSESSMENT:
-           - Simple lookup vs complex analysis
-           - Single dataset vs multi-dataset needs
-           - Immediate answer vs multi-step investigation
+        Rules:
+        1. If question is already self-contained, return it unchanged
+        2. If it's a follow-up, incorporate necessary context to make it standalone
+        3. Don't change the intent, just make it clear without needing previous context
+        4. Keep healthcare finance domain focus
         
-        5. HEALTHCARE FINANCE CONTEXT:
-           - Claims analysis, financial variance, operational metrics?
-           - Time period implications (quarterly, monthly, seasonal)
-           - Stakeholder perspective (finance team, operations, executives)
-        
-        Respond with detailed JSON analysis:
-        {{
-            "question_classification": {{
-                "primary_type": "descriptive|analytical|comparative|exploratory|follow_up",
-                "confidence": 0.95,
-                "reasoning": "detailed explanation",
-                "secondary_types": ["other applicable types"]
-            }},
-            "context_analysis": {{
-                "relationship_to_previous": "new_topic|builds_on_previous|context_switch|refinement",
-                "transition_type": "none|what_to_why|why_to_what|topic_change|drill_down",
-                "context_preservation_needed": true,
-                "reasoning": "explanation of context relationship"
-            }},
-            "intent_analysis": {{
-                "user_goal": "specific description of what user wants to achieve",
-                "analysis_depth": "surface|detailed|comprehensive|investigative",
-                "time_sensitivity": "current|historical|trending|comparative",
-                "variance_analysis_likely": true,
-                "implicit_comparisons": ["any implied comparisons detected"]
-            }},
-            "complexity_assessment": {{
-                "complexity_level": "simple|moderate|complex|multi_step",
-                "estimated_steps": 2,
-                "multi_dataset_needed": true,
-                "requires_domain_expertise": true
-            }},
-            "healthcare_finance_context": {{
-                "domain_area": "claims|financial|operational|compliance",
-                "stakeholder_level": "analyst|manager|executive",
-                "business_criticality": "routine|important|critical",
-                "regulatory_implications": true
-            }}
-        }}
+        Return only the rewritten question, nothing else.
         """
         
         try:
             llm_response = self.db_client.call_claude_api([
-                {"role": "user", "content": analysis_prompt}
+                {"role": "user", "content": rewrite_prompt}
             ])
             
-            return json.loads(llm_response)
+            # Clean up the response (remove quotes, extra text)
+            rewritten = llm_response.strip().strip('"').strip("'")
             
-        except json.JSONDecodeError as e:
-            # Fallback analysis if JSON parsing fails
-            return self._fallback_analysis(state)
+            # If rewrite seems reasonable, use it; otherwise use original
+            if len(rewritten) > 10 and len(rewritten) < 500:
+                return rewritten
+            else:
+                return current_question
+                
         except Exception as e:
-            raise Exception(f"Question analysis failed: {str(e)}")
+            print(f"Question rewriting failed: {str(e)}")
+            return current_question
     
-    def _make_routing_decision(self, analysis: Dict, state: AgentState) -> Dict:
-        """Use LLM to make intelligent routing decisions"""
+    def _determine_next_agent(self, state: AgentState, question: str) -> str:
+        """Function 2: Determine next agent based on context and question type"""
         
-        routing_prompt = f"""
-        Healthcare Finance Agent Routing Decision:
+        # Check if we have previous context (metadata from last table selection)
+        metadata_context = state.get('metadata_context')
+        has_context = bool(metadata_context and metadata_context.get('table_name'))
         
-        Question Analysis: {json.dumps(analysis, indent=2)}
+        # Get question type
+        question_type = self._get_question_type(question)
         
-        Current State:
-        - Previous Results Available: {bool(state.get('query_results'))}
-        - Current Dataset: {state.get('selected_dataset', 'None')}
-        - Previous Agent: {state.get('current_agent', 'None')}
+        # Routing logic
+        if not has_context:
+            # No context available, need to select dataset
+            return "router_agent"
         
-        Available Agents:
-        1. router_agent: Dataset selection for new questions or dataset changes
-        2. sql_template_agent: Find existing SQL patterns for query generation
-        3. sql_agent: Generate and execute SQL queries
-        4. variance_detection_agent: Analyze results for significant variances
-        5. root_cause_agent: Investigate causes of variances using knowledge graph
-        6. follow_up_agent: Generate relevant next questions
+        # We have context, check if it can answer current question
+        can_answer = self._check_if_context_can_answer(metadata_context, question)
         
-        Routing Rules:
-        - NEW QUESTIONS (no previous context): Start with router_agent
-        - FOLLOW-UP QUESTIONS (building on previous): May skip router if same dataset works
-        - WHY QUESTIONS with previous results: Go to variance_detection_agent
-        - WHY QUESTIONS without context: Start with router_agent for exploration
-        - CONTEXT SWITCHES: Start with router_agent
-        - REFINEMENTS: Continue with sql_agent if same dataset appropriate
+        if not can_answer:
+            # Current context can't answer, need new dataset
+            return "router_agent"
         
-        Make routing decision considering:
-        1. Most efficient path to answer user's question
-        2. Reusability of previous context and results
-        3. Need for new dataset selection vs continuing with current
-        4. Complexity and multi-step analysis requirements
+        # Context can answer the question
+        if question_type == "why":
+            return "root_cause_agent"
+        else:  # "what" questions
+            return "sql_generator_agent"
+    
+    def _check_if_context_can_answer(self, metadata_context: Dict, question: str) -> bool:
+        """Check if existing table context can answer the question"""
         
-        Respond with JSON:
-        {{
-            "next_agent": "specific_agent_name",
-            "routing_reasoning": "detailed explanation of why this agent is optimal",
-            "confidence": 0.95,
-            "alternative_paths": [
-                {{"agent": "alternative_agent", "reason": "why this could also work"}}
-            ],
-            "expected_flow": ["agent1", "agent2", "agent3"],
-            "skip_agents": ["agents that can be skipped and why"],
-            "special_instructions": {{
-                "preserve_context": true,
-                "dataset_selection_needed": true,
-                "variance_analysis_likely": false,
-                "root_cause_expected": false
-            }}
-        }}
+        if not metadata_context:
+            return False
+        
+        table_name = metadata_context.get('table_name', '')
+        table_description = metadata_context.get('description', '')
+        
+        check_prompt = f"""
+        You have a healthcare finance question and information about a previously selected table.
+        
+        Question: "{question}"
+        
+        Available Table:
+        - Name: {table_name}
+        - Description: {table_description}
+        
+        Can this table answer the question? Consider:
+        1. Does the table domain match the question domain?
+        2. Does the table likely contain the required data elements?
+        3. Is the question scope appropriate for this table?
+        
+        Respond with only: YES or NO
         """
         
         try:
             llm_response = self.db_client.call_claude_api([
-                {"role": "user", "content": routing_prompt}
+                {"role": "user", "content": check_prompt}
             ])
             
-            routing_decision = json.loads(llm_response)
+            response = llm_response.strip().upper()
+            return "YES" in response
             
-            # Add metadata from analysis
-            routing_decision.update({
-                'flow_type': analysis.get('question_classification', {}).get('primary_type'),
-                'transition_type': analysis.get('context_analysis', {}).get('transition_type'),
-                'complexity_level': analysis.get('complexity_assessment', {}).get('complexity_level')
-            })
-            
-            return routing_decision
-            
-        except json.JSONDecodeError:
-            return self._fallback_routing_decision(analysis, state)
         except Exception as e:
-            raise Exception(f"Routing decision failed: {str(e)}")
+            print(f"Context checking failed: {str(e)}")
+            # Default to requiring new dataset selection on error
+            return False
     
-    def _fallback_analysis(self, state: AgentState) -> Dict:
-        """Fallback analysis when LLM parsing fails"""
+    def _get_question_type(self, question: str) -> str:
+        """Simple question type classification: what or why"""
         
-        question = state.get('current_question', state.get('original_question', '')).lower()
+        question_lower = question.lower()
         
-        # Simple heuristics as fallback
-        if any(word in question for word in ['what', 'show', 'how much', 'how many']):
-            primary_type = 'descriptive'
-        elif any(word in question for word in ['why', 'cause', 'reason']):
-            primary_type = 'analytical'
-        elif any(word in question for word in ['compare', 'vs', 'versus']):
-            primary_type = 'comparative'
+        # Why question indicators
+        why_indicators = ['why', 'what caused', 'what is causing', 'reason for', 'cause of', 
+                         'what is driving', 'what drives', 'root cause', 'explain why']
+        
+        if any(indicator in question_lower for indicator in why_indicators):
+            return "why"
         else:
-            primary_type = 'exploratory'
-        
-        return {
-            "question_classification": {
-                "primary_type": primary_type,
-                "confidence": 0.6,
-                "reasoning": "Fallback analysis using simple heuristics"
-            },
-            "context_analysis": {
-                "relationship_to_previous": "new_topic",
-                "transition_type": "none",
-                "context_preservation_needed": False
-            },
-            "intent_analysis": {
-                "analysis_depth": "moderate",
-                "variance_analysis_likely": False
-            }
-        }
+            return "what"
+
+# Example usage
+if __name__ == "__main__":
+    from core.databricks_client import DatabricksClient
     
-    def _fallback_routing_decision(self, analysis: Dict, state: AgentState) -> Dict:
-        """Fallback routing when LLM decision fails"""
-        
-        question_type = analysis.get('question_classification', {}).get('primary_type', 'descriptive')
-        
-        if question_type in ['analytical'] and state.get('query_results'):
-            next_agent = 'variance_detection_agent'
-        elif not state.get('selected_dataset'):
-            next_agent = 'router_agent'
-        else:
-            next_agent = 'sql_agent'
-        
-        return {
-            "next_agent": next_agent,
-            "routing_reasoning": "Fallback routing using simple logic",
-            "confidence": 0.6,
-            "flow_type": question_type
+    db_client = DatabricksClient()
+    nav_controller = LLMNavigationController(db_client)
+    
+    # Test scenarios
+    test_scenarios = [
+        {
+            'question': 'What are Q3 pharmacy claims costs?',
+            'context': None,
+            'expected_agent': 'router_agent'
+        },
+        {
+            'question': 'Why are they so high?',
+            'context': {'table_name': 'pharmacy_claims', 'description': 'Pharmacy claims data'},
+            'expected_agent': 'root_cause_agent'
+        },
+        {
+            'question': 'Show me more details',
+            'context': {'table_name': 'pharmacy_claims', 'description': 'Pharmacy claims data'},
+            'expected_agent': 'sql_generator_agent'
         }
+    ]
+    
+    for scenario in test_scenarios:
+        print(f"\n🔍 Testing: {scenario['question']}")
+        
+        state = AgentState(
+            session_id="test_session",
+            user_id="test_user",
+            current_question=scenario['question'],
+            original_question=scenario['question'],
+            metadata_context=scenario['context']
+        )
+        
+        try:
+            result = nav_controller.process_user_query(state)
+            print(f"✅ Rewritten: {result['rewritten_question']}")
+            print(f"📝 Type: {result['question_type']}")
+            print(f"🎯 Next Agent: {result['next_agent']}")
+            print(f"Expected: {scenario['expected_agent']}")
+            
+        except Exception as e:
+            print(f"❌ Error: {str(e)}")
+            
+    print("\n" + "="*50)
+    print("Navigation Controller Testing Complete")

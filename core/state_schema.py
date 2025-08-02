@@ -16,12 +16,19 @@ class AgentState(TypedDict):
     flow_type: Optional[str]
     transition_type: Optional[str]
     
+    # ============ NAVIGATION CONTROLLER STATE ============
+    question_type: Optional[str]  # "what" or "why"
+    next_agent: Optional[str]     # "router_agent", "sql_generator_agent", "root_cause_agent"
+    routing_decision: Optional[Dict]
+    
     # ============ DATASET SELECTION ============
     selected_dataset: Optional[str]
     dataset_metadata: Optional[Dict]
     selection_reasoning: Optional[str]
     available_datasets: List[Dict]
     selection_confidence: Optional[float]
+    metadata_context: Optional[Dict]  # For storing last table context
+    pending_selection_result: Optional[Dict]
     
     # ============ SQL & EXECUTION (PHASE 2) ============
     sql_templates: List[Dict]
@@ -45,6 +52,10 @@ class AgentState(TypedDict):
     phase1_summary: Optional[Dict]
     workflow_complete: bool
     errors: List[str]
+    final_summary: Optional[Dict]  # Added for workflow completion
+    
+    # ============ ANALYSIS RESULTS ============
+    root_cause_analysis: Optional[str]  # For root cause agent results
     
     # ============ SYSTEM METADATA ============
     session_start_time: str
@@ -65,11 +76,20 @@ class AgentState(TypedDict):
             'previous_agent': None,
             'flow_type': None,
             'transition_type': None,
+            
+            # Navigation state
+            'question_type': None,
+            'next_agent': None,
+            'routing_decision': None,
+            
+            # Dataset selection
             'selected_dataset': None,
             'dataset_metadata': None,
             'selection_reasoning': None,
             'available_datasets': [],
             'selection_confidence': None,
+            'metadata_context': None,
+            'pending_selection_result': None,
             'sql_templates': [],
             'selected_template': None,
             'generated_sql': None,
@@ -85,6 +105,8 @@ class AgentState(TypedDict):
             'phase1_summary': None,
             'workflow_complete': False,
             'errors': [],
+            'final_summary': None,
+            'root_cause_analysis': None,
             
             # System metadata
             'session_start_time': datetime.datetime.now(datetime.timezone.utc).isoformat(),

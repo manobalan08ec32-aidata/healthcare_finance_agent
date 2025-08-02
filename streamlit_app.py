@@ -282,7 +282,6 @@ def display_router_results(state: Dict):
     col1, col2 = st.columns(2)
     
     with col1:
-        if state.get('selected_dataset'):
             st.metric("Selected Dataset", state['selected_dataset'].split('.')[-1])
         if state.get('selection_confidence'):
             st.metric("Confidence", f"{state['selection_confidence']:.1%}")
@@ -534,7 +533,22 @@ def display_followup_results(state: Dict):
 
 def display_workflow_summary(workflow_result: Dict):
     """Display workflow summary - kept for compatibility"""
-    display_latest_workflow_results()import streamlit as st
+    display_latest_workflow_results()
+
+# Footer
+def display_footer():
+    st.markdown("---")
+    st.markdown(
+        """
+        **Healthcare Finance AI Agent** - Phase 1 Implementation  
+        *Navigation Controller + Router Agent + Enterprise Tracking*  
+        🔧 *Next: SQL Template Agent, SQL Agent, Variance Detection*
+        """
+    )
+
+if __name__ == "__main__":
+    main()
+    display_footer()import streamlit as st
 import json
 import uuid
 import time

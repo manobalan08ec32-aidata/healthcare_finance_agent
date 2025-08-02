@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
-from core.llm_navigation_controller import LLMNavigationController
+from workflows.langraph_workflow import HealthcareFinanceWorkflow
 
 # Page configuration
 st.set_page_config(
@@ -21,40 +21,40 @@ if 'questions_history' not in st.session_state:
 if 'navigation_results' not in st.session_state:
     st.session_state.navigation_results = []
 
-# Initialize navigation controller
+# Initialize workflow
 @st.cache_resource
-def initialize_navigation():
-    """Initialize Navigation Controller"""
+def initialize_workflow():
+    """Initialize Healthcare Finance Workflow"""
     try:
         db_client = DatabricksClient()
         if not db_client.test_connection():
             st.error("❌ Failed to connect to Databricks")
             return None
-        nav_controller = LLMNavigationController(db_client)
-        return nav_controller
+        workflow = HealthcareFinanceWorkflow(db_client)
+        return workflow
     except Exception as e:
-        st.error(f"❌ Navigation initialization failed: {str(e)}")
+        st.error(f"❌ Workflow initialization failed: {str(e)}")
         return None
 
 def main():
     st.title("🧭 Navigation Controller Testing")
     st.markdown("Testing question rewriting and classification")
     
-    # Initialize navigation
-    nav_controller = initialize_navigation()
-    if not nav_controller:
+    # Initialize workflow
+    workflow = initialize_workflow()
+    if not workflow:
         st.stop()
     
     # Two columns - input and results
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        display_input_section(nav_controller)
+        display_input_section(workflow)
     
     with col2:
         display_results_section()
 
-def display_input_section(nav_controller):
+def display_input_section(workflow):
     """Input section for testing"""
     
     st.subheader("📝 Input")
@@ -70,8 +70,9 @@ def display_input_section(nav_controller):
         submit_button = st.form_submit_button("🧭 Test Navigation", type="primary")
         
         if submit_button and user_input:
-            test_navigation(user_input, nav_controller)
-            st.rerun()
+            # Just show the input was received
+            st.success(f"✅ Question received: {user_input}")
+            st.session_state.questions_history.append(user_input)
     
     # Current history
     st.subheader("📚 Questions History")
@@ -121,43 +122,6 @@ def display_results_section():
                 st.caption(f"Processed at: {result['timestamp']}")
     else:
         st.write("No navigation results yet. Enter a question to test!")
-
-def test_navigation(user_input, nav_controller):
-    """Test navigation controller"""
-    
-    try:
-        # Create state with current history
-        state = AgentState(
-            session_id=st.session_state.session_id,
-            user_id="test_user",
-            original_question=user_input,
-            current_question=user_input,
-            user_questions_history=st.session_state.questions_history.copy()
-        )
-        
-        # Process with navigation controller
-        result = nav_controller.process_user_query(state)
-        
-        # Store result
-        navigation_result = {
-            'original_question': user_input,
-            'rewritten_question': result['rewritten_question'],
-            'question_type': result['question_type'],
-            'next_agent': result['next_agent'],
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'history_used': st.session_state.questions_history.copy()
-        }
-        
-        st.session_state.navigation_results.append(navigation_result)
-        
-        # Add rewritten question to history
-        st.session_state.questions_history.append(result['rewritten_question'])
-        
-        # Show success message
-        st.success(f"✅ Processed: {result['question_type']} question → {result['next_agent']}")
-        
-    except Exception as e:
-        st.error(f"❌ Navigation failed: {str(e)}")
 
 # Sidebar with info
 with st.sidebar:

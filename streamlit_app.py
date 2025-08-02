@@ -1,5 +1,4 @@
 import streamlit as st
-import json
 import uuid
 from datetime import datetime
 from core.state_schema import AgentState
@@ -8,142 +7,153 @@ from workflows.langraph_workflow import HealthcareFinanceWorkflow
 
 # Page configuration
 st.set_page_config(
-    page_title="Navigation Controller Test",
-    page_icon="🧭",
+    page_title="Healthcare Finance Assistant",
+    page_icon="🏥",
     layout="wide"
 )
 
 # Initialize session state
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
-if 'questions_history' not in st.session_state:
-    st.session_state.questions_history = []
-if 'navigation_results' not in st.session_state:
-    st.session_state.navigation_results = []
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
 
 # Initialize workflow
 @st.cache_resource
 def initialize_workflow():
-    """Initialize Healthcare Finance Workflow"""
     try:
         db_client = DatabricksClient()
-        if not db_client.test_connection():
-            st.error("❌ Failed to connect to Databricks")
-            return None
         workflow = HealthcareFinanceWorkflow(db_client)
         return workflow
     except Exception as e:
-        st.error(f"❌ Workflow initialization failed: {str(e)}")
+        st.error(f"Failed to initialize: {str(e)}")
         return None
 
 def main():
-    st.title("🧭 Navigation Controller Testing")
-    st.markdown("Testing question rewriting and classification")
-    
-    # Initialize workflow
     workflow = initialize_workflow()
     if not workflow:
         st.stop()
     
-    # Two columns - input and results
-    col1, col2 = st.columns([1, 1])
+    # Display chat messages
+    display_messages()
     
-    with col1:
-        display_input_section(workflow)
-    
-    with col2:
-        display_results_section()
+    # Chat input at bottom
+    display_chat_input(workflow)
 
-def display_input_section(workflow):
-    """Input section for testing"""
+def display_messages():
+    """Display all chat messages"""
     
-    st.subheader("📝 Input")
-    
-    # Question input
-    with st.form(key="nav_test_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "Enter Question:",
-            placeholder="e.g., What are Q3 pharmacy claims costs?",
-            height=100
-        )
+    for message in st.session_state.messages:
+        if message['type'] == 'user':
+            # User message (left side, blue)
+            st.markdown(f"""
+            <div style="margin: 20px 0;">
+                <div style="background-color: #007bff; color: white; padding: 15px; border-radius: 10px; max-width: 80%; display: inline-block;">
+                    {message['content']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         
-        submit_button = st.form_submit_button("🧭 Test Navigation", type="primary")
+        elif message['type'] == 'assistant':
+            # Assistant message (left side, plain)
+            st.markdown(f"""
+            <div style="margin: 20px 0;">
+                <div style="background-color: #f0f0f0; color: black; padding: 15px; border-radius: 10px; max-width: 80%; display: inline-block;">
+                    {message['content']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+def display_chat_input(workflow):
+    """Chat input at bottom"""
+    
+    # Create input container at bottom
+    with st.container():
+        st.markdown("---")
         
-        if submit_button and user_input:
-            # Just show the input was received
-            st.success(f"✅ Question received: {user_input}")
-            st.session_state.questions_history.append(user_input)
+        # Input form
+        with st.form(key="chat_form", clear_on_submit=True):
+            col1, col2 = st.columns([6, 1])
+            
+            with col1:
+                user_input = st.text_input(
+                    "",
+                    placeholder="Ask your question...",
+                    disabled=st.session_state.processing
+                )
+            
+            with col2:
+                submit = st.form_submit_button(
+                    "Send",
+                    disabled=st.session_state.processing,
+                    type="primary"
+                )
+            
+            if submit and user_input and not st.session_state.processing:
+                process_message(user_input, workflow)
+
+def process_message(user_input, workflow):
+    """Process user message with workflow streaming"""
     
-    # Current history
-    st.subheader("📚 Questions History")
-    if st.session_state.questions_history:
-        for i, question in enumerate(st.session_state.questions_history, 1):
-            st.write(f"{i}. {question}")
-    else:
-        st.write("No questions yet")
+    # Add user message
+    st.session_state.messages.append({
+        'type': 'user',
+        'content': user_input,
+        'timestamp': datetime.now()
+    })
     
-    # Clear button
-    if st.button("🗑️ Clear History"):
-        st.session_state.questions_history = []
-        st.session_state.navigation_results = []
+    # Set processing state
+    st.session_state.processing = True
+    
+    try:
+        # Stream workflow execution
+        for step_data in workflow.stream_workflow(
+            user_question=user_input,
+            session_id=st.session_state.session_id,
+            user_id="streamlit_user"
+        ):
+            # Add step output as assistant message
+            step_content = format_step_output(step_data)
+            if step_content:
+                st.session_state.messages.append({
+                    'type': 'assistant',
+                    'content': step_content,
+                    'timestamp': datetime.now()
+                })
+                
+                # Rerun to show new message
+                st.rerun()
+        
+    except Exception as e:
+        # Add error message
+        st.session_state.messages.append({
+            'type': 'assistant',
+            'content': f"Error: {str(e)}",
+            'timestamp': datetime.now()
+        })
+    
+    finally:
+        # Reset processing state
+        st.session_state.processing = False
         st.rerun()
 
-def display_results_section():
-    """Results section showing navigation output"""
+def format_step_output(step_data):
+    """Format workflow step output for display"""
     
-    st.subheader("🎯 Navigation Results")
+    step = step_data.get('step', {})
     
-    if st.session_state.navigation_results:
-        for i, result in enumerate(st.session_state.navigation_results, 1):
-            with st.expander(f"Result {i}: {result['original_question'][:50]}...", expanded=(i == len(st.session_state.navigation_results))):
-                
-                # Original vs Rewritten
-                st.markdown("**Original Question:**")
-                st.code(result['original_question'])
-                
-                st.markdown("**Rewritten Question:**")
-                st.code(result['rewritten_question'])
-                
-                # Classification and routing
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Question Type", result['question_type'])
-                with col2:
-                    st.metric("Next Agent", result['next_agent'])
-                
-                # Show if question was rewritten
-                was_rewritten = result['original_question'] != result['rewritten_question']
-                if was_rewritten:
-                    st.success("✅ Question was rewritten")
-                else:
-                    st.info("ℹ️ Question unchanged")
-                
-                # Timestamp
-                st.caption(f"Processed at: {result['timestamp']}")
-    else:
-        st.write("No navigation results yet. Enter a question to test!")
-
-# Sidebar with info
-with st.sidebar:
-    st.header("🧭 Navigation Testing")
+    # Extract node information
+    for node_name, node_state in step.items():
+        if node_name == '__start__':
+            continue
+        
+        # Just show the node name and its state
+        output = f"**{node_name}:**\n{str(node_state)}"
+        return output
     
-    st.markdown("**Session Info:**")
-    st.write(f"ID: `{st.session_state.session_id[:8]}...`")
-    st.write(f"Questions: {len(st.session_state.questions_history)}")
-    st.write(f"Results: {len(st.session_state.navigation_results)}")
-    
-    st.markdown("---")
-    st.markdown("**Test Examples:**")
-    st.markdown("1. What are Q3 pharmacy claims costs?")
-    st.markdown("2. Why are they so high?")
-    st.markdown("3. Show me the breakdown")
-    st.markdown("4. What is driving the increase?")
-    
-    st.markdown("---")
-    st.markdown("**Expected Behavior:**")
-    st.markdown("- **'What' questions** → router_agent")
-    st.markdown("- **'Why' questions** → root_cause_agent")
-    st.markdown("- **Follow-ups** get rewritten")
+    return None
 
 if __name__ == "__main__":
     main()

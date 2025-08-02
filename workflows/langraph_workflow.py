@@ -1,31 +1,6 @@
-def run_workflow(self, user_question: str, session_id: str, user_id: str = "default_user") -> Dict:
-        """Run the complete workflow with enterprise tracking"""
-        
-        start_time = time.time()
-        
-        # Create initial state with tracking
-        initial_state = AgentState(
-            session_id=session_id,
-            user_id=user_id,
-            original_question=user_question,
-            current_question=user_question
-        )
-        
-        # Track user question
-        initial_state = self.tracking.track_user_question(initial_state, user_question)
-        
-        print(f"\n🚀 Starting Healthcare Finance Workflow")
-        print(f"Question: {user_question}")
-        print(f"Session: {session_id}")
-        print("=" * 60)
-        
-        try:
-            # Run the workflow with tracking
-            config = {"configurable": {"thread_id": session_id}}
-            final_state = self.app.invoke(initial_state, config)
-            
             #from typing import Dict, Any
 import time
+from datetime import datetime
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from state_schema import AgentState
@@ -63,6 +38,7 @@ class HealthcareFinanceWorkflow:
         # Add Phase 1 nodes only
         workflow.add_node("navigation_controller", self._navigation_controller_node)
         workflow.add_node("router_agent", self._router_agent_node)
+        workflow.add_node("user_clarification", self._user_clarification_node)
         workflow.add_node("phase1_summary", self._phase1_summary_node)
         
         # Set entry point
@@ -90,7 +66,6 @@ class HealthcareFinanceWorkflow:
         )
         
         # Add user clarification node for dataset selection
-        workflow.add_node("user_clarification", self._user_clarification_node)
         workflow.add_edge("user_clarification", "phase1_summary")
         
         # Summary node ends the workflow
@@ -513,6 +488,8 @@ class HealthcareFinanceWorkflow:
     
     # ============ PUBLIC INTERFACE ============
     
+    # ============ PUBLIC INTERFACE ============
+    
     def run_workflow(self, user_question: str, session_id: str, user_id: str = "default_user") -> Dict:
         """Run the complete workflow with enterprise tracking"""
         
@@ -593,6 +570,25 @@ class HealthcareFinanceWorkflow:
                 'duration': error_duration,
                 'error_state': error_state
             }
+    
+    def stream_workflow(self, user_question: str, session_id: str, user_id: str = "default_user"):
+        """Stream the workflow execution for real-time updates"""
+        
+        initial_state = AgentState(
+            session_id=session_id,
+            user_id=user_id, 
+            original_question=user_question,
+            current_question=user_question
+        )
+        
+        # Track user question
+        initial_state = self.tracking.track_user_question(initial_state, user_question)
+        
+        config = {"configurable": {"thread_id": session_id}}
+        
+        # Stream the workflow execution
+        for step in self.app.stream(initial_state, config):
+            yield step
     
     def process_user_clarification(self, user_choice: Dict, state: AgentState) -> AgentState:
         """Process user's dataset clarification choice with tracking"""
@@ -696,12 +692,6 @@ class HealthcareFinanceWorkflow:
             "audit_trail_complete": True,
             "data_retention_policy": "followed"
         }
-    
-    # Utility function for timestamp generation
-    def _get_timestamp(self) -> str:
-        """Get current timestamp"""
-        from datetime import datetime
-        return datetime.now().isoformat()
     
     def stream_workflow(self, user_question: str, session_id: str, user_id: str = "default_user"):
         """Stream the workflow execution for real-time updates"""

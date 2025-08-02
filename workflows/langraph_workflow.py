@@ -1,4 +1,30 @@
-from typing import Dict, Any, List, List
+    def run_workflow(self, user_question: str, session_id: str, user_id: str = "default_user") -> Dict:
+        """Run the complete workflow with enterprise tracking"""
+        
+        start_time = time.time()
+        
+        # Create initial state with tracking
+        initial_state = AgentState(
+            session_id=session_id,
+            user_id=user_id,
+            original_question=user_question,
+            current_question=user_question
+        )
+        
+        # Track user question
+        initial_state = self.tracking.track_user_question(initial_state, user_question)
+        
+        print(f"\n🚀 Starting Healthcare Finance Workflow")
+        print(f"Question: {user_question}")
+        print(f"Session: {session_id}")
+        print("=" * 60)
+        
+        try:
+            # Run the workflow with tracking
+            config = {"configurable": {"thread_id": session_id}}
+            final_state = self.app.invoke(initial_state, config)
+            
+            #from typing import Dict, Any, List, List
 import time
 from datetime import datetime
 from langgraph.graph import StateGraph, END

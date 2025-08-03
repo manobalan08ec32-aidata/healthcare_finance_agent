@@ -67,10 +67,17 @@ class SQLGeneratorAgent:
         questions_history = state.get('user_questions_history', [])
         recent_history = questions_history[-6:] if len(questions_history) > 6 else questions_history
         
-        # Get dataset metadata
+        # Get dataset info from available_datasets using selected_dataset
         available_datasets = state.get('available_datasets', [])
         selected_dataset = state.get('selected_dataset')
-        dataset_metadata = state.get('dataset_metadata', {})
+        
+        # Find the selected dataset in available_datasets
+        dataset_info = None
+        if selected_dataset and available_datasets:
+            dataset_info = next(
+                (ds for ds in available_datasets if ds.get('table_name') == selected_dataset),
+                None
+            )
         
         # Current question
         current_question = state.get('current_question', '')
@@ -79,32 +86,48 @@ class SQLGeneratorAgent:
             'recent_history': recent_history,
             'available_datasets': available_datasets,
             'selected_dataset': selected_dataset,
-            'dataset_metadata': dataset_metadata,
+            'dataset_info': dataset_info,
             'current_question': current_question
         }
     
-    def _generate_sql(self, context: Dict) -> str:
+        def _generate_sql(self, context: Dict) -> str:
         """Generate high-quality Databricks SQL with excellent prompts"""
         
-        # Build table schema information
+        # Build table schema information from available_datasets
         table_info = ""
-        if context['dataset_metadata'].get('table_kg'):
-            try:
-                kg_data = json.loads(context['dataset_metadata']['table_kg'])
-                columns = kg_data.get('columns', [])
-                
-                table_info = f"""
-TABLE SCHEMA for {context['selected_dataset']}:
-Description: {context['dataset_metadata'].get('description', 'No description')}
+        full_table_name = ""
+        
+        if context['dataset_info']:
+            dataset = context['dataset_info']
+            
+            # Add prodfdm.rag prefix to table name
+            base_table_name = dataset.get('table_name', '')
+            full_table_name = f"prodfdm.rag.{base_table_name}"
+            
+            # Extract table_kg for schema
+            table_kg = dataset.get('table_kg', '{}')
+            description = dataset.get('content', 'Healthcare finance table')
+            
+            table_info = f"""
+TABLE SCHEMA for {full_table_name}:
+Description: {description}
 
 Columns:
 """
+            try:
+                kg_data = json.loads(table_kg)
+                columns = kg_data.get('columns', [])
+                
                 for col in columns:
                     col_name = col.get('column_name', 'unknown')
                     data_type = col.get('data_type', 'unknown')
                     table_info += f"- {col_name} ({data_type})\n"
             except:
-                table_info = f"TABLE: {context['selected_dataset']}\nDescription: {context['dataset_metadata'].get('description', 'Healthcare finance table')}"
+                table_info += "- Schema information not available\n"
+        else:
+            # Fallback if no dataset info found
+            full_table_name = f"prodfdm.rag.{context['selected_dataset']}" if context['selected_dataset'] else "prodfdm.rag.unknown_table"
+            table_info = f"TABLE: {full_table_name}\nDescription: Healthcare finance table"
         
         # Build history context
         history_context = ""
@@ -129,7 +152,7 @@ CRITICAL SQL REQUIREMENTS:
    - Example: "member utilization" → GROUP BY age_group, state, plan_type, etc.
 
 2. **DATABRICKS COMPATIBILITY**:
-   - Use backticks for table names: `{context['selected_dataset']}`
+   - Use backticks for table names: `{full_table_name}`
    - Use standard SQL functions (SUM, COUNT, AVG, MAX, MIN)
    - Use DATE functions: date_trunc(), year(), month(), quarter()
    - Use CASE WHEN for conditional logic
@@ -181,6 +204,7 @@ SQL Query:
             
         except Exception as e:
             raise Exception(f"SQL generation failed: {str(e)}")
+        
     
     def _execute_sql_with_retry(self, initial_sql: str, context: Dict, max_retries: int = 3) -> Dict:
         """Execute SQL with intelligent retry logic"""
@@ -281,7 +305,7 @@ SQL Query:
 Fix this Databricks SQL query that failed with an error.
 
 ORIGINAL QUESTION: "{context['current_question']}"
-TABLE: {context['selected_dataset']}
+TABLE: prodfdm.rag.{context['selected_dataset']}
 
 FAILED SQL:
 {failed_sql}
@@ -294,7 +318,7 @@ PREVIOUS ERRORS:
 
 COMMON DATABRICKS ISSUES TO FIX:
 1. Column names - check spelling and existence
-2. Table name format - use backticks: `schema.table`
+2. Table name format - use backticks: `prodfdm.rag.table_name`
 3. Date functions - use Databricks syntax
 4. Data types - ensure proper casting
 5. GROUP BY - all non-aggregate columns must be in GROUP BY

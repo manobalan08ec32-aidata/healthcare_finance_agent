@@ -90,7 +90,7 @@ class SQLGeneratorAgent:
             'current_question': current_question
         }
     
-        def _generate_sql(self, context: Dict) -> str:
+    def _generate_sql(self, context: Dict) -> str:
         """Generate high-quality Databricks SQL with excellent prompts"""
         
         # Build table schema information from available_datasets
@@ -181,9 +181,13 @@ EXAMPLES:
 - For "monthly claim trends": GROUP BY year, month, ORDER BY year, month
 - For "member utilization by state": GROUP BY state, ORDER BY member_count DESC
 
-Generate ONLY the SQL query, no explanations. Make it production-ready and optimized.
+IMPORTANT: Return your response as EXACT JSON format with no other text, formatting, or markdown:
 
-SQL Query:
+{{
+  "sql_query": "your generated SQL query here"
+}}
+
+Do not include any explanations, markdown formatting, or other text outside the JSON.
 """
         
         try:
@@ -191,16 +195,18 @@ SQL Query:
                 {"role": "user", "content": sql_prompt}
             ])
             
-            # Clean up the response
-            sql_query = llm_response.strip()
-            
-            # Remove any markdown formatting
-            if sql_query.startswith("```sql"):
-                sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
-            elif sql_query.startswith("```"):
-                sql_query = sql_query.replace("```", "").strip()
-            
-            return sql_query
+            # Parse JSON response
+            try:
+                response_json = json.loads(llm_response.strip())
+                sql_query = response_json.get('sql_query', '').strip()
+                
+                if not sql_query:
+                    raise ValueError("Empty SQL query in JSON response")
+                
+                return sql_query
+                
+            except json.JSONDecodeError as e:
+                raise Exception(f"Failed to parse SQL generation JSON response: {str(e)}")
             
         except Exception as e:
             raise Exception(f"SQL generation failed: {str(e)}")
@@ -324,7 +330,13 @@ COMMON DATABRICKS ISSUES TO FIX:
 5. GROUP BY - all non-aggregate columns must be in GROUP BY
 6. Reserved keywords - use backticks if needed
 
-Generate the CORRECTED SQL query only, no explanations:
+IMPORTANT: Return your response as EXACT JSON format with no other text, formatting, or markdown:
+
+{{
+  "fixed_sql_query": "your corrected SQL query here"
+}}
+
+Do not include any explanations, markdown formatting, or other text outside the JSON.
 """
         
         try:
@@ -332,15 +344,21 @@ Generate the CORRECTED SQL query only, no explanations:
                 {"role": "user", "content": fix_prompt}
             ])
             
-            # Clean up the response
-            fixed_sql = llm_response.strip()
-            if fixed_sql.startswith("```sql"):
-                fixed_sql = fixed_sql.replace("```sql", "").replace("```", "").strip()
-            elif fixed_sql.startswith("```"):
-                fixed_sql = fixed_sql.replace("```", "").strip()
-            
-            print(f"    🔧 Generated fixed SQL")
-            return fixed_sql
+            # Parse JSON response
+            try:
+                response_json = json.loads(llm_response.strip())
+                fixed_sql = response_json.get('fixed_sql_query', '').strip()
+                
+                if not fixed_sql:
+                    print(f"    ❌ Empty fixed SQL in JSON response, using original")
+                    return failed_sql
+                
+                print(f"    🔧 Generated fixed SQL")
+                return fixed_sql
+                
+            except json.JSONDecodeError as e:
+                print(f"    ❌ Failed to parse fix SQL JSON response: {str(e)}")
+                return failed_sql  # Return original if JSON parsing fails
             
         except Exception as e:
             print(f"    ❌ Failed to generate fix: {str(e)}")
@@ -393,7 +411,13 @@ RESPONSE GUIDELINES:
 - Keep it concise but comprehensive
 - End with actionable insights if relevant
 
-Generate a clear, executive-ready response:
+IMPORTANT: Return your response as EXACT JSON format with no other text, formatting, or markdown:
+
+{{
+  "narrative_response": "your complete narrative analysis here"
+}}
+
+Do not include any explanations, markdown formatting, or other text outside the JSON.
 """
         
         try:
@@ -401,7 +425,37 @@ Generate a clear, executive-ready response:
                 {"role": "user", "content": synthesis_prompt}
             ])
             
-            return llm_response.strip()
+            # Parse JSON response
+            try:
+                response_json = json.loads(llm_response.strip())
+                narrative = response_json.get('narrative_response', '').strip()
+                
+                if not narrative:
+                    # Fallback if empty narrative
+                    return f"""
+Based on your query "{question}", I found {row_count} records in the dataset.
+
+Key findings:
+- Dataset contains {len(columns)} data columns: {', '.join(columns)}
+- Total records analyzed: {row_count}
+
+The data has been successfully retrieved and is available for further analysis.
+                    """.strip()
+                
+                return narrative
+                
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse synthesis JSON response: {str(e)}")
+                # Fallback to basic summary
+                return f"""
+Based on your query "{question}", I found {row_count} records in the dataset.
+
+Key findings:
+- Dataset contains {len(columns)} data columns: {', '.join(columns)}
+- Total records analyzed: {row_count}
+
+The data has been successfully retrieved and is available for further analysis.
+                """.strip()
             
         except Exception as e:
             # Fallback to basic summary

@@ -2,12 +2,12 @@ import time
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from state_schema import (
+from core.state_schema import (
     AgentState, create_conversation_entry, create_llm_interaction_entry,
     create_user_interaction_entry, create_agent_execution_entry,
     create_audit_entry, create_performance_entry
 )
-from databricks_client import DatabricksClient
+from core.databricks_client import DatabricksClient
 
 class EnterpriseTrackingSystem:
     """

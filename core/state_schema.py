@@ -1,5 +1,9 @@
 from typing import TypedDict, List, Dict, Any, Optional
 import datetime
+from dataclasses import dataclass, field
+from typing import Annotated
+from operator import add
+
 
 class AgentState(TypedDict):
     """Simplified state schema for core workflow - no enterprise tracking"""
@@ -15,6 +19,8 @@ class AgentState(TypedDict):
     previous_agent: Optional[str]
     flow_type: Optional[str]
     transition_type: Optional[str]
+    ambiguous_options: Optional[list]
+    dataset_followup_question: Optional[str]
     
     # ============ NAVIGATION CONTROLLER STATE ============
     question_type: Optional[str]  # "what" or "why"
@@ -23,6 +29,7 @@ class AgentState(TypedDict):
     
     # ============ DATASET SELECTION ============
     selected_dataset: Optional[str]
+    narrative_response:Optional[str]
     dataset_metadata: Optional[Dict]
     selection_reasoning: Optional[str]
     available_datasets: List[Dict]
@@ -36,7 +43,8 @@ class AgentState(TypedDict):
     generated_sql: Optional[str]
     query_results: Optional[Any]
     execution_status: str
-    
+    sql_query:Optional[str]
+    next_agent_disp:Optional[str]
     # ============ VARIANCE & ROOT CAUSE (PHASE 2/3) ============
     variance_detected: bool
     variance_details: List[Dict]
@@ -61,6 +69,9 @@ class AgentState(TypedDict):
     session_start_time: str
     last_update_time: str
     total_processing_time: Optional[float]
+    questions_sql_history: list[str]
+    user_question_history: list[str]
+
     
     def __init__(self, **kwargs):
         """Initialize state with basic defaults"""
@@ -73,6 +84,7 @@ class AgentState(TypedDict):
             
             # Question history
             'user_questions_history': [],
+
             
             # Current state
             'current_agent': None,

@@ -9,7 +9,7 @@ class DatabricksClient:
     
     def __init__(self):
         self.DATABRICKS_HOST = "https://adb-1446028976895628.8.azuredatabricks.net"
-        self.DATABRICKS_TOKEN = "******************"  # Use environment variable in production
+        self.DATABRICKS_TOKEN = "************"  # Use environment variable in production
         self.SQL_WAREHOUSE_ID = "86fe3eb6b45135bb"
         self.VECTOR_TBL_INDEX = "prd_optumrx_orxfdmprdsa.rag.table_chunks"
         self.LLM_MODEL = "databricks-claude-sonnet-4"
@@ -24,12 +24,13 @@ class DatabricksClient:
         self.llm_api_url = f"{self.DATABRICKS_HOST}/serving-endpoints/{self.LLM_MODEL}/invocations"
     
     def execute_sql(self, sql_query: str, timeout: int = 300) -> List[Dict]:
-        """Execute SQL query and return results"""
+        """Execute SQL query and return results with proper async handling"""
         
         payload = {
             "warehouse_id": self.SQL_WAREHOUSE_ID,
             "statement": sql_query,
-            "disposition": "INLINE"
+            "disposition": "INLINE",
+            "wait_timeout": "10s"  # Short initial wait, then we'll poll
         }
         
         try:
@@ -37,7 +38,7 @@ class DatabricksClient:
                 self.sql_api_url,
                 headers=self.headers,
                 json=payload,
-                timeout=timeout
+                timeout=60  # HTTP request timeout (not query timeout)
             )
             response.raise_for_status()
             
@@ -46,14 +47,35 @@ class DatabricksClient:
             # Debug: Print response structure
             print(f"Databricks response keys: {result.keys()}")
             
-            # ✅ FIXED: Use the working pattern
-            result_data = result.get("result", {})
-            if "data_array" not in result_data:
-                return []
+            # Check if query completed immediately
+            status = result.get('status', {})
+            state = status.get('state', '')
             
-            # ✅ FIXED: Manifest is at TOP LEVEL, not inside result
-            cols = [c["name"] for c in result["manifest"]["schema"]["columns"]]
-            return [dict(zip(cols, row)) for row in result_data["data_array"]]
+            print(f"Initial query state: {state}")
+            
+            if state == 'SUCCEEDED':
+                # Query completed immediately
+                return self._extract_results(result)
+            
+            elif state in ['PENDING', 'RUNNING']:
+                # Query is still running, poll for results
+                statement_id = result.get('statement_id')
+                if statement_id:
+                    print(f"🔄 Query still running, polling for results (timeout: {timeout}s)")
+                    return self._poll_for_results(statement_id, timeout)
+                else:
+                    raise Exception("Query is running but no statement_id provided")
+            
+            elif state == 'FAILED':
+                error_message = status.get('error', {}).get('message', 'Unknown error')
+                raise Exception(f"Query failed: {error_message}")
+            
+            elif state == 'CANCELED':
+                raise Exception("Query was canceled")
+            
+            else:
+                # Fallback - try to extract results anyway
+                return self._extract_results(result)
                     
         except requests.exceptions.RequestException as e:
             raise Exception(f"SQL execution failed: {str(e)}")
@@ -62,28 +84,113 @@ class DatabricksClient:
         except Exception as e:
             raise Exception(f"Unexpected error in SQL execution: {str(e)}")
     
-    def vector_search_tables(self, query_text: str, num_results: int = 5, index_name: str = None) -> List[Dict]:
-        """Search table chunks using vector search with configurable index"""
+    def _extract_results(self, result: Dict) -> List[Dict]:
+        """Extract results from Databricks response"""
+        
+        result_data = result.get("result", {})
+        if "data_array" not in result_data:
+            return []
+        
+        # Manifest is at top level
+        if "manifest" not in result:
+            return []
+            
+        cols = [c["name"] for c in result["manifest"]["schema"]["columns"]]
+        return [dict(zip(cols, row)) for row in result_data["data_array"]]
+    
+    def _poll_for_results(self, statement_id: str, timeout: int = 300) -> List[Dict]:
+        """Poll for query results until completion with progressive backoff"""
+        
+        print(f"🔄 Polling for results of statement {statement_id} (max {timeout}s)")
+        
+        start_time = time.time()
+        poll_interval = 2  # Start with 2 second intervals
+        max_poll_interval = 30  # Cap at 30 seconds
+        
+        while time.time() - start_time < timeout:
+            try:
+                elapsed = time.time() - start_time
+                print(f"  ⏱️ Elapsed: {elapsed:.1f}s, checking status...")
+                
+                # Get statement status
+                status_url = f"{self.sql_api_url}{statement_id}"
+                response = requests.get(status_url, headers=self.headers, timeout=30)
+                response.raise_for_status()
+                
+                result = response.json()
+                status = result.get('status', {})
+                state = status.get('state', '')
+                
+                print(f"    Status: {state}")
+                
+                if state == 'SUCCEEDED':
+                    print(f"  ✅ Query completed successfully after {elapsed:.1f}s")
+                    return self._extract_results(result)
+                
+                elif state == 'FAILED':
+                    error_message = status.get('error', {}).get('message', 'Unknown error')
+                    raise Exception(f"Query failed after {elapsed:.1f}s: {error_message}")
+                
+                elif state == 'CANCELED':
+                    raise Exception(f"Query was canceled after {elapsed:.1f}s")
+                
+                elif state in ['PENDING', 'RUNNING']:
+                    # Still running, wait and poll again
+                    print(f"    Still running, waiting {poll_interval}s before next check...")
+                    time.sleep(poll_interval)
+                    
+                    # Progressive backoff: increase interval up to max
+                    poll_interval = min(poll_interval * 1.5, max_poll_interval)
+                    continue
+                
+                else:
+                    print(f"    Unknown state: {state}, continuing to poll...")
+                    time.sleep(poll_interval)
+                    continue
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"    ⚠️ Network error while polling: {str(e)}, retrying...")
+                time.sleep(poll_interval)
+                continue
+        
+        raise Exception(f"Query timed out after {timeout} seconds")
+
+    def vector_search_tables(self, query_text: str, num_results: int = 5, index_name: str = None, timeout: int = 600) -> List[Dict]:
+        """Search table chunks using vector search with extended timeout"""
         
         # Use provided index or default
         search_index = index_name if index_name else self.VECTOR_TBL_INDEX
         
+        # Escape single quotes properly
+        escaped_query = query_text.replace("'", "''")
+        
         sql_query = f"""
         SELECT table_name, table_summary as content, table_kg 
         FROM VECTOR_SEARCH(
-            index => '{self.VECTOR_TBL_INDEX}',
-            query_text => '{query_text.replace("'", "''")}',
+            index => '{search_index}',
+            query_text => '{escaped_query}',
             num_results => {num_results}
         )
         """
         
+        print(f"⏱️ Using timeout: {timeout}s")
+        
         try:
-            results = self.execute_sql(sql_query)
+            start_time = time.time()
+            results = self.execute_sql(sql_query, timeout=timeout)
+            elapsed = time.time() - start_time
+            
+            print(f"✅ Vector search completed in {elapsed:.1f}s, returned {len(results)} results")
+            
             return results
+            
         except Exception as e:
+            elapsed = time.time() - start_time if 'start_time' in locals() else 0
+            print(f"❌ Vector search failed after {elapsed:.1f}s: {str(e)}")
             raise Exception(f"Vector search failed: {str(e)}")
+
     
-    def call_claude_api(self, messages: List[Dict], system_prompt: str = None, max_tokens: int = 4000) -> str:
+    def call_claude_api(self, messages: List[Dict], system_prompt: str = None, max_tokens: int = 15000) -> str:
         """Call Databricks-hosted Claude endpoint"""
         
         payload = {

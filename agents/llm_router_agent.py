@@ -20,26 +20,35 @@ class LLMRouterAgent:
         print(f"🔍 Step 1: Direct vector search for: '{user_question}'")
         
         # 1. Direct vector search with user question
-        search_results = self._direct_vector_search(user_question)
+        search_results = self._direct_vector_search_dataset(user_question)
         
         if not search_results:
             raise Exception("No datasets found in vector search")
         
-        print(f"  → Found {len(search_results)} datasets")
-        
         # 2. LLM selection from search results
-        print(f"🧠 Step 2: LLM dataset selection from top results")
         selection_result = self._llm_dataset_selection(search_results, state)
-        
+        # print("selection result",selection_result)
         # 3. Check if result is ambiguous (needs user clarification)
         if selection_result.get('requires_clarification', False):
             print(f"❓ Step 3: Ambiguous result - preparing for user clarification")
-            return self._prepare_clarification_interrupt(selection_result, search_results, state)
-        
-        print(f"✅ Step 3: Clear selection made")
-        return selection_result
-    
-    def _direct_vector_search(self, user_question: str, num_results: int = 5) -> List[Dict]:
+            return {
+                'dataset_followup_question': selection_result.get('clarification_question', 'Please clarify your requirements.'),
+                'selection_reasoning': selection_result.get('selection_reasoning', ''),
+                'selected_dataset': selection_result.get('selected_dataset', {}),
+                'requires_clarification': True
+            }
+        else: 
+
+            return {
+                'dataset_followup_question': None,
+                'selection_reasoning': selection_result.get('selection_reasoning', ''),
+                'table_kg': selection_result.get('table_kg', {}),  # This contains the selected dataset info
+                'selected_dataset': selection_result.get('selected_dataset'),  # Add this for clarity
+                'requires_clarification': False
+            }
+            print('router output else clause',selection_result)
+
+    def _direct_vector_search_dataset(self, user_question: str, num_results: int = 10) -> List[Dict]:
         """Direct vector search against specified index"""
         
         try:
@@ -47,24 +56,13 @@ class LLMRouterAgent:
                 query_text=user_question,
                 num_results=num_results
             )
-            
-            # Parse table_kg JSON if it exists
-            for result in search_results:
-                if result.get('table_kg'):
-                    try:
-                        result['table_kg_parsed'] = json.loads(result['table_kg'])
-                    except json.JSONDecodeError:
-                        result['table_kg_parsed'] = {}
-                else:
-                    result['table_kg_parsed'] = {}
-            
             return search_results
             
         except Exception as e:
             raise Exception(f"Vector search failed: {str(e)}")
     
     def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
-        """Use LLM to select best dataset from search results"""
+        """Use LLM to select best dataset from search results with retry logic"""
         
         # Prepare dataset information for LLM
         dataset_options = []
@@ -83,159 +81,234 @@ class LLMRouterAgent:
         
         User Question: "{user_question}"
         
-        Available Datasets (from vector search): {json.dumps(dataset_options, indent=2)}
-        
-        Previous Context: {state.get('context_from_previous_query', 'None')}
-        User Preferences: {state.get('user_preferences', {})}
+        Available Datasets: {json.dumps(dataset_options, indent=2)}
         
         Analyze each dataset's suitability for answering the user's question based on the table name and description.
         
-        SELECTION CRITERIA:
-        1. RELEVANCE: How directly can this dataset answer the question?
-        2. COMPLETENESS: Does the description suggest it has necessary data elements?
-        3. HEALTHCARE FINANCE FIT: Appropriate for the domain?
-        
-        CLARITY ASSESSMENT:
-        - If ONE dataset is clearly best (confidence >85%): Select it
-        - If multiple datasets could work equally well: Mark as ambiguous
-        
-        Respond with JSON:
+        Instructions:
+            - Read the user's question and the dataset descriptions and pick one dataset which matches users question.
+            - Do NOT interpret or infer the meaning of metrics, attributes, or business terms in the user's question.
+            - Do NOT reason about dates, timeframes, or business context unless explicitly mentioned in the dataset description.
+            - Only select a dataset if the description clearly contains terms from the user's question.
+            - If there is only one candidate table, select it **only if** its description contains relevant terms from the user's question.
+            - If multiple tables could be relevant, select the best match **only if** one clearly stands out.
+            - If no clear match exists, respond with a clarification question. Include the available tables and their descriptions using business-friendly language.
+
+        Response format (return EXACTLY this structure with no additional text):
         {{
-            "clear_selection": true,
-            "selected_dataset": "table_name",
-            "selection_confidence": 0.95,
-            "selection_reasoning": "detailed explanation",
-            "requires_clarification": false,
+            "clear_selection": true/false,
+            "selected_dataset": "actual_table_name",
+            "selection_reasoning": "2-3 lines on why this dataset is best",
+            "requires_clarification": false/true,
             "ambiguous_options": [
-                {{"table_name": "option1", "use_case": "when this would be better"}},
-                {{"table_name": "option2", "use_case": "when this would be better"}}
+                {{"table_name": "actual_table_name", "business_name": "Claims Data", "use_case": "for detailed transaction analysis"}},
+                {{"table_name": "actual_table_name", "business_name": "Member Data", "use_case": "for member demographics"}}
             ],
-            "clarification_question": "What specific aspect are you most interested in?"
+            "clarification_question": "Are you looking for detailed claim transactions or member enrollment information?"
         }}
+        
+        IMPORTANT: 
+        - Generate business_name dynamically based on table description
+        - Make clarification_question specific to the user's query context
+        - Use functional language, not technical jargon
         """
         
+        # Retry logic - up to 2 attempts
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt == 0:
+                    # First attempt
+                    llm_response = self.db_client.call_claude_api([
+                        {"role": "user", "content": selection_prompt}
+                    ])
+                else:
+                    # Retry with correction instruction
+                    retry_prompt = f"""
+                    RETRY ATTEMPT {attempt}: The previous response had invalid JSON format.
+                    
+                    {selection_prompt}
+                    
+                    CRITICAL ERROR CORRECTION:
+                    - Your previous response could not be parsed as valid JSON
+                    - Return ONLY valid JSON format - no markdown, no code blocks, no extra text
+                    - Do not wrap response in ```json or ``` 
+                    - Start directly with {{ and end with }}
+                    - Double-check all quotes and brackets are properly closed
+                    """
+                    
+                    llm_response = self.db_client.call_claude_api([
+                        {"role": "user", "content": retry_prompt}
+                    ])
+                print('llm_response from dataset selection',llm_response)
+                selection_result = json.loads(llm_response)
+                
+                # If we get here, JSON parsing succeeded
+                # Add metadata from search results
+                if selection_result.get('selected_dataset'):
+                    selected_table = selection_result['selected_dataset']
+                    print('selected table',selected_table)
+                    selected_metadata = next(
+                        (ds for ds in search_results if ds['table_name'] == selected_table),
+                        search_results[0] if search_results else {}
+                    )
+                
+                # Add all search results for reference
+                # selection_result['available_datasets'] = search_results
+                print('return router output',selection_result)
+                
+                return {
+                        'dataset_followup_question': selection_result.get('clarification_question'),
+                        'selected_dataset': selection_result.get('selected_dataset'),
+                        'table_kg': selected_metadata.get('table_kg'),
+                        'requires_clarification': selection_result.get('requires_clarification'),
+                        'selection_reasoning':selection_result.get('selection_reasoning')
+                    }
+                
+            except json.JSONDecodeError as e:
+                
+                if attempt == max_retries:
+                    # Final attempt failed, use fallback
+                    return  {
+                        'dataset_followup_question': 'Errored',
+                        'selected_dataset': 'Errored',
+                        'table_kg': 'Errored',
+                        'requires_clarification': 'Errored'
+                    }
+                else:
+                    # Continue to next retry
+                    continue
+                    
+            except Exception as e:
+                if attempt == max_retries:
+                    raise Exception(f"LLM dataset selection failed after {max_retries + 1} attempts: {str(e)}")
+                else:
+                    continue
+    
+    
+def _fix_router_llm_call(self, state: AgentState) -> Dict:
+    """Use LLM to select best dataset from search results with retry logic and fetch table_kg"""
+    
+    user_clarification_answer= state.get('current_question', state.get('original_question', ''))
+    followup_question = state.get('dataset_followup_question', '')
+    available_datasets = state.get('selected_dataset', '')
+    question_history=state.get('user_question_history', '')
+    actual_question = actual_question = questions_history[-1] if questions_history else None
+    selection_prompt = f"""
+    Healthcare Finance Dataset Selection Task: You need to identify the actual table based 
+    on the user clarification for the earlier follow up question.
+    
+    User actual Question: "{actual_question}"
+    Follow up question: {followup_question}
+
+    User answer: {user_clarification_answer}
+    Available Datasets: {available_datasets}
+    
+    Instructions:
+            - Interpret the actual question, follow up question and user clarification answer and pick one table from the available datasets and return
+            
+    Response format (return EXACTLY this structure with no additional text):
+    {{
+        "clear_selection": true/false,
+        "selected_dataset": "actual_table_name"
+    }}
+    """
+    
+    # Retry logic - up to 2 attempts
+    max_retries = 2
+    for attempt in range(max_retries + 1):
         try:
-            llm_response = self.db_client.call_claude_api([
-                {"role": "user", "content": selection_prompt}
-            ])
+            if attempt == 0:
+                # First attempt
+                llm_response = self.db_client.call_claude_api([
+                    {"role": "user", "content": selection_prompt}
+                ])
+            else:
+                # Retry with correction instruction
+                retry_prompt = f"""
+                RETRY ATTEMPT {attempt}: The previous response had invalid JSON format.
+                
+                {selection_prompt}
+                
+                CRITICAL ERROR CORRECTION:
+                - Your previous response could not be parsed as valid JSON
+                - Return ONLY valid JSON format - no markdown, no code blocks, no extra text
+                - Do not wrap response in ```json or ``` 
+                - Start directly with {{ and end with }}
+                - Double-check all quotes and brackets are properly closed
+                """
+                
+                llm_response = self.db_client.call_claude_api([
+                    {"role": "user", "content": retry_prompt}
+                ])
             
             selection_result = json.loads(llm_response)
             
-            # Add metadata from search results
+            # If we get here, JSON parsing succeeded
             if selection_result.get('selected_dataset'):
-                selected_table = selection_result['selected_dataset']
-                selected_metadata = next(
-                    (ds for ds in search_results if ds['table_name'] == selected_table),
-                    search_results[0] if search_results else {}
-                )
-                
-                selection_result['dataset_metadata'] = {
-                    'table_name': selected_metadata.get('table_name'),
-                    'description': selected_metadata.get('content'),
-                    'table_kg': selected_metadata.get('table_kg'),
-                    'columns': selected_metadata.get('table_kg_parsed', {})
+                selected_table = selection_result.get('selected_dataset')
+                                
+                # Fetch table_kg from metadata table
+                try:
+                    sql_query = f"""
+                    SELECT table_kg 
+                    FROM prd_optumrx_orxfdmprdsa.rag.metadata_tbl_level 
+                    WHERE table_name = '{selected_table}'
+                    """
+                                
+                    # Execute SQL query
+                    sql_results = self.db_client.execute_sql(sql_query)
+                    
+                    table_kg = None
+                    if sql_results and len(sql_results) > 0:
+                        table_kg = sql_results[0].get('table_kg', None)
+                    else:
+                        print(f"⚠️ No table_kg found for table: {selected_table}")
+                    
+                    return {
+                        'dataset_followup_question': None,
+                        'selected_dataset': selected_table,
+                        'table_kg': table_kg,
+                        'requires_clarification': False
+                    }
+                    
+                except Exception as sql_error:
+                    # Return without table_kg if SQL fails
+                    return {
+                        'dataset_followup_question': None,
+                        'selected_dataset': 'Error',
+                        'table_kg': 'Error',
+                        'requires_clarification': False
+                    }
+            else:
+                return {
+                    'dataset_followup_question': "Could not determine the appropriate dataset from your clarification.",
+                    'selected_dataset': None,
+                    'table_kg': None,
+                    'requires_clarification': True
                 }
             
-            # Add all search results for reference
-            selection_result['available_datasets'] = search_results
-            
-            return selection_result
-            
-        except json.JSONDecodeError as e:
-            return self._fallback_selection(search_results, state)
+        except json.JSONDecodeError as e:            
+            if attempt == max_retries:
+                # Final attempt failed, use fallback
+                return {
+                    'dataset_followup_question': "Error processing your clarification. Please try again.",
+                    'selected_dataset': None,
+                    'table_kg': None,
+                    'requires_clarification': True
+                }
+            else:
+                # Continue to next retry
+                continue
+                
         except Exception as e:
-            raise Exception(f"LLM dataset selection failed: {str(e)}")
+            if attempt == max_retries:
+                return {
+                    'dataset_followup_question': "Error processing your clarification. Please try again.",
+                    'selected_dataset': None,
+                    'table_kg': None,
+                    'requires_clarification': True
+                }
+            else:
+                continue
     
-    def _prepare_clarification_interrupt(self, selection_result: Dict, search_results: List[Dict], 
-                                       state: AgentState) -> Dict:
-        """Prepare data for LangGraph interrupt to ask user for clarification"""
-        
-        ambiguous_options = selection_result.get('ambiguous_options', [])
-        clarification_question = selection_result.get('clarification_question', 
-                                                    "Which dataset would you prefer?")
-        
-        # Prepare user-friendly options
-        user_options = []
-        for option in ambiguous_options:
-            table_name = option.get('table_name')
-            use_case = option.get('use_case')
-            
-            # Find full metadata for this option
-            full_metadata = next(
-                (ds for ds in search_results if ds['table_name'] == table_name),
-                {}
-            )
-            
-            user_options.append({
-                'option_id': len(user_options) + 1,
-                'table_name': table_name,
-                'display_name': table_name.split('.')[-1],  # Show just table name
-                'use_case': use_case,
-                'description': full_metadata.get('content', '')[:150] + '...',
-                'column_count': len(full_metadata.get('table_kg_parsed', {}).get('columns', []))
-            })
-        
-        return {
-            'requires_clarification': True,
-            'clarification_question': clarification_question,
-            'user_options': user_options,
-            'selection_reasoning': selection_result.get('selection_reasoning'),
-            'available_datasets': search_results,
-            'interrupt_data': {
-                'type': 'dataset_clarification',
-                'question': clarification_question,
-                'options': user_options
-            }
-        }
-    
-    def process_user_clarification(self, user_choice: Dict, available_datasets: List[Dict]) -> Dict:
-        """Process user's clarification choice and return final selection"""
-        
-        selected_option_id = user_choice.get('option_id')
-        selected_table_name = user_choice.get('table_name')
-        
-        # Find the selected dataset
-        selected_metadata = next(
-            (ds for ds in available_datasets if ds['table_name'] == selected_table_name),
-            None
-        )
-        
-        if not selected_metadata:
-            raise Exception(f"Selected dataset {selected_table_name} not found")
-        
-        return {
-            'selected_dataset': selected_table_name,
-            'dataset_metadata': {
-                'table_name': selected_metadata.get('table_name'),
-                'description': selected_metadata.get('content'),
-                'table_kg': selected_metadata.get('table_kg'),
-                'columns': selected_metadata.get('table_kg_parsed', {})
-            },
-            'selection_confidence': 1.0,  # User made the choice
-            'selection_reasoning': f"User selected option {selected_option_id}: {selected_table_name}",
-            'user_clarified': True,
-            'available_datasets': available_datasets
-        }
-    
-    def _fallback_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
-        """Fallback selection when LLM fails"""
-        
-        if not search_results:
-            raise Exception("No datasets available for selection")
-        
-        # Select first result as fallback
-        selected = search_results[0]
-        
-        return {
-            'selected_dataset': selected.get('table_name'),
-            'selection_confidence': 0.6,
-            'selection_reasoning': 'Fallback selection - first available dataset',
-            'dataset_metadata': {
-                'table_name': selected.get('table_name'),
-                'description': selected.get('content'),
-                'table_kg': selected.get('table_kg', '{}'),
-                'columns': selected.get('table_kg_parsed', {})
-            },
-            'requires_clarification': False,
-            'available_datasets': search_results
-        }

@@ -5,8 +5,10 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
-from core.llm_navigation_controller import LLMNavigationController
-from core.llm_router_agent import LLMRouterAgent
+from agents.llm_navigation_controller import LLMNavigationController
+from agents.llm_router_agent import LLMRouterAgent
+from agents.sql_generator import SQLGeneratorAgent
+from langgraph.types import Command, interrupt
 
 class HealthcareFinanceWorkflow:
     """Simplified LangGraph workflow with streaming support"""
@@ -17,6 +19,7 @@ class HealthcareFinanceWorkflow:
         # Initialize agents
         self.nav_controller = LLMNavigationController(databricks_client)
         self.router_agent = LLMRouterAgent(databricks_client)
+        self.sql_gen_agent = SQLGeneratorAgent(databricks_client)
         
         # Build the graph
         self.workflow = self._build_workflow()
@@ -34,13 +37,13 @@ class HealthcareFinanceWorkflow:
         # Add nodes
         workflow.add_node("navigation_controller", self._navigation_controller_node)
         workflow.add_node("router_agent", self._router_agent_node)
+        workflow.add_node("sql_generator_agent", self._sql_generator_node)
         workflow.add_node("root_cause_agent", self._root_cause_node)
         workflow.add_node("user_clarification", self._user_clarification_node)
         workflow.add_node("workflow_complete", self._workflow_complete_node)
         
         # Set entry point
         workflow.set_entry_point("navigation_controller")
-        
         # Navigation routes to two possible agents based on question type
         workflow.add_conditional_edges(
             "navigation_controller",
@@ -51,21 +54,23 @@ class HealthcareFinanceWorkflow:
             }
         )
         
-        # Router agent can complete or require clarification
-        workflow.add_conditional_edges(
-            "router_agent",
-            self._route_from_router,
-            {
-                "workflow_complete": "workflow_complete",
-                "user_clarification": "user_clarification",
-                "END": END
-            }
-        )
+        # # Router agent can complete or require clarification
+        # workflow.add_conditional_edges(
+        #     "router_agent",
+        #     self._route_from_router,
+        #     {
+        #         "workflow_complete": "workflow_complete",
+        #         "user_clarification": "user_clarification",
+        #         "END": END
+        #     }
+        # )
         
-        # Other nodes complete the workflow
-        workflow.add_edge("root_cause_agent", "workflow_complete")
-        workflow.add_edge("user_clarification", "workflow_complete")
-        workflow.add_edge("workflow_complete", END)
+        # # Other nodes complete the workflow
+        workflow.add_edge("router_agent", "sql_generator_agent")
+        workflow.add_edge( "sql_generator_agent",END)
+        workflow.add_edge("root_cause_agent", END)
+        # workflow.add_edge("user_clarification", "workflow_complete")
+        # workflow.add_edge("workflow_complete", END)
         
         return workflow
     
@@ -80,25 +85,18 @@ class HealthcareFinanceWorkflow:
             # Process user query
             nav_result = self.nav_controller.process_user_query(state)
             
-            # Update state with results
-            state.update({
-                'current_agent': 'navigation_controller',
-                'current_question': nav_result['rewritten_question'],
-                'question_type': nav_result['question_type'],
-                'next_agent': nav_result['next_agent']
-            })
-            
-            # Add rewritten question to history (using Annotated append)
-            state = {
-                **state,
-                'user_questions_history': nav_result['rewritten_question']
-            }
-            
-            print(f"  ✅ Original: {state.get('original_question', '')}")
-            print(f"  ✅ Rewritten: {nav_result['rewritten_question']}")
-            print(f"  ✅ Type: {nav_result['question_type']}")
-            print(f"  ✅ Next Agent: {nav_result['next_agent']}")
-            
+            # state['current_agent'] = 'navigation_controller'
+            state['current_question'] = nav_result['rewritten_question']
+            state['question_type'] = nav_result['question_type']
+            state['next_agent'] = nav_result['next_agent']
+            state['next_agent_disp'] = 'Agent Dataset Identifier'
+            state['current_agent'] = 'navigation_controller'
+            if 'user_question_history' not in state or state['user_question_history'] is None:
+                state['user_question_history'] = []
+            state['user_question_history'].append(nav_result['rewritten_question'])
+
+             
+            print('state after navigation',state)
             return state
             
         except Exception as e:
@@ -108,46 +106,104 @@ class HealthcareFinanceWorkflow:
             return state
     
     def _router_agent_node(self, state: AgentState) -> AgentState:
-        """Router Agent: Dataset selection"""
-        
+        """Router Agent: Dataset selection with dynamic interrupt"""
+    
         print(f"\n🎯 Router Agent: Selecting dataset")
-        
+    
         try:
             # Execute router agent
             selection_result = self.router_agent.select_dataset(state)
             
-            # Check for clarification
-            if selection_result.get('requires_clarification'):
-                print(f"  ❓ User clarification needed")
-                state.update({
-                    'current_agent': 'router_agent',
-                    'requires_user_input': True,
-                    'clarification_data': selection_result.get('interrupt_data'),
-                    'pending_selection_result': selection_result
+            
+            # Update state with all selection results
+            if selection_result.get('dataset_followup_question'):
+                # Clarification needed - set state and interrupt
+                state['dataset_followup_question'] = selection_result.get('dataset_followup_question')
+                state['requires_clarification'] = True
+                state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
+                state['selected_dataset'] = selection_result.get('selected_dataset')
+                state['current_agent'] = 'router_agent'
+                
+                print(f"🛑 INTERRUPTING: Clarification required: {state['dataset_followup_question']}")
+                
+                # Dynamic interrupt - this pauses the graph execution and returns the clarification question
+                user_clarification = interrupt({
+                    "dataset_followup_question": state['dataset_followup_question']
                 })
-                return state
+                
+                print(f"📝 User provided clarification: {user_clarification}")
+                
+                # Update current question with clarification
+                state['current_question'] = user_clarification
+                state['dataset_followup_clarification'] = user_clarification
+                
+                # Call the fix router function
+                try:
+                    fixed_result = self.router_agent._fix_router_llm_call(state)
+                    
+                    # Update state with fixed results
+                    if fixed_result.get('selected_dataset'):
+                        state['selected_dataset'] = fixed_result.get('selected_dataset')
+                        state['requires_clarification'] = False
+                        state['dataset_followup_question'] = None
+                        state['dataset_metadata'] = selection_result.get('table_kg', {})
+                        question_history=state.get('user_question_history', '')
+                        actual_question = questions_history[-1] if questions_history else None
+                        state['current_question'] =actual_question
+                        print(f"✅ Clarification resolved. Selected: {state['selected_dataset']}")
+                    else:
+                        print("❌ Clarification did not resolve dataset selection")
+                        state['errors'].append("Clarification did not resolve dataset selection")
+                        
+                except Exception as e:
+                    print(f"❌ Error in clarification handling: {str(e)}")
+                    state['errors'].append(f"Clarification error: {str(e)}")
+                    
+            else:
+                print('router output else clause',selection_result)
+                # Clear selection made
+                state['selected_dataset'] = selection_result.get('selected_dataset')
+                state['dataset_metadata'] = selection_result.get('table_kg', {})
+                state['requires_clarification'] = False
+                state['dataset_followup_question'] = None
+                print(f"✅ Dataset selected: {state.get('selected_dataset', 'Unknown')}")
             
-            # Update state with selection
-            state.update({
-                'current_agent': 'router_agent',
-                'selected_dataset': selection_result['selected_dataset'],
-                'dataset_metadata': selection_result['dataset_metadata'],
-                'selection_reasoning': selection_result['selection_reasoning'],
-                'selection_confidence': selection_result.get('selection_confidence', 0.8),
-                'metadata_context': {
-                    'table_name': selection_result['selected_dataset'],
-                    'description': selection_result['dataset_metadata'].get('description', ''),
-                    'metadata': selection_result['dataset_metadata']
-                }
-            })
-            
-            print(f"  ✅ Selected: {selection_result['selected_dataset']}")
-            print(f"  ✅ Confidence: {selection_result.get('selection_confidence', 0.8):.1%}")
-            
+            state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
+            state['current_agent'] = 'router_agent'
+            state['next_agent'] = 'sql_generator_agent'
+            state['next_agent_disp'] = 'SQL Generator and Synthesizer'
+
+            print('state after router',state)
             return state
-            
+                    
         except Exception as e:
             print(f"  ❌ Router failed: {str(e)}")
+            state['errors'].append(f"Router error: {str(e)}")
+            return state
+    
+    def _sql_generator_node(self, state: AgentState) -> AgentState:
+        """SQL Agent: SQL ,dataset and synthesizer generation"""
+        
+        print(f"\n🎯 SQL Agent: SQL ,dataset and synthesizer generation")
+        
+        try:
+            # Execute router agent
+            sql_output = self.sql_gen_agent.generate_and_execute_sql(state)
+            
+            state['sql_query'] = sql_output.get('sql_query', '')
+            state['current_agent'] = 'sql_generator'
+            state['query_results'] = sql_output.get('query_results', '')
+            state['narrative_response'] = sql_output.get('narrative_response', '')
+            # Ensure questions_sql_history is initialized as a list
+            if 'questions_sql_history' not in state or state['questions_sql_history'] is None:
+                state['questions_sql_history'] = []
+            state['questions_sql_history'].append(state.get('current_question'))
+            state['questions_sql_history'].append(sql_output.get('sql_query', 'None'))
+            print('state after sql load',state)
+            return state
+                        
+        except Exception as e:
+            print(f"  ❌ SQL generator failed: {str(e)}")
             state['errors'].append(f"Router error: {str(e)}")
             return state
     
@@ -216,12 +272,21 @@ class HealthcareFinanceWorkflow:
         question_type = state.get('question_type', 'what')
         next_agent = state.get('next_agent', 'router_agent')
         
-        print(f"  🔀 Navigation routing: {question_type} → {next_agent}")
+        print(f"🔀 Navigation routing debug:")
+        print(f"  - question_type: '{question_type}'")
+        print(f"  - next_agent: '{next_agent}'")
+        print(f"  - next_agent type: {type(next_agent)}")
         
-        if next_agent in ['router_agent', 'root_cause_agent']:
-            return next_agent
+        # Explicit routing with validation
+        if next_agent == "root_cause_agent":
+            print(f"  ✅ Routing to: root_cause_agent")
+            return "root_cause_agent"
+        elif next_agent == "router_agent":
+            print(f"  ✅ Routing to: router_agent")
+            return "router_agent"
         else:
-            return 'router_agent'  # Fallback
+            print(f"  ⚠️ Unknown next_agent '{next_agent}', defaulting to router_agent")
+            return "router_agent"
     
     def _route_from_router(self, state: AgentState) -> str:
         """Route from router based on completion state"""
@@ -264,9 +329,31 @@ class HealthcareFinanceWorkflow:
         print("=" * 60)
         
         try:
-            # Run the workflow
+            # Run the workflow with streaming to see each step
             config = {"configurable": {"thread_id": session_id}}
-            final_state = self.app.invoke(initial_state, config)
+            
+            print(f"\n🔍 Streaming workflow execution:")
+            final_state = None
+            step_count = 0
+            
+            for step in self.app.stream(initial_state, config):
+                step_count += 1
+                print(f"\n--- Step {step_count} ---")
+                for node_name, node_state in step.items():
+                    print(f"📍 Executed node: '{node_name}'")
+                    print(f"  Current agent: {node_state.get('current_agent')}")
+                    print(f"  Next agent: {node_state.get('next_agent')}")
+                    print(f"  Question type: {node_state.get('question_type')}")
+                    final_state = node_state
+            
+            if final_state is None:
+                print("❌ No steps executed - workflow might have failed to start")
+                return {
+                    'success': False,
+                    'error': 'No workflow steps executed',
+                    'session_id': session_id,
+                    'duration': time.time() - start_time
+                }
             
             # Calculate total processing time
             total_duration = time.time() - start_time
@@ -274,6 +361,7 @@ class HealthcareFinanceWorkflow:
             
             print("\n" + "=" * 60)
             print(f"✅ Workflow completed successfully")
+            print(f"Total steps: {step_count}")
             print(f"Final agent: {final_state.get('current_agent')}")
             print(f"Total duration: {total_duration:.2f}s")
             print(f"Errors: {len(final_state.get('errors', []))}")
@@ -290,6 +378,8 @@ class HealthcareFinanceWorkflow:
             error_duration = time.time() - start_time
             
             print(f"\n❌ Workflow failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'error': str(e),
@@ -335,9 +425,7 @@ if __name__ == "__main__":
     
     # Test questions
     test_questions = [
-        "What are Q3 pharmacy claims costs?",
-        "Why are medical claims higher than expected?",
-        "Show me the details"  # Follow-up example
+        "What is the claim revenue for the month of july 2025?"
     ]
     
     for question in test_questions:

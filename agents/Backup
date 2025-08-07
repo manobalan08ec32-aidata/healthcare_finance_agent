@@ -1,0 +1,796 @@
+from typing import Dict, List, Optional, Tuple
+import json
+import asyncio
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from core.state_schema import AgentState
+from core.databricks_client import DatabricksClient
+
+class RootCauseAnalysisAgent:
+    """Root Cause Analysis Agent that processes knowledge graphs and generates insights"""
+    
+    def __init__(self, databricks_client: DatabricksClient):
+        self.db_client = databricks_client
+        
+    def analyze_root_cause(self, state: AgentState) -> Dict[str, any]:
+        """Main function to perform root cause analysis with enhanced knowledge graph selection"""
+        
+        user_question = state.get('current_question', state.get('original_question', ''))
+        
+        if not user_question:
+            raise Exception("No user question found in state")
+        
+        print(f"🔍 Starting enhanced root cause analysis for: '{user_question}'")
+        
+        # 1. Get knowledge graph with LLM selection and merging
+        knowledge_graph = self._get_knowledge_graph(user_question)
+        
+        if not knowledge_graph:
+            raise Exception("No knowledge graph found for root cause analysis")
+        
+        # Log metadata about the selection
+        metadata = knowledge_graph.get('_metadata', {})
+        if metadata:
+            print(f"📊 Analysis based on {metadata['selected_count']} knowledge graph(s):")
+            for i, desc in enumerate(metadata.get('selected_descriptions', [])):
+                print(f"  {i+1}. {desc}")
+        
+        # 2. Generate ALL SQL queries at once
+        all_sql_queries = self._generate_all_sql_queries(knowledge_graph, user_question)
+        
+        # 3. Execute queries in parallel with retry mechanism
+        query_results = self._execute_queries_parallel_with_retry(all_sql_queries, knowledge_graph)
+        
+        # 4. Generate individual insights for each query result
+        individual_insights = self._generate_individual_insights(query_results, user_question)
+        
+        # 5. Consolidate all SQL-related information (keeping your structure)
+        consolidated_sql_info = self._consolidate_sql_information(query_results, individual_insights, user_question)
+        
+        # 6. Generate consolidated narrative using all insights
+        consolidated_narrative = self._generate_consolidated_narrative(
+            individual_insights, 
+            query_results, 
+            user_question
+        )
+        
+        return {
+            'knowledge_graph': knowledge_graph,
+            'query_results': query_results,
+            'individual_insights': individual_insights,
+            'narrative_response': consolidated_narrative,
+            'analysis_complete': True,
+            'selected_kg_metadata': metadata,
+            
+            # Consolidated SQL information for future use (keeping your structure)
+            'sql_queries': consolidated_sql_info['all_sql_queries'],
+            'query_results_consolidated': consolidated_sql_info['all_query_results'],
+            'sql_execution_summary': consolidated_sql_info['execution_summary'],
+            'failed_queries': consolidated_sql_info['failed_queries'],
+            'successful_queries': consolidated_sql_info['successful_queries'],
+            'total_queries_executed': consolidated_sql_info['total_queries'],
+            'total_rows_returned': consolidated_sql_info['total_rows']
+        }
+
+    def _consolidate_sql_information(self, query_results: List[Dict], individual_insights: List[Dict], user_question: str) -> Dict:
+        """Consolidate all SQL queries, results, and execution metadata - keeping your existing structure"""
+        
+        print(f"🔍 Consolidating SQL information from {len(query_results)} queries")
+        
+        all_sql_queries = {}
+        all_query_results = {}
+        successful_queries = {}
+        failed_queries = {}
+        execution_summary = []
+        total_rows = 0
+        total_queries = 0
+        
+        for i, result in enumerate(query_results):
+            query_id = result.get('query_id', f'query_{i}')
+            sql_query = result.get('sql', '')
+            success = result.get('success', False)
+            
+            # Store queries with full context
+            all_sql_queries[query_id] = {
+                'query_id': query_id,
+                'table': result.get('table', 'unknown'),
+                'purpose': result.get('purpose', ''),
+                'sql': sql_query,
+                'user_question': user_question,
+                'timestamp': datetime.now().isoformat(),
+                'retry_count': result.get('retry_count', 0)
+            }
+            total_queries += 1
+            
+            # Store results with metadata
+            query_data = result.get('result', [])
+            result_count = len(query_data) if query_data else 0
+            total_rows += result_count
+            
+            all_query_results[query_id] = {
+                'query_id': query_id,
+                'table': result.get('table', 'unknown'),
+                'results': query_data,
+                'row_count': result_count,
+                'has_data': result_count > 0,
+                'insight': individual_insights[i].get('insight', '') if i < len(individual_insights) else '',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Categorize successful vs failed queries
+            if success:
+                successful_queries[query_id] = {
+                    'query_id': query_id,
+                    'table': result.get('table', 'unknown'),
+                    'row_count': result_count,
+                    'sql': sql_query,
+                    'retry_count': result.get('retry_count', 0)
+                }
+            else:
+                failed_queries[query_id] = {
+                    'query_id': query_id,
+                    'table': result.get('table', 'unknown'),
+                    'error': result.get('error', 'Unknown error'),
+                    'sql': sql_query,
+                    'retry_history': result.get('retry_history', [])
+                }
+            
+            # Create execution summary for this query
+            query_summary = {
+                'query_id': query_id,
+                'table': result.get('table', 'unknown'),
+                'success': success,
+                'rows_returned': result_count,
+                'retry_count': result.get('retry_count', 0),
+                'execution_time': result.get('execution_time', 'N/A'),
+                'error': result.get('error') if not success else None
+            }
+            execution_summary.append(query_summary)
+        
+        consolidated_info = {
+            'all_sql_queries': all_sql_queries,
+            'all_query_results': all_query_results,
+            'successful_queries': successful_queries,
+            'failed_queries': failed_queries,
+            'execution_summary': execution_summary,
+            'total_queries': total_queries,
+            'total_rows': total_rows,
+            'successful_query_count': len(successful_queries),
+            'failed_query_count': len(failed_queries)
+        }
+        
+        # Log summary
+        print(f"📊 SQL Consolidation Summary:")
+        print(f"  📝 Total queries: {total_queries}")
+        print(f"  ✅ Successful: {len(successful_queries)}")
+        print(f"  ❌ Failed: {len(failed_queries)}")
+        print(f"  📈 Total rows: {total_rows}")
+        
+        return consolidated_info
+    f select_and_merge_rootcause_matches(self, search_results: List[Dict], user_question: str, max_selections: int = 2) -> Dict:
+        """Use LLM to select best matches, then directly merge their knowledge graphs"""
+        
+        if not search_results:
+            raise Exception("No search results provided for root cause selection")
+        
+        # Prepare options for LLM selection
+        options_text = []
+        for i, result in enumerate(search_results):
+            options_text.append(f"""
+    Option {i+1}:
+    - ID: {result.get('id', 'N/A')}
+    - Description: {result.get('description', 'N/A')}
+    - Definition: {result.get('definition', 'N/A')}
+            """)
+        
+        selection_prompt = f"""
+        Healthcare Finance Root Cause Analysis - Knowledge Graph Selection:
+        
+        User Question: "{user_question}"
+        
+        Available Root Cause Knowledge Graphs:
+        {chr(10).join(options_text)}
+        
+        Instructions:
+        - Analyze which root cause knowledge graph(s) best match the user's question
+        - You can select 1 or 2 options that are most relevant
+        - Consider the description and definition to make your choice
+        - Focus on relevance to the specific healthcare finance question asked
+        
+        Response format (return EXACTLY this JSON structure):
+        {{
+            "selected_options": [1, 2],
+            "reasoning": "Explanation of why these options were selected"
+        }}
+        
+        If only one option is clearly best, return just that option number.
+        If multiple options complement each other, select up to 2.
+        """
+        
+        try:
+            # Call LLM to select best matches
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": selection_prompt}
+            ])
+            
+            selection_result = json.loads(llm_response)
+            selected_indices = selection_result.get('selected_options', [])
+            reasoning = selection_result.get('reasoning', '')
+            
+            print(f"🎯 LLM selected options: {selected_indices}")
+            print(f"📝 Selection reasoning: {reasoning}")
+            
+            # Filter the selected results based on LLM selection
+            selected_results = []
+            for idx in selected_indices:
+                if 1 <= idx <= len(search_results):
+                    selected_results.append(search_results[idx - 1])  # Convert to 0-based index
+            
+            if not selected_results:
+                print("⚠️ No valid selections, using top result as fallback")
+                selected_results = [search_results[0]]
+            
+            print(f"✅ Selected {len(selected_results)} knowledge graph(s)")
+            
+            # Now directly merge the knowledge graphs
+            merged_kg = self._direct_merge_knowledge_graphs(selected_results)
+            
+            return merged_kg
+            
+        except Exception as e:
+            print(f"❌ LLM selection failed: {str(e)}")
+            # Fallback: use top result
+            selected_results = [search_results[0]] if search_results else []
+            return self._direct_merge_knowledge_graphs(selected_results)
+
+    def _direct_merge_knowledge_graphs(self, selected_results: List[Dict]) -> Dict:
+        """Directly merge knowledge graphs with new JSON structure"""
+    
+        if not selected_results:
+            raise Exception("No selected results to merge")
+        
+        if len(selected_results) == 1:
+            # Single result, just parse and return
+            kg_str = selected_results[0].get('root_cause_kg', '{}')
+            if isinstance(kg_str, str):
+                parsed_kg = json.loads(kg_str)
+            else:
+                parsed_kg = kg_str
+            
+            # Add metadata
+            parsed_kg['_metadata'] = {
+                'selected_count': 1,
+                'selected_ids': [selected_results[0].get('id')],
+                'selected_descriptions': [selected_results[0].get('description')]
+            }
+            
+            return parsed_kg
+        
+        print(f"🔀 Direct merging {len(selected_results)} root cause knowledge graphs")
+        
+        # Initialize merged structure with new format
+        merged_kg = {
+            'revenue_analysis_config': {
+                'analysis_flow': ['ledger', 'claims', 'prior_auth', 'formulary'],
+                'data_sources': [],
+                'cross_reference': {},
+                'analysis_keywords': {}
+            }
+        }
+        
+        # Track metadata
+        selected_ids = []
+        selected_descriptions = []
+        all_sources = {}
+        
+        for result in selected_results:
+            kg_str = result.get('root_cause_kg', '{}')
+            
+            # Parse the knowledge graph
+            if isinstance(kg_str, str):
+                kg = json.loads(kg_str) if kg_str else {}
+            else:
+                kg = kg_str
+            
+            # Extract config
+            config = kg.get('revenue_analysis_config', {})
+            
+            # Merge data sources (avoid duplicates by id)
+            for source in config.get('data_sources', []):
+                source_id = source.get('id')
+                if source_id and source_id not in all_sources:
+                    all_sources[source_id] = source
+            
+            # Take cross_reference from first KG or merge if needed
+            if not merged_kg['revenue_analysis_config']['cross_reference'] and config.get('cross_reference'):
+                merged_kg['revenue_analysis_config']['cross_reference'] = config.get('cross_reference', {})
+            
+            # Take analysis_keywords from first KG
+            if not merged_kg['revenue_analysis_config']['analysis_keywords'] and config.get('analysis_keywords'):
+                merged_kg['revenue_analysis_config']['analysis_keywords'] = config.get('analysis_keywords', {})
+            
+            # Track metadata
+            selected_ids.append(result.get('id'))
+            selected_descriptions.append(result.get('description'))
+        
+        # Add all unique data sources
+        merged_kg['revenue_analysis_config']['data_sources'] = list(all_sources.values())
+        
+        # Add metadata
+        merged_kg['_metadata'] = {
+            'selected_count': len(selected_results),
+            'selected_ids': selected_ids,
+            'selected_descriptions': selected_descriptions,
+            'total_data_sources': len(all_sources)
+        }
+        
+        print(f"✅ Direct merge completed: {len(all_sources)} unique data sources")
+        
+        return merged_kg
+    
+    def _get_knowledge_graph(self, user_question: str) -> Dict:
+        """Get knowledge graph from vector embeddings with LLM selection and direct merging"""
+        
+        try:
+            print(f"🔍 Step 1.1: Vector search for root cause knowledge graphs")
+            
+            # Vector search to get root cause knowledge graphs
+            search_results = self.db_client.vector_search_rootcause(
+                query_text=user_question,
+                num_results=5  # Get more options for LLM to choose from
+            )
+            
+            if not search_results:
+                raise Exception("No search results found for root cause analysis")
+            
+            print(f"🔍 Step 1.2: LLM selection and direct merging of knowledge graphs")
+            
+            # Use combined function: LLM selection + direct merging
+            knowledge_graph = self.select_and_merge_rootcause_matches(
+                search_results=search_results,
+                user_question=user_question,
+                max_selections=2
+            )
+            
+            if not knowledge_graph:
+                raise Exception("No knowledge graph created")
+            
+            config = knowledge_graph.get('revenue_analysis_config', {})
+            data_sources_count = len(config.get('data_sources', []))
+            metadata = knowledge_graph.get('_metadata', {})
+            
+            print(f"✅ Final knowledge graph prepared with {data_sources_count} data sources")
+            print(f"📊 Based on {metadata.get('selected_count', 0)} selected knowledge graph(s)")
+            
+            return knowledge_graph
+            
+        except Exception as e:
+            raise Exception(f"Knowledge graph retrieval and processing failed: {str(e)}")
+    
+    def _generate_all_sql_queries(self, knowledge_graph: Dict, user_question: str) -> List[Dict]:
+        """Generate ALL SQL queries in one LLM call using the new JSON structure"""
+        
+        config = knowledge_graph.get('revenue_analysis_config', {})
+        
+        # Prepare a concise version of config for the prompt
+        config_summary = {
+            'analysis_flow': config.get('analysis_flow', []),
+            'data_sources': [
+                {
+                    'id': ds.get('id'),
+                    'table': ds.get('table'),
+                    'dimensions': ds.get('dimensions'),
+                    'metrics': ds.get('metrics'),
+                    'time_config': ds.get('time_config'),
+                    'analysis_hints': ds.get('analysis_hints')
+                }
+                for ds in config.get('data_sources', [])
+            ],
+            'cross_reference': config.get('cross_reference', {})
+        }
+        
+        sql_generation_prompt = f"""
+        Healthcare Finance SQL Generation Task:
+        
+        User Question: "{user_question}"
+        
+        Available Data Sources and Metadata:
+        {json.dumps(config_summary, indent=2)}
+        
+        Instructions:
+        1. Analyze the user question to understand what they're asking
+        2. Generate SQL queries for relevant tables following the analysis_flow order
+        3. Use the dimension groupings properly:
+           - Combinable: Can be in same GROUP BY clause
+           - Separate: Query individually in separate queries
+           - Drill_down: Always add LIMIT 20 and ORDER BY
+        4. Include cross-reference queries if comparison/reconciliation is needed
+        5. Use appropriate time aggregation based on time_config
+        6. Add relevant filters based on the user's question context
+        
+        Rules:
+        - Write complete, executable SQL queries
+        - Use exact table names from the config
+        - For drill_down dimensions (like drug_name, member_id), always add LIMIT
+        - Apply appropriate date filters if time period is mentioned
+        - Include ORDER BY for meaningful results
+        
+        Return a JSON array of queries in this exact format:
+        [
+            {{
+                "query_id": "ledger_revenue_trend",
+                "table": "ledger",
+                "purpose": "Analyze revenue trend over time",
+                "sql": "SELECT DATE_TRUNC('month', fscl_date) as month, SUM(amount) as revenue FROM prod_optumrx_gmraprodadls.default.actuals_vs_forecast WHERE account_types = 'Revenues' GROUP BY month ORDER BY month"
+            }},
+            {{
+                "query_id": "claims_drug_analysis",
+                "table": "claims",
+                "purpose": "Top drugs by revenue",
+                "sql": "SELECT drug_name, SUM(rev_amt) as revenue FROM prd_optumrx_orxfdmprdsa.fdmenh.claim_level_exp_revenue GROUP BY drug_name ORDER BY revenue DESC LIMIT 20"
+            }}
+        ]
+        
+        Generate queries for all relevant tables based on the user's question.
+        """
+        
+        try:
+            # Single LLM call generates all queries
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": sql_generation_prompt}
+            ])
+            
+            queries = json.loads(llm_response)
+            print(f"✅ Generated {len(queries)} SQL queries")
+            
+            # Log each query
+            for i, query in enumerate(queries):
+                print(f"  Query {i+1}: {query.get('query_id')} - {query.get('purpose')}")
+            
+            return queries
+            
+        except Exception as e:
+            print(f"❌ SQL generation failed: {str(e)}")
+            raise Exception(f"Failed to generate SQL queries: {str(e)}")
+    def _execute_queries_parallel_with_retry(self, queries: List[Dict], knowledge_graph: Dict) -> List[Dict]:
+        """Execute all queries in parallel with retry mechanism"""
+        
+        if not queries:
+            raise Exception("No queries to execute")
+        
+        print(f"🔄 Step 3: Executing {len(queries)} queries in parallel with retry mechanism")
+        
+        # Get config for retry context
+        config = knowledge_graph.get('revenue_analysis_config', {})
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(len(queries), 5)) as executor:
+            # Submit all tasks
+            future_to_query = {
+                executor.submit(self._execute_single_query_with_retry, query, config): query 
+                for query in queries
+            }
+            
+            # Collect results
+            query_results = []
+            for future in concurrent.futures.as_completed(future_to_query):
+                query = future_to_query[future]
+                try:
+                    result = future.result()
+                    query_results.append(result)
+                    if result.get('success'):
+                        print(f"✅ Completed query: {query.get('query_id')} (Retries: {result.get('retry_count', 0)})")
+                    else:
+                        print(f"❌ Failed query: {query.get('query_id')} after all retries")
+                except Exception as e:
+                    print(f"❌ Unexpected error for query {query.get('query_id')}: {str(e)}")
+                    query_results.append({
+                        'query_id': query.get('query_id'),
+                        'table': query.get('table'),
+                        'purpose': query.get('purpose'),
+                        'sql': query.get('sql'),
+                        'error': str(e),
+                        'success': False,
+                        'retry_count': 0
+                    })
+        
+        print(f"✅ Completed executing {len(query_results)} queries")
+        successful = len([r for r in query_results if r.get('success')])
+        print(f"📊 Success rate: {successful}/{len(query_results)} queries")
+        
+        return query_results
+    
+    def _execute_single_query_with_retry(self, query: Dict, config: Dict, max_retries: int = 2) -> Dict:
+        """Execute a single query with retry mechanism"""
+        
+        query_id = query.get('query_id')
+        original_sql = query.get('sql')
+        retry_history = []
+        
+        current_sql = original_sql
+        retry_count = 0
+        
+        while retry_count <= max_retries:
+            try:
+                # Try to execute the query
+                start_time = datetime.now()
+                result_data = self.db_client.execute_query(current_sql)
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Success!
+                return {
+                    'query_id': query_id,
+                    'table': query.get('table'),
+                    'purpose': query.get('purpose'),
+                    'sql': current_sql,
+                    'original_sql': original_sql if retry_count > 0 else None,
+                    'result': result_data,
+                    'row_count': len(result_data) if result_data else 0,
+                    'success': True,
+                    'retry_count': retry_count,
+                    'retry_history': retry_history,
+                    'execution_time': f"{execution_time:.2f}s"
+                }
+                
+            except Exception as e:
+                error_msg = str(e)
+                retry_history.append({
+                    'attempt': retry_count + 1,
+                    'sql': current_sql,
+                    'error': error_msg
+                })
+                
+                print(f"⚠️ Query {query_id} failed (attempt {retry_count + 1}): {error_msg}")
+                
+                if retry_count < max_retries:
+                    # Try to fix the SQL using LLM
+                    retry_count += 1
+                    print(f"🔧 Attempting to fix SQL (retry {retry_count}/{max_retries})")
+                    
+                    fixed_sql = self._fix_sql_with_llm(
+                        current_sql, 
+                        error_msg, 
+                        query.get('table'),
+                        config
+                    )
+                    
+                    if fixed_sql and fixed_sql != current_sql:
+                        current_sql = fixed_sql
+                        print(f"🔄 Retrying with fixed SQL for query {query_id}")
+                    else:
+                        # LLM couldn't fix it or returned same SQL
+                        break
+                else:
+                    # Max retries reached
+                    break
+        
+        # All retries failed
+        return {
+            'query_id': query_id,
+            'table': query.get('table'),
+            'purpose': query.get('purpose'),
+            'sql': original_sql,
+            'result': None,
+            'error': retry_history[-1]['error'] if retry_history else 'Unknown error',
+            'success': False,
+            'retry_count': retry_count,
+            'retry_history': retry_history
+        }
+    def _fix_sql_with_llm(self, failed_sql: str, error_message: str, table_name: str, config: Dict) -> str:
+        """Use LLM to fix SQL based on error message"""
+        
+        # Find table config for context
+        table_config = None
+        for source in config.get('data_sources', []):
+            if source.get('id') == table_name or source.get('table', '').endswith(table_name):
+                table_config = source
+                break
+        
+        fix_prompt = f"""
+        SQL Execution Failed. Please fix the SQL query.
+        
+        Failed SQL:
+        {failed_sql}
+        
+        Error Message:
+        {error_message}
+        
+        Table Configuration:
+        {json.dumps(table_config, indent=2) if table_config else 'Not available'}
+        
+        Common issues to check:
+        - Column names might be incorrect (check exact names in dimensions/metrics)
+        - Table name might need full schema path
+        - Date functions might have wrong syntax
+        - GROUP BY might be missing required columns
+        - Data type mismatches
+        - Missing quotes around string values
+        
+        Analyze the error and fix the SQL accordingly.
+        Return ONLY the corrected SQL query, nothing else.
+        """
+        
+        try:
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": fix_prompt}
+            ])
+            
+            # Extract just the SQL from response (remove any markdown or extra text)
+            fixed_sql = llm_response.strip()
+            if fixed_sql.startswith('```sql'):
+                fixed_sql = fixed_sql[6:]
+            if fixed_sql.startswith('```'):
+                fixed_sql = fixed_sql[3:]
+            if fixed_sql.endswith('```'):
+                fixed_sql = fixed_sql[:-3]
+            
+            return fixed_sql.strip()
+            
+        except Exception as e:
+            print(f"❌ LLM SQL fix failed: {str(e)}")
+            return None
+    
+    def _generate_individual_insights(self, query_results: List[Dict], user_question: str) -> List[Dict]:
+        """Generate insights for each individual query result"""
+        
+        print(f"💡 Step 4: Generating insights for {len(query_results)} query results")
+        
+        insights = []
+        
+        for result in query_results:
+            if result.get('success') and result.get('result'):
+                # Generate insight for successful query with data
+                insight = self._generate_single_insight(result, user_question)
+                insights.append({
+                    'query_id': result.get('query_id'),
+                    'table': result.get('table'),
+                    'purpose': result.get('purpose'),
+                    'row_count': result.get('row_count', 0),
+                    'insight': insight,
+                    'has_data': True
+                })
+            elif result.get('success') and not result.get('result'):
+                # Successful query but no data
+                insights.append({
+                    'query_id': result.get('query_id'),
+                    'table': result.get('table'),
+                    'purpose': result.get('purpose'),
+                    'row_count': 0,
+                    'insight': f"No data found for {result.get('purpose', 'this query')}",
+                    'has_data': False
+                })
+            else:
+                # Failed query
+                insights.append({
+                    'query_id': result.get('query_id'),
+                    'table': result.get('table'),
+                    'purpose': result.get('purpose'),
+                    'row_count': 0,
+                    'insight': f"Analysis failed: {result.get('error', 'Unknown error')}",
+                    'has_data': False
+                })
+        
+        print(f"✅ Generated {len(insights)} individual insights")
+        return insights
+    
+    def _generate_single_insight(self, query_result: Dict, user_question: str) -> str:
+        """Generate insight for a single query result"""
+        
+        # Prepare data summary for LLM
+        result_data = query_result.get('result', [])
+        
+        # Limit data for prompt (top 20 rows for LLM analysis)
+        sample_data = result_data[:20] if len(result_data) > 20 else result_data
+        
+        insight_prompt = f"""
+        Generate a concise insight from this query result.
+        
+        User Question: "{user_question}"
+        Query Purpose: {query_result.get('purpose')}
+        Table: {query_result.get('table')}
+        Total Rows: {query_result.get('row_count')}
+        
+        Sample Data (top rows):
+        {json.dumps(sample_data, indent=2)}
+        
+        Instructions:
+        - Provide a 2-3 sentence insight about what this data reveals
+        - Focus on answering the user's question
+        - Highlight key findings, trends, or anomalies
+        - Use specific numbers from the data
+        - Be concise and actionable
+        
+        Generate the insight:
+        """
+        
+        try:
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": insight_prompt}
+            ])
+            
+            return llm_response.strip()
+            
+        except Exception as e:
+            return f"Data retrieved successfully ({query_result.get('row_count')} rows) but insight generation failed."
+    
+    def _generate_consolidated_narrative(self, individual_insights: List[Dict], query_results: List[Dict], user_question: str) -> str:
+        """Generate consolidated narrative from all insights - your existing pattern"""
+        
+        print(f"📝 Step 5: Generating consolidated narrative from all insights")
+        
+        # Prepare insights summary
+        successful_insights = [
+            insight for insight in individual_insights 
+            if insight.get('has_data', False)
+        ]
+        
+        insights_text = []
+        for insight in successful_insights:
+            insights_text.append(f"""
+        Query: {insight.get('query_id')}
+        Table: {insight.get('table')}
+        Purpose: {insight.get('purpose')}
+        Rows: {insight.get('row_count')}
+        Insight: {insight.get('insight')}
+            """)
+        
+        # Prepare summary statistics
+        total_queries = len(query_results)
+        successful_queries = len([r for r in query_results if r.get('success')])
+        total_rows = sum(r.get('row_count', 0) for r in query_results if r.get('success'))
+        
+        narrative_prompt = f"""
+        Healthcare Finance Root Cause Analysis - Consolidated Narrative
+        
+        User Question: "{user_question}"
+        
+        Analysis Summary:
+        - Total Queries Executed: {total_queries}
+        - Successful Queries: {successful_queries}
+        - Total Data Rows: {total_rows}
+        - Tables Analyzed: {len(set(r.get('table') for r in query_results))}
+        
+        Individual Query Insights:
+        {chr(10).join(insights_text)}
+        
+        Instructions:
+        1. Synthesize all the individual insights into a coherent narrative
+        2. Focus on answering the user's original question
+        3. Identify the root cause if this is an investigation
+        4. Highlight key patterns and relationships across tables
+        5. Provide actionable recommendations based on findings
+        6. Structure the response with:
+           - Executive Summary (2-3 sentences)
+           - Key Findings (bullet points)
+           - Root Cause Analysis (if applicable)
+           - Recommendations
+        
+        Generate a comprehensive narrative that tells the complete story:
+        """
+        
+        try:
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": narrative_prompt}
+            ])
+            
+            print(f"✅ Generated consolidated narrative")
+            return llm_response.strip()
+            
+        except Exception as e:
+            print(f"❌ Narrative generation failed: {str(e)}")
+            # Fallback to simple concatenation
+            fallback_narrative = f"""
+            Analysis completed for: {user_question}
+            
+            Summary:
+            - Executed {total_queries} queries
+            - {successful_queries} successful, {total_queries - successful_queries} failed
+            - Analyzed {total_rows} total data rows
+            
+            Key Insights:
+            """
+            for insight in successful_insights:
+                fallback_narrative += f"\n- {insight.get('table')}: {insight.get('insight')}"
+            
+            return fallback_narrative

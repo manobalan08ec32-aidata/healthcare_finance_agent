@@ -812,43 +812,37 @@ def render_root_cause_response(response_data):
     #     print("⚠️ No consolidated content found")
 
 def render_chat_message(message):
-    """Render a single chat message"""
-    
-    if message['type'] == 'user':
-        st.markdown(f"""
-        <div class="user-message">
-            <div class="user-message-content">
-                {message['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    elif message['type'] == 'assistant':
-        # Display SQL expander if available
-        if message.get('sql_query'):
-            with st.expander("🔍 View SQL Query", expanded=False):
-                st.code(message['sql_query'], language='sql')
+    """
+    Renders a single message from the chat history, routing to the correct display function.
+    """
+    with st.chat_message(message.get("role", "assistant")):
+        response_type = message.get("response_type")
         
-        # Display table if available
-        if message.get('dataframe') is not None:
-            st.dataframe(message['dataframe'], use_container_width=True)
-        
-        # Display content if available
-        if message.get('content'):
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div class="assistant-message-content">
-                    {message['content']}
+        if response_type == 'sql_with_table':
+            render_sql_response(message)
+        elif response_type == 'root_cause_detailed':
+            render_root_cause_response(message)
+        else: # Default rendering for simple text (user messages and simple assistant text)
+            if message.get("role") == 'user':
+                 st.markdown(f"""
+                <div class="user-message">
+                    <div class="user-message-content">
+                        {message['content']}
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else: # Simple text from assistant
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <div class="assistant-message-content">
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
 def render_persistent_followup_questions():
-    """Render persistent follow-up questions if they exist"""
-    
+    """Renders follow-up buttons if they exist in the session state."""
     if st.session_state.current_followup_questions and not st.session_state.processing:
-        print(f"🔥 Rendering persistent follow-up questions: {len(st.session_state.current_followup_questions)}")
-        
         st.markdown(f"""
         <div class="assistant-message">
             <div class="assistant-message-content">
@@ -856,27 +850,15 @@ def render_persistent_followup_questions():
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Create buttons for persistent questions
         st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">', unsafe_allow_html=True)
         
         for i, question in enumerate(st.session_state.current_followup_questions):
-            # REFACTORED: Button key is simpler and doesn't need session_id prefix.
-            button_key = f"persistent_btn_{i}_{abs(hash(question)) % 10000}"
-            
-            button_clicked = st.button(
+            st.button(
                 question,
-                key=button_key,
-                type="secondary",
-                help="Click to explore this follow-up question"
+                key=f"persistent_btn_{i}_{abs(hash(question))}",
+                on_click=start_processing,
+                args=(question,) # Pass the question to the callback
             )
-            
-            if button_clicked and not st.session_state.processing:
-                print(f"🔥 Persistent button clicked: {question}")
-                
-                # REFACTORED: Clear the main followup questions list and start new query
-                st.session_state.current_followup_questions = []
-                start_processing(question)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -930,32 +912,16 @@ def update_spinner(spinner_placeholder, current_node, next_agent):
     """, unsafe_allow_html=True)
 
 def start_processing(user_query):
-    """Start processing a new user query"""
-    
-    print(f"🚀 Starting processing for: {user_query}")
-    
-    # REFACTORED: Reset all button flags directly on session_state
-    st.session_state.button_clicked = False
-    st.session_state.last_clicked_question = None
-    st.session_state.click_counter += 1
-    
-    # Clear current followup questions when starting new workflow
+    """
+    Callback to set the state for processing a new query.
+    Handles state changes for both chat input and button clicks.
+    """
+    st.session_state.messages.append({'role': 'user', 'content': user_query})
     st.session_state.current_followup_questions = []
-    
-    # Add user message to session chat
-    st.session_state.messages.append({
-        'type': 'user',
-        'content': user_query,
-        'timestamp': datetime.now()
-    })
-    
-    # Set processing state
     st.session_state.processing = True
     st.session_state.current_query = user_query
     st.session_state.workflow_started = False
-    
-    # Force a rerun to show the user message and start processing
-    st.rerun()
+    # No st.rerun() is needed here; on_click handles it.
 
 def handle_followup_click(question, session_id):
     """Handle follow-up question click with session isolation"""
@@ -1000,18 +966,16 @@ def render_immediate_response(response_data, step_count, session_id):
             st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px;">', unsafe_allow_html=True)
             
             for i, question in enumerate(followup_questions):
-                # REFACTORED: Create simpler, session-specific button key
                 button_key = f"immediate_btn_{session_id}_{step_count}_{i}_{abs(hash(question)) % 10000}"
                 
-                button_clicked = st.button(
+                st.button(
                     question,
                     key=button_key,
                     type="secondary",
-                    help="Click to explore this follow-up question"
+                    help="Click to explore this follow-up question",
+                    on_click=start_processing,
+                    args=(question,)
                 )
-
-                if button_clicked and not st.session_state.processing:
-                    handle_followup_click(question, session_id)
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1043,59 +1007,49 @@ def render_immediate_response(response_data, step_count, session_id):
             """, unsafe_allow_html=True)
 
 def save_to_session_history(all_response_data):
-    """Save analysis results to session chat history"""
+    """
+    Saves the final, consolidated assistant response to chat history.
+    """
+    assistant_message = {
+        "role": "assistant",
+        "content": "",
+        "response_type": "text", # Default type
+        "timestamp": datetime.now()
+    }
     
-    content_responses = [r for r in all_response_data if r.get('type') not in ['followup_questions']]
+    has_content = False
+    for data in all_response_data:
+        if data['type'] == 'sql_with_table':
+            assistant_message.update(data)
+            assistant_message['response_type'] = 'sql_with_table'
+            has_content = True
+        elif data['type'] == 'root_cause_detailed':
+            assistant_message.update(data)
+            assistant_message['response_type'] = 'root_cause_detailed'
+            has_content = True
+        elif data['type'] == 'text':
+            assistant_message['content'] += data['content'] + "<br>"
+            has_content = True
+        elif data['type'] == 'followup_questions':
+            # Follow-up questions are not saved to history, but to a separate state variable
+            st.session_state.current_followup_questions = data.get('followup_questions', [])
 
-    if content_responses:
-        consolidated_parts = []
-        all_dataframes = []
-        has_sql = None
-        
-        for response_data in content_responses:
-            if response_data.get('type') == 'sql_with_table':
-                if response_data.get('sql_query'):
-                    has_sql = response_data.get('sql_query')
-                if response_data.get('dataframe') is not None:
-                    all_dataframes.append(response_data.get('dataframe'))
-                if response_data.get('content'):
-                    consolidated_parts.append(response_data['content'])
-            
-            elif response_data.get('type') == 'root_cause_detailed':
-                if response_data.get('content'):
-                    consolidated_parts.append(response_data['content'])
-            
-            elif response_data.get('content'):
-                consolidated_parts.append(response_data['content'])
-                if response_data.get('dataframe') is not None:
-                    all_dataframes.append(response_data.get('dataframe'))
-        
-        if consolidated_parts or has_sql or all_dataframes:
-            primary_dataframe = all_dataframes[0] if all_dataframes else None
-            
-            # REFACTORED: Appends directly to the main `messages` list.
-            st.session_state.messages.append({
-                'type': 'assistant',
-                'content': "<br><br>".join(consolidated_parts) if consolidated_parts else "",
-                'dataframe': primary_dataframe,
-                'sql_query': has_sql,
-                'timestamp': datetime.now()
-            })
-            
-            print("💾 Saved analysis results to session chat history")
+    # Only append to history if there was actual content to display
+    if has_content:
+        st.session_state.messages.append(assistant_message)
 
 def execute_workflow_streaming(workflow):
-    """Execute workflow with streaming updates and proper state persistence"""
-    
+    """
+    Executes the LangGraph workflow, collects all responses, and saves them to history.
+    """
     st.session_state.workflow_started = True
     session_id = st.session_state.session_id
     
     try:
         print(f"🚀 Starting workflow execution for: {st.session_state.current_query}")
         
-        spinner_placeholder = st.empty()
-        step_count = 0
         all_response_data = []
+        spinner_placeholder = st.empty()
         current_node = "Starting"
         
         spinner_placeholder.markdown(f"""
@@ -1105,16 +1059,8 @@ def execute_workflow_streaming(workflow):
         </div>
         """, unsafe_allow_html=True)
         
-        # REFACTORED: Config uses the session_id stored safely in st.session_state
-        thread_id = st.session_state.session_id
-        config = {
-            "configurable": {
-                "thread_id": thread_id
-            }
-        }
-        
-        conversation_history = [msg['content'] for msg in st.session_state.messages if msg['type'] == 'user']
-        
+        # Prepare the initial state and config for the LangGraph agent
+        conversation_history = [msg['content'] for msg in st.session_state.messages if msg.get('role') == 'user']
         initial_state = {
             'original_question': st.session_state.current_query,
             'current_question': st.session_state.current_query,
@@ -1125,88 +1071,43 @@ def execute_workflow_streaming(workflow):
             'session_context': {
                 'app_instance_id': session_id,
                 'execution_timestamp': datetime.now().isoformat(),
-                'conversation_turn': len(conversation_history) + 1
+                'conversation_turn': len(conversation_history)
             }
         }
+        config = {"configurable": {"thread_id": session_id}}
         
-        print(f"🔧 Initial state: {initial_state}")
-        print(f"🔧 Config: {config}")
-        
-        try:
-            execution_timeout = 300
-            start_time = time.time()
-            
-            merged_state = initial_state
-            try:
-                existing_state = workflow.app.get_state(config)
-                if existing_state and existing_state.values:
-                    print(f"📋 Found existing LangGraph state for session {session_id}")
-                    merged_state = {**existing_state.values, **initial_state}
-            except Exception as state_error:
-                print(f"⚠️ Could not retrieve existing state: {state_error}")
+        # Stream the workflow and collect all response data packets
+        for step_data in workflow.app.stream(initial_state, config=config):
+            # Update the spinner with the current progress
+            current_node = get_current_node_name(step_data)
+            next_agent = get_next_agent_from_state(step_data)
+            update_spinner(spinner_placeholder, current_node, next_agent)
 
-            for step_data in workflow.app.stream(merged_state, config=config):
-                if time.time() - start_time > execution_timeout:
-                    raise TimeoutError("Workflow execution timed out")
-                
-                step_count += 1
-                current_node = get_current_node_name(step_data)
-                next_agent = get_next_agent_from_state(step_data)
-                
-                response_data = extract_response_content(step_data)
-                
-                if response_data:
-                    all_response_data.append(response_data)
-                    if response_data.get('immediate_render', False):
-                        spinner_placeholder.empty()
-                        with st.container():
-                            render_immediate_response(response_data, step_count, session_id)
-                        
-                        if next_agent:
-                            spinner_placeholder = st.empty()
-                            update_spinner(spinner_placeholder, current_node, next_agent)
-                    else:
-                        update_spinner(spinner_placeholder, current_node, next_agent)
-                else:
-                    update_spinner(spinner_placeholder, current_node, next_agent)
-                
-                time.sleep(0.3)
-                if st.session_state.session_id != session_id:
-                    print(f"⚠️ Session ID changed during execution!")
-                    break
-            
-            print(f"🏁 Workflow stream completed. Total steps: {step_count}")
-                    
-        except Exception as workflow_error:
-            print(f"❌ Session {session_id} - Workflow execution error: {str(workflow_error)}")
-            import traceback
-            traceback.print_exc()
-            raise workflow_error
+            # Extract structured data from the current step
+            response_data = extract_response_content(step_data) 
+            if response_data:
+                all_response_data.append(response_data)
         
         spinner_placeholder.empty()
         
+        # After the stream is complete, save the entire collected response to history
         save_to_session_history(all_response_data)
-        
-        print(f"✅ Session {session_id} - Workflow completed with {step_count} steps")
-                
+
     except Exception as e:
-        print(f"❌ Session {session_id} - Error in workflow execution: {str(e)}")
+        st.error(f"An error occurred during workflow execution: {e}")
         import traceback
         traceback.print_exc()
-        
+        # Also save the error to the chat history for visibility
         st.session_state.messages.append({
-            'type': 'assistant',
-            'content': f"❌ I encountered an error processing your request: {str(e)}",
-            'timestamp': datetime.now()
+            "role": "assistant",
+            "content": f"I encountered an error: {e}"
         })
-    
+
     finally:
-        # REFACTORED: Reset flags directly on st.session_state
+        # Reset processing flags and rerun the app to display the final state
         st.session_state.processing = False
         st.session_state.workflow_started = False
-        st.session_state.button_clicked = False
-        st.session_state.last_clicked_question = None
-        print(f"✅ Session {session_id} - Workflow execution completed and flags reset")
+        st.rerun()
 
 def render_chat_input(workflow):
     """Render fixed bottom chat input"""
@@ -1227,20 +1128,16 @@ def render_chat_input(workflow):
         print(f"User query received: {user_query}")
         start_processing(user_query)
 
-def main():
+ddef main():
     """Main Streamlit application with session isolation"""
 
     with st.sidebar:
         st.markdown("### 🏥 Navigation")
-        
         if st.button("⬅️ Back to Main Page", key="back_to_main"):
             st.switch_page("main.py")
     
     try:
-        # Initialize session state - now simple and safe
         initialize_session_state()
-        
-        # Get the session-specific workflow object
         workflow = get_session_workflow()
         
         if workflow is None:
@@ -1261,24 +1158,26 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
+        # Render the entire chat history, including complex messages
         for message in st.session_state.messages:
             render_chat_message(message)
         
+        # Render follow-up questions from the last turn
         render_persistent_followup_questions()
         
+        # If processing, show a spinner and run the workflow
         if st.session_state.processing and not st.session_state.workflow_started:
-            print(f"🚀 Session {st.session_state.session_id} - Starting workflow for: {st.session_state.current_query}")
             execute_workflow_streaming(workflow)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        render_chat_input(workflow)
+        # The chat input is now handled outside the main container for fixed positioning
+        if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
+            start_processing(prompt)
+            st.rerun()
         
     except Exception as e:
-        print(f"❌ Session {st.session_state.get('session_id', 'unknown')} - Error in main application: {str(e)}")
         st.error(f"Application Error: {str(e)}")
-        
-        # REFACTORED: Reset session state on error directly
         st.session_state.processing = False
         st.session_state.workflow_started = False
 

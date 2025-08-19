@@ -1,45 +1,29 @@
-# requirements.txt additions
-# Add these to ensure proper session handling
-gunicorn==20.1.0
-streamlit>=1.28.0
-
-# Azure App Service Settings (Add these in Azure Portal > Configuration > Application Settings)
-
-# 1. DISABLE OVERLAPPED RECYCLING (Critical for session isolation)
-WEBSITES_DISABLE_OVERLAPPED_RECYCLING=1
-
-# 2. ENSURE SINGLE INSTANCE (for testing)
-WEBSITES_INSTANCE_COUNT=1
-
-# 3. SET SESSION AFFINITY (if using multiple instances)
-ARR_DISABLE_SESSION_AFFINITY=false
-
-# 4. MEMORY SETTINGS
-WEBSITES_MEMORY_USAGE_THRESHOLD=90
-
-# 5. STREAMLIT SPECIFIC
-STREAMLIT_SERVER_HEADLESS=true
-STREAMLIT_SERVER_PORT=8000
-STREAMLIT_SERVER_ADDRESS=0.0.0.0
-
-# 6. DISABLE CACHING IN PRODUCTION (for debugging)
-STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-
-# Startup Command (in Azure Portal > Configuration > General Settings)
-# python -m streamlit run main.py --server.port=8000 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false
-
-# Additional configuration file: .streamlit/config.toml
-[server]
-headless = true
-enableCORS = false
-enableXsrfProtection = false
-port = 8000
-address = "0.0.0.0"
-
-[browser]
-gatherUsageStats = false
-serverAddress = "0.0.0.0"
-serverPort = 8000
-
-[global]
-developmentMode = false
+def get_workflow_for_session(session_id: str):
+    """Get or create workflow instance for current session with proper user isolation"""
+    
+    # Store in session state instead of shared cache
+    workflow_key = f"workflow_instance_{session_id}"
+    
+    if workflow_key not in st.session_state:
+        print(f"🔧 Creating new workflow for session: {session_id}")
+        try:
+            print("🔧 Step 1: Creating DatabricksClient...")
+            db_client = DatabricksClient()
+            print("✅ Step 1: DatabricksClient created successfully")
+            
+            print("🔧 Step 2: Creating HealthcareFinanceWorkflow...")
+            workflow = HealthcareFinanceWorkflow(db_client)
+            print("✅ Step 2: HealthcareFinanceWorkflow created successfully")
+            
+            st.session_state[workflow_key] = workflow
+            print(f"✅ Workflow created and cached for session: {session_id}")
+        except Exception as e:
+            print(f"❌ DETAILED ERROR in workflow creation: {str(e)}")
+            print(f"❌ ERROR TYPE: {type(e).__name__}")
+            import traceback
+            print(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
+            return None
+    else:
+        print(f"♻️ Using existing workflow for session: {session_id}")
+    
+    return st.session_state[workflow_key]

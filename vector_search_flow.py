@@ -25,3 +25,15 @@
     min-height: 28px !important;
     white-space: nowrap !important; /* Keep text on a single line */
 }
+
+if __name__ != "__main__":
+    # This is the part Gunicorn looks for
+    from streamlit.web.server.server import Server
+    
+    # Create a server instance
+    server = Server()
+    
+    # This is the 'app' object Gunicorn will run
+    app = server.get_app()
+
+pip install -r requirements.txt && gunicorn -w 1 --threads 8 -k uvicorn.workers.UvicornWorker main:app --timeout 600

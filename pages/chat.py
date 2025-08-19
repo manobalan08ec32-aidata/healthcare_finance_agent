@@ -1,7 +1,7 @@
 import streamlit as st
 import uuid
 import time
-import json  # Add this import
+import json
 from datetime import datetime
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
@@ -12,75 +12,82 @@ import html
 import hashlib
 import threading
 from typing import Dict, Any
+import os
 
-# Add thread-local storage for workflow instances
-_thread_local = threading.local()
-
-@st.cache_resource
-def get_workflow_cache():
-    """Get a thread-safe workflow cache with state storage"""
-    return {
-        'workflows': {},
-        'states': {}  # Add state storage
-    }
-
-def get_session_workflow():
-    """Get or create workflow instance for current session"""
-    workflow_cache = get_workflow_cache()
-    session_id = st.session_state.session_id
+def get_workflow_for_session(session_id: str):
+    """Get or create workflow instance for current session with proper user isolation"""
     
-    # Create a unique key for this session
-    session_key = f"workflow_{session_id}"
+    # Store in session state instead of shared cache
+    workflow_key = f"workflow_instance_{session_id}"
     
-    if session_key not in workflow_cache['workflows']:
+    if workflow_key not in st.session_state:
         print(f"🔧 Creating new workflow for session: {session_id}")
         try:
             db_client = DatabricksClient()
             workflow = HealthcareFinanceWorkflow(db_client)
-            workflow_cache['workflows'][session_key] = workflow
-            workflow_cache['states'][session_key] = {}  # Initialize state storage
-            print(f"✅ Workflow created and cached for session: {session_id}")
+            st.session_state[workflow_key] = workflow
+            print(f"✅ Workflow created for session: {session_id}")
         except Exception as e:
             print(f"❌ Failed to create workflow for session {session_id}: {str(e)}")
             return None
     else:
-        print(f"♻️ Using cached workflow for session: {session_id}")
+        print(f"♻️ Using existing workflow for session: {session_id}")
     
-    return workflow_cache['workflows'][session_key]
+    return st.session_state[workflow_key]
 
 def initialize_session_state():
-    """Initialize session state with unique identifiers"""
-    # Create a more robust session ID
+    """Initialize session state with unique identifiers and proper isolation"""
+    
+    # Enhanced session ID generation for Azure isolation
     if 'session_id' not in st.session_state:
-        # Use multiple factors to create unique session ID
-        user_agent = st.context.headers.get("user-agent", "")
+        import os
+        
+        # Get Azure-specific identifiers
+        azure_instance_id = os.environ.get('WEBSITE_INSTANCE_ID', f'local_{os.getpid()}')
+        website_site_name = os.environ.get('WEBSITE_SITE_NAME', 'local')
+        
+        # Create truly unique session ID
         timestamp = str(time.time())
         random_component = str(uuid.uuid4())
         
-        # Create deterministic but unique session ID
-        session_data = f"{user_agent}_{timestamp}_{random_component}"
+        session_data = f"{website_site_name}_{azure_instance_id}_{timestamp}_{random_component}"
         session_hash = hashlib.md5(session_data.encode()).hexdigest()
         st.session_state.session_id = f"session_{session_hash[:16]}"
         
-        print(f"🆔 Created new session ID: {st.session_state.session_id}")
+        print(f"🆔 Created session ID: {st.session_state.session_id}")
+        print(f"🏗️ Azure Site: {website_site_name}, Instance: {azure_instance_id}")
     
-    # Initialize other session variables with session-specific keys
+    # Initialize session-specific variables
     session_prefix = st.session_state.session_id
     
-    if f'messages_{session_prefix}' not in st.session_state:
-        st.session_state[f'messages_{session_prefix}'] = []
-    if f'processing_{session_prefix}' not in st.session_state:
-        st.session_state[f'processing_{session_prefix}'] = False
-    if f'workflow_started_{session_prefix}' not in st.session_state:
-        st.session_state[f'workflow_started_{session_prefix}'] = False
-    if f'current_followup_questions_{session_prefix}' not in st.session_state:
-        st.session_state[f'current_followup_questions_{session_prefix}'] = []
-    if f'button_clicked_{session_prefix}' not in st.session_state:
-        st.session_state[f'button_clicked_{session_prefix}'] = False
-    if f'click_counter_{session_prefix}' not in st.session_state:
-        st.session_state[f'click_counter_{session_prefix}'] = 0
-    if f'last_clicked_question_{session_prefix}' not in st.session_state:
-        st.session_state[f'last_clicked_question_{session_prefix}'] = None
+    session_keys = [
+        f'messages_{session_prefix}',
+        f'processing_{session_prefix}',
+        f'workflow_started_{session_prefix}',
+        f'current_followup_questions_{session_prefix}',
+        f'button_clicked_{session_prefix}',
+        f'click_counter_{session_prefix}',
+        f'last_clicked_question_{session_prefix}',
+        f'workflow_instance_{session_prefix}',
+        f'conversation_thread_id_{session_prefix}'  # Add persistent thread ID
+    ]
+    
+    for key in session_keys:
+        if key not in st.session_state:
+            if 'messages' in key:
+                st.session_state[key] = []
+            elif 'processing' in key or 'workflow_started' in key or 'button_clicked' in key:
+                st.session_state[key] = False
+            elif 'questions' in key:
+                st.session_state[key] = []
+            elif 'counter' in key:
+                st.session_state[key] = 0
+            elif 'thread_id' in key:
+                # Create persistent thread ID for this user's conversation
+                azure_instance = os.environ.get('WEBSITE_INSTANCE_ID', 'local')
+                st.session_state[key] = f"conv_{azure_instance}_{session_prefix}_{int(time.time())}"
+            else:
+                st.session_state[key] = None
     
     # Create convenience properties
     st.session_state.messages = st.session_state[f'messages_{session_prefix}']
@@ -90,6 +97,7 @@ def initialize_session_state():
     st.session_state.button_clicked = st.session_state[f'button_clicked_{session_prefix}']
     st.session_state.click_counter = st.session_state[f'click_counter_{session_prefix}']
     st.session_state.last_clicked_question = st.session_state[f'last_clicked_question_{session_prefix}']
+    st.session_state.conversation_thread_id = st.session_state[f'conversation_thread_id_{session_prefix}']
 
 # Page Config
 st.set_page_config(
@@ -408,20 +416,6 @@ st.markdown("""
     }          
 </style>
 """, unsafe_allow_html=True)
-
-@st.cache_resource
-def initialize_workflow():
-    """Initialize workflow with proper error handling"""
-    try:
-        print("🔧 Initializing workflow...")
-        db_client = DatabricksClient()
-        workflow = HealthcareFinanceWorkflow(db_client)
-        print("✅ Workflow initialized successfully")
-        return workflow
-    except Exception as e:
-        print(f"❌ Failed to initialize workflow: {str(e)}")
-        st.error(f"Failed to initialize: {str(e)}")
-        return None
 
 def format_query_results_as_table(query_results):
     """Format query results and return both the dataframe and row count for proper display"""
@@ -778,6 +772,260 @@ def extract_response_content(step_data):
     print("❌ No response content extracted from step_data")
     return None
 
+def save_complete_ui_conversation_history(all_response_data, session_id):
+    """Save COMPLETE conversation to UI chat history - everything users see gets preserved"""
+    
+    session_prefix = session_id
+    
+    print(f"💾 Saving complete UI history: {len(all_response_data)} responses")
+    
+    for i, response_data in enumerate(all_response_data):
+        response_type = response_data.get('type', 'unknown')
+        print(f"💾 Processing response {i+1}: {response_type}")
+        
+        # 1. ✅ SAVE FOLLOW-UP QUESTIONS AS VISIBLE CHAT MESSAGES
+        if response_type == 'followup_questions':
+            print(f"💾 Saving follow-up questions to chat history")
+            
+            # Save the header message
+            st.session_state[f'messages_{session_prefix}'].append({
+                'type': 'assistant',
+                'content': response_data.get('content', ''),
+                'response_type': 'followup_header',
+                'timestamp': datetime.now()
+            })
+            
+            # Save each follow-up question as a separate message for UI display
+            followup_questions = response_data.get('followup_questions', [])
+            if followup_questions:
+                questions_html = "<div style='margin: 0.5rem 0;'>"
+                for idx, question in enumerate(followup_questions, 1):
+                    questions_html += f"<div style='margin: 0.3rem 0; padding: 0.5rem; background-color: #f0f8ff; border-left: 3px solid #007bff; border-radius: 4px;'>💡 <strong>Suggested:</strong> {question}</div>"
+                questions_html += "</div>"
+                
+                st.session_state[f'messages_{session_prefix}'].append({
+                    'type': 'assistant',
+                    'content': questions_html,
+                    'response_type': 'followup_suggestions',
+                    'followup_questions': followup_questions,  # Keep original for reference
+                    'timestamp': datetime.now()
+                })
+                print(f"💾 Saved {len(followup_questions)} follow-up questions to UI history")
+        
+        # 2. ✅ SAVE NAVIGATION CLARIFICATIONS AS CHAT MESSAGES  
+        elif response_type == 'text':
+            print(f"💾 Saving navigation/clarification to chat history")
+            st.session_state[f'messages_{session_prefix}'].append({
+                'type': 'assistant',
+                'content': response_data.get('content', ''),
+                'response_type': 'clarification',
+                'timestamp': datetime.now()
+            })
+        
+        # 3. ✅ SAVE SQL RESPONSES WITH COMPLETE CONTEXT
+        elif response_type == 'sql_with_table':
+            print(f"💾 Saving SQL analysis to chat history")
+            st.session_state[f'messages_{session_prefix}'].append({
+                'type': 'assistant',
+                'content': response_data.get('content', ''),
+                'dataframe': response_data.get('dataframe'),
+                'sql_query': response_data.get('sql_query'),
+                'response_type': 'sql_analysis',
+                'timestamp': datetime.now()
+            })
+        
+        # 4. ✅ SAVE ALL ROOT CAUSE ANALYSES INDIVIDUALLY
+        elif response_type == 'root_cause_detailed':
+            print(f"💾 Saving detailed root cause analysis to chat history")
+            
+            # Save each individual analysis as a separate chat message
+            dataframes_info = response_data.get('dataframes', [])
+            print(f"💾 Processing {len(dataframes_info)} individual analyses")
+            
+            for df_idx, df_info in enumerate(dataframes_info):
+                if df_info.get('success', False):
+                    analysis_title = df_info.get('title', f'Analysis {df_idx + 1}')
+                    analysis_content = df_info.get('insight', '')
+                    
+                    # Create a comprehensive analysis message
+                    analysis_html = f"""
+                    <div style="border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem; margin: 0.5rem 0; background-color: #fafafa;">
+                        <h4 style="color: #007bff; margin: 0 0 0.5rem 0;">📊 {analysis_title}</h4>
+                        {analysis_content if analysis_content else '<em>Data analysis completed - see table above</em>'}
+                    </div>
+                    """
+                    
+                    st.session_state[f'messages_{session_prefix}'].append({
+                        'type': 'assistant',
+                        'content': analysis_html,
+                        'dataframe': df_info.get('dataframe'),
+                        'sql_query': df_info.get('sql'),
+                        'response_type': 'detailed_analysis',
+                        'analysis_title': analysis_title,
+                        'analysis_index': df_idx + 1,
+                        'timestamp': datetime.now()
+                    })
+                    print(f"💾 Saved detailed analysis {df_idx + 1}: {analysis_title}")
+            
+            # Save consolidated summary if available
+            if response_data.get('content'):
+                st.session_state[f'messages_{session_prefix}'].append({
+                    'type': 'assistant',
+                    'content': response_data.get('content'),
+                    'response_type': 'consolidated_summary',
+                    'timestamp': datetime.now()
+                })
+                print(f"💾 Saved consolidated summary")
+    
+    # Update convenience property
+    st.session_state.messages = st.session_state[f'messages_{session_prefix}']
+    print(f"✅ Complete UI conversation history saved: {len(st.session_state.messages)} total messages")
+
+def render_enhanced_chat_message(message):
+    """Enhanced chat message rendering for all conversation types"""
+    
+    message_type = message['type']
+    response_type = message.get('response_type', 'general')
+    
+    print(f"🎨 Rendering message: {message_type} / {response_type}")
+    
+    if message_type == 'user':
+        st.markdown(f"""
+        <div class="user-message">
+            <div class="user-message-content">
+                {message['content']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    elif message_type == 'assistant':
+        # Handle different types of assistant messages
+        
+        # Show analysis title for detailed analyses
+        if response_type == 'detailed_analysis' and message.get('analysis_title'):
+            st.markdown(f"### 📊 {message['analysis_title']}")
+        
+        # Show SQL expander for any message with SQL
+        if message.get('sql_query'):
+            with st.expander("🔍 View SQL Query", expanded=False):
+                st.code(message['sql_query'], language='sql')
+        
+        # Show dataframe for any message with data
+        if message.get('dataframe') is not None:
+            st.dataframe(message['dataframe'], use_container_width=True)
+            print(f"🎨 Displayed dataframe with {len(message['dataframe'])} rows")
+        
+        # Show content with appropriate styling based on response type
+        if message.get('content'):
+            
+            # Special styling for follow-up suggestions
+            if response_type == 'followup_suggestions':
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <div class="assistant-message-content">
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Special styling for clarifications
+            elif response_type == 'clarification':
+                st.markdown(f"""
+                <div class="assistant-message" style="border-left: 4px solid #ffa500;">
+                    <div class="assistant-message-content" style="background-color: #fff8dc;">
+                        🤔 <strong>Clarification:</strong><br><br>{message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Special styling for detailed analyses
+            elif response_type == 'detailed_analysis':
+                st.markdown(f"""
+                <div class="assistant-message" style="border-left: 4px solid #28a745;">
+                    <div class="assistant-message-content">
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Special styling for consolidated summaries
+            elif response_type == 'consolidated_summary':
+                st.markdown(f"""
+                <div class="assistant-message" style="border-left: 4px solid #6f42c1;">
+                    <div class="assistant-message-content" style="background-color: #f8f9ff;">
+                        🎯 <strong>Summary:</strong><br><br>{message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Default styling for other types
+            else:
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <div class="assistant-message-content">
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Add subtle timestamp and type indicator
+        if response_type != 'general':
+            timestamp = message.get('timestamp', datetime.now())
+            if hasattr(timestamp, 'strftime'):
+                time_str = timestamp.strftime('%H:%M')
+            else:
+                time_str = str(timestamp)[:5] if isinstance(timestamp, str) else "now"
+            
+            st.markdown(f"""
+            <div style="text-align: right; color: #888; font-size: 0.7rem; margin-top: -0.5rem; margin-bottom: 1rem;">
+                {response_type.replace('_', ' ').title()} • {time_str}
+            </div>
+            """, unsafe_allow_html=True)
+
+def render_conversation_with_full_history():
+    """Render complete conversation history with all preserved context"""
+    
+    print(f"🎨 Rendering conversation with {len(st.session_state.messages)} messages")
+    
+    if not st.session_state.messages:
+        st.markdown("""
+        <div class="welcome-message">
+            👋 Welcome! I'm your Healthcare Finance Assistant.<br>
+            Ask me about claims and Ledger related healthcare finance questions.<br>
+            <em>I'll remember our complete conversation history including all analyses and suggestions.</em>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Group messages for better display
+    message_groups = []
+    current_group = []
+    
+    for message in st.session_state.messages:
+        if message['type'] == 'user':
+            # Start new group with user message
+            if current_group:
+                message_groups.append(current_group)
+            current_group = [message]
+        else:
+            # Add assistant message to current group
+            current_group.append(message)
+    
+    # Add the last group
+    if current_group:
+        message_groups.append(current_group)
+    
+    # Render each group
+    for group_idx, group in enumerate(message_groups):
+        print(f"🎨 Rendering message group {group_idx + 1} with {len(group)} messages")
+        
+        for message in group:
+            render_enhanced_chat_message(message)
+        
+        # Add subtle separator between conversation turns
+        if group_idx < len(message_groups) - 1:
+            st.markdown("<hr style='border: none; border-top: 1px solid #eee; margin: 2rem 0;'>", unsafe_allow_html=True)
+
 def render_sql_response(response_data):
     """Render SQL response with table and narrative"""
     
@@ -856,38 +1104,6 @@ def render_root_cause_response(response_data):
         """, unsafe_allow_html=True)
     else:
         print("⚠️ No consolidated content found")
-
-def render_chat_message(message):
-    """Render a single chat message"""
-    
-    if message['type'] == 'user':
-        st.markdown(f"""
-        <div class="user-message">
-            <div class="user-message-content">
-                {message['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    elif message['type'] == 'assistant':
-        # Display SQL expander if available
-        if message.get('sql_query'):
-            with st.expander("🔍 View SQL Query", expanded=False):
-                st.code(message['sql_query'], language='sql')
-        
-        # Display table if available
-        if message.get('dataframe') is not None:
-            st.dataframe(message['dataframe'], use_container_width=True)
-        
-        # Display content if available
-        if message.get('content'):
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div class="assistant-message-content">
-                    {message['content']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
 
 def render_persistent_followup_questions():
     """Render persistent follow-up questions if they exist"""
@@ -1098,7 +1314,7 @@ def render_immediate_response(response_data, step_count, session_id):
     elif response_data['type'] == 'root_cause_detailed':
         render_root_cause_response(response_data)
     
-    # ADD THIS: Handle text responses (like navigation controller)
+    # Handle text responses (like navigation controller)
     elif response_data['type'] == 'text':
         print(f"🔥 Session {session_id} - Rendering text response")
         
@@ -1111,7 +1327,7 @@ def render_immediate_response(response_data, step_count, session_id):
         </div>
         """, unsafe_allow_html=True)
     
-    # ADD THIS: Fallback for any other response types
+    # Fallback for any other response types
     else:
         print(f"⚠️ Session {session_id} - Unknown response type: {response_data['type']}")
         if response_data.get('content'):
@@ -1123,63 +1339,8 @@ def render_immediate_response(response_data, step_count, session_id):
             </div>
             """, unsafe_allow_html=True)
 
-def save_to_session_history(all_response_data, session_id):
-    """Save analysis results to session-specific chat history"""
-    
-    session_prefix = session_id
-    
-    # Only save if we have actual content (not just followup questions)
-    content_responses = [r for r in all_response_data if r.get('type') not in ['followup_questions']]
-
-    if content_responses:
-        # Create a consolidated response for chat history
-        consolidated_parts = []
-        all_dataframes = []
-        has_sql = None
-        
-        for response_data in content_responses:
-            if response_data.get('type') == 'sql_with_table':
-                # For SQL responses, save in correct order
-                if response_data.get('sql_query'):
-                    has_sql = response_data.get('sql_query')
-                
-                if response_data.get('dataframe') is not None:
-                    all_dataframes.append(response_data.get('dataframe'))
-                
-                if response_data.get('content'):
-                    consolidated_parts.append(response_data['content'])
-            
-            elif response_data.get('type') == 'root_cause_detailed':
-                # For root cause responses, save the consolidated summary
-                if response_data.get('content'):
-                    consolidated_parts.append(response_data['content'])
-            
-            elif response_data.get('content'):
-                # For other response types, just add content
-                consolidated_parts.append(response_data['content'])
-                
-                if response_data.get('dataframe') is not None:
-                    all_dataframes.append(response_data.get('dataframe'))
-        
-        # Add to session-specific messages
-        if consolidated_parts or has_sql or all_dataframes:
-            primary_dataframe = all_dataframes[0] if all_dataframes else None
-            
-            st.session_state[f'messages_{session_prefix}'].append({
-                'type': 'assistant',
-                'content': "<br><br>".join(consolidated_parts) if consolidated_parts else "",
-                'dataframe': primary_dataframe,
-                'sql_query': has_sql,
-                'timestamp': datetime.now()
-            })
-            
-            # Update convenience property
-            st.session_state.messages = st.session_state[f'messages_{session_prefix}']
-            
-            print("💾 Saved analysis results to session-specific chat history")
-
-def execute_workflow_streaming(workflow):
-    """Execute workflow with streaming updates and proper state persistence"""
+def execute_workflow_streaming_with_ui_preservation(workflow):
+    """Execute workflow with complete UI preservation"""
     
     st.session_state.workflow_started = True
     session_id = st.session_state.session_id
@@ -1187,17 +1348,14 @@ def execute_workflow_streaming(workflow):
     st.session_state[f'workflow_started_{session_prefix}'] = True
     
     try:
-        print(f"🚀 Starting workflow execution for: {st.session_state.current_query}")
+        print(f"🚀 Starting workflow with UI preservation for: {st.session_state.current_query}")
         
-        # Create containers for streaming updates
         spinner_placeholder = st.empty()
-        
-        # Stream workflow execution
         step_count = 0
         all_response_data = []
         current_node = "Starting"
         
-        # Show initial spinner with message
+        # Show initial spinner
         spinner_placeholder.markdown(f"""
         <div class="spinner-container">
             <div class="spinner"></div>
@@ -1205,162 +1363,116 @@ def execute_workflow_streaming(workflow):
         </div>
         """, unsafe_allow_html=True)
         
-        # FIXED: Use consistent thread_id for session persistence
-        thread_id = f"session_{session_id}"
-        config = {
-            "configurable": {
-                "thread_id": thread_id  # Keep same thread_id for entire session
-            }
-        }
+        # Use persistent conversation thread ID
+        conversation_thread_id = st.session_state.conversation_thread_id
+        config = {"configurable": {"thread_id": conversation_thread_id}}
         
-        # FIXED: Build conversation history from session messages
+        # Build conversation history for LangGraph context
         conversation_history = []
         for msg in st.session_state.messages:
             if msg['type'] == 'user':
                 conversation_history.append(msg['content'])
         
-        # Create initial state with conversation history
         initial_state = {
             'original_question': st.session_state.current_query,
             'current_question': st.session_state.current_query,
             'session_id': session_id,
             'user_id': f"streamlit_user_{session_id}",
-            'user_questions_history': conversation_history,  # Include conversation history
+            'user_questions_history': conversation_history,
             'errors': [],
             'session_context': {
                 'app_instance_id': session_id,
                 'execution_timestamp': datetime.now().isoformat(),
-                'conversation_turn': len(conversation_history) + 1
+                'conversation_turn': len(conversation_history) + 1,
+                'conversation_thread_id': conversation_thread_id
             }
         }
         
-        print(f"🔧 Initial state: {initial_state}")
-        print(f"🔧 Config: {config}")
-        print(f"🔧 Conversation history: {conversation_history}")
+        print(f"🔧 Workflow context: {len(conversation_history)} previous questions")
         
         try:
-            # Stream the workflow execution with timeout
-            execution_timeout = 300  # 5 minutes timeout
-            start_time = time.time()
-            
-            print(f"🚀 Starting workflow stream...")
-            
-            # FIXED: Check if we should get existing state from LangGraph
+            # Get existing conversation state
             try:
-                # Try to get existing state to maintain conversation context
                 existing_state = workflow.app.get_state(config)
                 if existing_state and existing_state.values:
-                    print(f"📋 Found existing LangGraph state for session {session_id}")
-                    # Merge existing state with new question
                     merged_state = {**existing_state.values, **initial_state}
-                    print(f"📋 Merged state: {merged_state}")
+                    print(f"📋 Merged with existing conversation state")
                 else:
-                    print(f"📋 No existing state found, using fresh state")
                     merged_state = initial_state
+                    print(f"📋 Using fresh conversation state")
             except Exception as state_error:
-                print(f"⚠️ Could not retrieve existing state: {state_error}")
+                print(f"⚠️ Could not retrieve conversation state: {state_error}")
                 merged_state = initial_state
             
+            # Execute workflow with streaming
             for step_data in workflow.app.stream(merged_state, config=config):
-                # Check timeout
-                if time.time() - start_time > execution_timeout:
-                    raise TimeoutError("Workflow execution timed out")
-                
                 step_count += 1
-                print(f"📊 Session {session_id} - Step {step_count}")
-                print(f"📊 Step data: {step_data}")
+                print(f"📊 Step {step_count} - Processing...")
                 
-                # Get current node name
                 current_node = get_current_node_name(step_data)
                 next_agent = get_next_agent_from_state(step_data)
                 
-                print(f"📊 Current node: {current_node}, Next agent: {next_agent}")
-                
-                # Extract and display response content
+                # Extract response content
                 response_data = extract_response_content(step_data)
-                print(f"📊 Extracted response data: {response_data}")
                 
                 if response_data:
                     all_response_data.append(response_data)
-                    print(f"📊 Added to all_response_data. Total responses: {len(all_response_data)}")
+                    print(f"📊 Response {len(all_response_data)}: {response_data.get('type')}")
                     
-                    # Handle immediate rendering
+                    # Show immediate responses
                     if response_data.get('immediate_render', False):
-                        print(f"🚀 Session {session_id} - Immediate rendering for {current_node}")
-                        
                         spinner_placeholder.empty()
                         immediate_container = st.container()
                         
                         with immediate_container:
                             render_immediate_response(response_data, step_count, session_id)
                         
-                        # Update spinner for next step
                         if next_agent:
                             spinner_placeholder = st.empty()
                             update_spinner(spinner_placeholder, current_node, next_agent)
-                    
-                    else:
-                        print(f"📊 Non-immediate response, updating spinner")
-                        # Update spinner for non-immediate responses
-                        update_spinner(spinner_placeholder, current_node, next_agent)
-                
                 else:
-                    print(f"📊 No response data extracted, updating spinner")
                     update_spinner(spinner_placeholder, current_node, next_agent)
                 
-                # Small delay with session check
                 time.sleep(0.3)
                 
-                # Verify session consistency
                 if st.session_state.session_id != session_id:
-                    print(f"⚠️ Session ID changed during execution! Original: {session_id}, Current: {st.session_state.session_id}")
                     break
             
-            print(f"🏁 Workflow stream completed. Total steps: {step_count}")
-            print(f"🏁 Total responses collected: {len(all_response_data)}")
+            print(f"🏁 Workflow completed: {step_count} steps, {len(all_response_data)} responses")
                     
         except Exception as workflow_error:
-            print(f"❌ Session {session_id} - Workflow execution error: {str(workflow_error)}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Workflow execution error: {str(workflow_error)}")
             raise workflow_error
         
         # Clear spinner
         spinner_placeholder.empty()
         
-        # Save to session-specific message history
-        print(f"💾 Saving {len(all_response_data)} responses to session history")
-        save_to_session_history(all_response_data, session_id)
+        # ✅ SAVE COMPLETE UI CONVERSATION HISTORY
+        print(f"💾 Saving complete UI conversation history...")
+        save_complete_ui_conversation_history(all_response_data, session_id)
         
-        print(f"✅ Session {session_id} - Workflow completed with {step_count} steps")
+        print(f"✅ Workflow completed with complete UI preservation")
                 
     except Exception as e:
-        print(f"❌ Session {session_id} - Error in workflow execution: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ Error in workflow execution: {str(e)}")
         
+        # Save error to chat history too
         st.session_state[f'messages_{session_prefix}'].append({
             'type': 'assistant',
             'content': f"❌ I encountered an error processing your request: {str(e)}",
+            'response_type': 'error',
             'timestamp': datetime.now()
         })
-        # Update convenience property
         st.session_state.messages = st.session_state[f'messages_{session_prefix}']
     
     finally:
-        # Reset session-specific flags
+        # Reset processing flags
         st.session_state[f'processing_{session_prefix}'] = False
         st.session_state[f'workflow_started_{session_prefix}'] = False
-        st.session_state[f'button_clicked_{session_prefix}'] = False
-        st.session_state[f'last_clicked_question_{session_prefix}'] = None
-        
-        # Update convenience properties
         st.session_state.processing = False
         st.session_state.workflow_started = False
-        st.session_state.button_clicked = False
-        st.session_state.last_clicked_question = None
         
-        print(f"✅ Session {session_id} - Workflow execution completed and flags reset")
+        print(f"✅ Workflow execution completed with full UI preservation")
 
 def render_chat_input(workflow):
     """Render fixed bottom chat input"""
@@ -1382,54 +1494,101 @@ def render_chat_input(workflow):
         print(f"User query received: {user_query}")
         start_processing(user_query)
 
-def main():
-    """Main Streamlit application with session isolation"""
+def clear_all_caches():
+    """Clear all caches - useful for debugging"""
+    try:
+        # Clear Streamlit caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear session-specific workflow
+        session_id = st.session_state.get('session_id')
+        if session_id:
+            workflow_key = f"workflow_instance_{session_id}"
+            if workflow_key in st.session_state:
+                del st.session_state[workflow_key]
+        
+        print("🧹 All caches cleared")
+        return True
+    except Exception as e:
+        print(f"❌ Error clearing caches: {e}")
+        return False
 
+def main():
+    """Main function with complete conversation preservation"""
+    
     with st.sidebar:
         st.markdown("### 🏥 Navigation")
         
         if st.button("⬅️ Back to Main Page", key="back_to_main"):
             st.switch_page("main.py")
+        
+        # Enhanced debug section
+        st.markdown("---")
+        st.markdown("### 🔧 Session Info")
+        
+        if st.button("🧹 Clear All Caches", key="clear_caches"):
+            if clear_all_caches():
+                st.success("Caches cleared!")
+                st.rerun()
+        
+        # Show detailed session info
+        if 'session_id' in st.session_state:
+            st.text(f"Session: {st.session_state.session_id[:8]}...")
+            st.text(f"Thread: {st.session_state.get('conversation_thread_id', 'None')[:12]}...")
+            
+            # Enhanced conversation stats
+            messages = st.session_state.get('messages', [])
+            user_msgs = [m for m in messages if m['type'] == 'user']
+            assistant_msgs = [m for m in messages if m['type'] == 'assistant']
+            
+            st.text(f"Total Messages: {len(messages)}")
+            st.text(f"User Questions: {len(user_msgs)}")
+            st.text(f"AI Responses: {len(assistant_msgs)}")
+            
+            # Show message types breakdown
+            if st.button("📊 Message Breakdown", key="msg_breakdown"):
+                msg_types = {}
+                for msg in messages:
+                    msg_type = msg.get('response_type', msg['type'])
+                    msg_types[msg_type] = msg_types.get(msg_type, 0) + 1
+                
+                for msg_type, count in msg_types.items():
+                    st.text(f"{msg_type}: {count}")
+        
+        st.text(f"Azure: {os.environ.get('WEBSITE_INSTANCE_ID', 'local')}")
+        st.text(f"Process: {os.getpid()}")
     
     try:
         # Initialize session state
         initialize_session_state()
         
-        # Get session-specific workflow
-        workflow = get_session_workflow()
+        # Get workflow
+        workflow = get_workflow_for_session(st.session_state.session_id)
         
         if workflow is None:
             st.error("❌ Failed to initialize workflow. Please refresh the page.")
             return
         
-        # Main title
+        # Main title with enhanced info
         st.markdown("# 🏥 Healthcare Finance Assistant")
-        st.markdown(f"*Session: {st.session_state.session_id[:8]}...*")
+        conversation_length = len([m for m in st.session_state.get('messages', []) if m['type'] == 'user'])
+        st.markdown(f"*Session: {st.session_state.session_id[:8]}... | Conversation: {conversation_length} questions*")
         st.markdown("---")
         
-        # Chat container
+        # Chat container with enhanced conversation display
         st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         
-        # Display welcome message if no messages
-        if not st.session_state.messages:
-            st.markdown("""
-            <div class="welcome-message">
-                👋 Welcome! I'm your Healthcare Finance Assistant.<br>
-                Ask me about claims and Ledger related healthcare finance questions.
-            </div>
-            """, unsafe_allow_html=True)
+        # ✅ RENDER COMPLETE CONVERSATION HISTORY
+        render_conversation_with_full_history()
         
-        # Display chat messages
-        for message in st.session_state.messages:
-            render_chat_message(message)
-        
-        # Display persistent follow-up questions
+        # Render persistent follow-up questions
         render_persistent_followup_questions()
         
         # Execute workflow if processing
         if st.session_state.processing and not st.session_state.workflow_started:
-            print(f"🚀 Session {st.session_state.session_id} - Starting workflow for: {st.session_state.current_query}")
-            execute_workflow_streaming(workflow)
+            print(f"🚀 Starting workflow execution...")
+            execute_workflow_streaming_with_ui_preservation(workflow)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1437,16 +1596,16 @@ def main():
         render_chat_input(workflow)
         
     except Exception as e:
-        print(f"❌ Session {st.session_state.get('session_id', 'unknown')} - Error in main application: {str(e)}")
+        print(f"❌ Error in main application: {str(e)}")
         st.error(f"Application Error: {str(e)}")
         
-        # Reset session state on error
+        # Reset on error
         if 'session_id' in st.session_state:
             session_prefix = st.session_state.session_id
             st.session_state[f'processing_{session_prefix}'] = False
             st.session_state[f'workflow_started_{session_prefix}'] = False
-            st.session_state.processing = False
-            st.session_state.workflow_started = False
 
 if __name__ == "__main__":
-    main()
+    main()(spinner_placeholder, current_node, next_agent)
+                    else:
+                        update_spinner

@@ -435,9 +435,17 @@ Rule 2. Product Category Handling:
 - If none of these tokens appear, append Domain Context string at the end.
 
 Rule 3. Follow-Up Handling:
-- If Current Question is incomplete ("why is that", "what about", "show me more", "i want expense", "show costs", etc.):
-    * Copy only the last missing subject/metric phrase from Previous Question History.
-    * Then apply Rule 1 and Rule 2.
+- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", etc.):
+    * Inherit ONLY the missing elements from Previous Question History:
+        - Attributes (e.g., LOB, segment, product group)
+        - Metrics (e.g., revenue, expense, variance, counts)
+        - Date range (e.g., months, years)
+    * Do not copy the entire history, only inject the smallest missing pieces required to make the question complete.
+    * Then apply Rule 1 (Month→Year) and Rule 2 (Product Category).
+
+- If the Current Question ALREADY HAS all attributes, metrics, and date ranges:
+    * Do NOT use history at all.
+    * Only apply Rule 1 (Month→Year) and Rule 2 (Product Category).
 
 Rule 4. Preservation:
 - Do not paraphrase, reorder, or drop any tokens.
@@ -462,12 +470,13 @@ FINAL VALIDATION RULES
 OUTPUT FORMAT (STRICT)
 {{
   "context_type": "metric_change|true_followup|filter_change|new_independent",
-  "inherited_context": "only the minimal subject/metric from history if needed",
+  "inherited_context": "only the minimal subject/metric/date range from history if needed",
   "rewritten_question": "rewritten version after applying rules",
   "question_type": "what|why",
   "violation_flag": "none or reason"
 }}
 """
+
 
         max_retries = 3
         retry_count = 0

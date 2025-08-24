@@ -414,61 +414,60 @@ class LLMNavigationController:
         print(f'📚 History context: {history_context}')
         
         rewrite_classify_prompt = f"""
-                Your job is to **rewrite and classify the user's question**. Follow the rules strictly.
+Your job is to REWRITE and CLASSIFY the user's question. Follow rules strictly.
 
-                Current Question: "{business_question}"
-                Domain Context (append exactly as-is if needed): "{domain_text}"
-                Previous Question History: "{history_context}" (if empty, treat as first question)
+INPUTS:
+- Current Question: "{business_question}"
+- Domain Context: "{domain_text}"
+- Previous Question History: "{history_context}" (if empty, treat as first question)
 
-                TASK 1 - REWRITE THE QUESTION BASED ON HISTORY
+---
+TASK A - REWRITE QUESTION
+Apply rules in this exact order:
 
-                ALLOWED CHANGES ONLY (STRICT • NO PARAPHRASING):
-                1) **Month → Year insertion**:
-                - For every month token (Jan–Dec) not immediately followed by a 4-digit year, append the current year (e.g., "May" → "May 2025", "May to June" → "May 2025 to June 2025").
+Rule 1. Month → Year insertion:
+- For every month token (Jan–Dec) not followed by a 4-digit year, append the current year.
 
-                2) **Product Category Handling**:
-                - If the question already contains one of these tokens: PBM, Specialty, Home Delivery(HDP) (case-insensitive):
-                    * Insert the words "product category " immediately before the first occurrence of that token.
-                    * Do NOT append Domain Context at the end.
-                - If none of these tokens appear, append the exact Domain Context string to the end of the question.
+Rule 2. Product Category Handling:
+- If PBM, Specialty, or Home Delivery(HDP) appears (case-insensitive):
+    * Insert "product category " immediately before its first occurrence.
+    * Do NOT append Domain Context.
+- If none of these tokens appear, append Domain Context string at the end.
 
-                3) **Follow-Up Handling**:
-                - If the question is a follow-up (e.g., "why is that", "what about", "show me more", "i want expense", "show costs"), make it complete by inheriting only the minimal missing context from Previous Question History, then apply the two allowed edits above.
+Rule 3. Follow-Up Handling:
+- If Current Question is incomplete ("why is that", "what about", "show me more", "i want expense", "show costs", etc.):
+    * Copy only the last missing subject/metric phrase from Previous Question History.
+    * Then apply Rule 1 and Rule 2.
 
-                4) **Preservation Rules**:
-                - Do NOT paraphrase or remove any other words.
-                - Preserve LOB/segment terms exactly (e.g., External, C&S, Commercial).
-                - Preserve punctuation and spacing (e.g., keep "rate / volume" with spaces).
+Rule 4. Preservation:
+- Do not paraphrase, reorder, or drop any tokens.
+- Preserve punctuation, casing, spacing, and LOB/segment terms exactly.
 
-                VALIDATION:
-                - Final question = original text (+ minimal inherited context for follow-ups) + month→year additions + product category phrase (either inserted before existing token or appended Domain Context).
+---
+TASK B - CLASSIFY QUESTION
+- "what": data/facts/numbers/reports/trends
+- "why": explanations/causes/drivers/root cause
+- Follow-ups inherit type unless explicitly asking "why".
 
-                ---
-                **Examples**:
+---
+FINAL VALIDATION RULES
+1. You must always return a valid JSON object.
+2. Do NOT include markdown, ```json fences, or explanations.
+3. If you cannot fully apply rules, still return valid JSON by:
+   - Preserving the Current Question unchanged in "rewritten_question".
+   - Adding a field "violation_flag": "<reason>".
+4. The response MUST NOT start with ```json or end with ```. Only raw JSON.
 
-                **Example A (your case)**  
-                Current: "For the PBM what was revenue month over month actuals variance $ and % for May and June by LOB"  
-                Result: "For the product category PBM what was revenue month over month actuals variance $ and % for May 2025 and June 2025 by LOB"
-
-                **Example B (no category in text)**  
-                Current: "For external which therapies had the top 10 and bottom 10 rate / volume variances by $ from May to June"  
-                Result: "For external which therapies had the top 10 and bottom 10 rate / volume variances by $ from May 2025 to June 2025{domain_text}"
-
-                TASK 2 - QUESTION TYPE CLASSIFICATION:
-                - "what": Data requests, facts, numbers, reports, trends
-                - "why": Explanations, causes, drivers, root cause analysis, drill-through analysis
-                - Follow-ups inherit the type unless explicitly asking for explanations.
-
-                RESPONSE FORMAT:
-                The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-
-                {{
-                "context_type": "metric_change|true_followup|filter_change|new_independent",
-                "inherited_context": "specific context inherited from previous question",
-                "rewritten_question": "complete rewritten question with appropriate context inheritance",
-                "question_type": "what|why"
-                }}
-                """
+---
+OUTPUT FORMAT (STRICT)
+{{
+  "context_type": "metric_change|true_followup|filter_change|new_independent",
+  "inherited_context": "only the minimal subject/metric from history if needed",
+  "rewritten_question": "rewritten version after applying rules",
+  "question_type": "what|why",
+  "violation_flag": "none or reason"
+}}
+"""
 
         max_retries = 3
         retry_count = 0

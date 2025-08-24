@@ -423,38 +423,50 @@ INPUTS:
 - Previous Question History: "{history_context}" (if empty, treat as first question)
 
 ---
-TASK A - REWRITE QUESTION
-Apply rules in this exact order:
+STEP 1 - DETERMINE QUESTION TYPE (Independent vs Follow-Up)
 
-Rule 1. Month → Year insertion:
-- For every month token (Jan–Dec) not followed by a 4-digit year, append the year {current_year}.
+Independent Question:
+- The Current Question already contains:
+  * a clear metric (e.g., revenue, expense, gross margin, variance),
+  * a clear attribute/segment (e.g., line of business, product group, LOB),
+  * and a date or date range (e.g., month + year).
+- Independent questions are full, standalone. Ignore Previous Question History.
 
-Rule 2. Product Category Handling:
-- If PBM, Specialty, or Home Delivery(HDP) appears (case-insensitive):
-    * Insert "product category " immediately before its first occurrence.
-    * Do NOT append Domain Context.
-- If none of these tokens appear, append Domain Context string at the end.
+Follow-Up Question:
+- The Current Question is incomplete or half-baked, such as:
+  * missing a metric (e.g., just "what about drugs?")
+  * missing attributes or line of business
+  * missing a date or date range
+  * contains filler like "what about", "why is that", "show me more", "I need …"
+- Follow-ups must inherit missing context from the most recent complete question.
 
-Rule 3. Follow-Up Handling:
-- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", "I need revenue for July", etc.):
-    * Use the most recent COMPLETE QUESTION as a template.
-    * Replace or add only the elements explicitly mentioned in the Current Question:
-        - Attributes (e.g., LOB, segment, product group)
-        - Metrics (e.g., revenue, expense, gross margin, variance, counts)
-        - Date range (e.g., months, years)
-    * If the Current Question introduces a new subject (e.g., "top 10 drugs") without a metric, inherit the last metric (e.g., claim revenue).
-    * If the Current Question introduces a new metric (e.g., gross margin instead of claim revenue), replace the metric in the template.
-    * Discard filler phrases like "I need", "show me", "what about", "why is that".
-    * Always rewrite into a full standalone question beginning with "What is ..." or "What are ...".
-    * Apply Rule 1 (Month→Year) ONLY to new months introduced without a year.
-    * Do NOT reapply Rule 2 (Product Category) if already present in the inherited template.
+---
+STEP 2 - REWRITE ACCORDING TO TYPE
 
-- If the Current Question ALREADY HAS all attributes, metrics, and date ranges:
-    * Do NOT use history at all.
-    * Only apply Rule 1 (Month→Year) and Rule 2 (Product Category).
+If Independent Question:
+1. Do not use history at all.
+2. For every month token (Jan–Dec) not followed by a 4-digit year, append the year {current_year}.
+3. If PBM, Specialty, or Home Delivery(HDP) appears (case-insensitive):
+   - Insert "product category " immediately before its first occurrence.
+   - Do not append Domain Context.
+4. If none of these tokens appear, append the exact Domain Context string at the end.
 
-Rule 4. Preservation:
-- Do not paraphrase, reorder, or drop any tokens except when discarding filler phrases in Rule 3.
+If Follow-Up Question:
+1. Use the most recent complete question as a template.
+2. Replace or add only the elements explicitly mentioned in the Current Question:
+   - Attributes (e.g., LOB, segment, product group)
+   - Metrics (e.g., revenue, expense, gross margin, variance, counts)
+   - Date range (e.g., months, years)
+3. If a new subject is introduced (e.g., "top 10 drugs") without a metric, inherit the last metric.
+4. If a new metric is introduced (e.g., gross margin instead of claim revenue), replace the old metric with the new one.
+5. Discard filler phrases like "I need", "show me", "what about", "why is that".
+6. Always rewrite into a full, standalone question beginning with "What is ..." or "What are ...".
+7. If new months are introduced without a year, append the year {current_year}.
+8. Do not change product category if it already exists in the inherited template.
+
+---
+STEP 3 - PRESERVATION
+- Do not paraphrase, reorder, or drop tokens except when discarding filler phrases in follow-ups.
 - Preserve punctuation, casing, spacing, and LOB/segment terms exactly.
 
 ---
@@ -482,6 +494,7 @@ OUTPUT FORMAT (STRICT)
   "violation_flag": "none or reason"
 }}
 """
+
 
 
 

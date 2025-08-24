@@ -426,7 +426,7 @@ TASK A - REWRITE QUESTION
 Apply rules in this exact order:
 
 Rule 1. Month → Year insertion:
-- For every month token (Jan–Dec) not followed by a 4-digit year, append the current year.
+- For every month token (Jan–Dec) not followed by a 4-digit year, append the year {current_year}.
 
 Rule 2. Product Category Handling:
 - If PBM, Specialty, or Home Delivery(HDP) appears (case-insensitive):
@@ -435,20 +435,22 @@ Rule 2. Product Category Handling:
 - If none of these tokens appear, append Domain Context string at the end.
 
 Rule 3. Follow-Up Handling:
-- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", etc.):
+- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", "I need that for July", etc.):
     * Inherit ONLY the missing elements from Previous Question History:
         - Attributes (e.g., LOB, segment, product group)
         - Metrics (e.g., revenue, expense, variance, counts)
         - Date range (e.g., months, years)
-    * Do not copy the entire history, only inject the smallest missing pieces required to make the question complete.
-    * Then apply Rule 1 (Month→Year) and Rule 2 (Product Category).
+    * Discard filler phrases like "I need that", "what about", "show me", "why is that", etc.
+    * Rewrite the question as a single, complete, fully-formed question in the same style as the Previous Question.
+    * Apply Rule 1 (Month→Year) ONLY to new month tokens introduced in the Current Question.
+    * Do NOT reapply Rule 2 (Product Category) if it is already present in the inherited context.
 
 - If the Current Question ALREADY HAS all attributes, metrics, and date ranges:
     * Do NOT use history at all.
     * Only apply Rule 1 (Month→Year) and Rule 2 (Product Category).
 
 Rule 4. Preservation:
-- Do not paraphrase, reorder, or drop any tokens.
+- Do not paraphrase, reorder, or drop any tokens except when discarding filler phrases in Rule 3.
 - Preserve punctuation, casing, spacing, and LOB/segment terms exactly.
 
 ---
@@ -476,6 +478,7 @@ OUTPUT FORMAT (STRICT)
   "violation_flag": "none or reason"
 }}
 """
+
 
 
         max_retries = 3

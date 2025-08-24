@@ -413,7 +413,8 @@ class LLMNavigationController:
                 
         print(f'📚 History context: {history_context}')
         
-        rewrite_classify_prompt = f"""
+      
+rewrite_classify_prompt = f"""
 Your job is to REWRITE and CLASSIFY the user's question. Follow rules strictly.
 
 INPUTS:
@@ -435,15 +436,18 @@ Rule 2. Product Category Handling:
 - If none of these tokens appear, append Domain Context string at the end.
 
 Rule 3. Follow-Up Handling:
-- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", "I need that for July", etc.):
-    * Inherit ONLY the missing elements from Previous Question History:
+- If the Current Question is INCOMPLETE (examples: "what about", "why is that", "show me more", "only expenses", "I need revenue for July", etc.):
+    * Use the most recent COMPLETE QUESTION as a template.
+    * Replace or add only the elements explicitly mentioned in the Current Question:
         - Attributes (e.g., LOB, segment, product group)
-        - Metrics (e.g., revenue, expense, variance, counts)
+        - Metrics (e.g., revenue, expense, gross margin, variance, counts)
         - Date range (e.g., months, years)
-    * Discard filler phrases like "I need that", "what about", "show me", "why is that", etc.
-    * Rewrite the question as a single, complete, fully-formed question in the same style as the Previous Question.
-    * Apply Rule 1 (Month→Year) ONLY to new month tokens introduced in the Current Question.
-    * Do NOT reapply Rule 2 (Product Category) if it is already present in the inherited context.
+    * If the Current Question introduces a new subject (e.g., "top 10 drugs") without a metric, inherit the last metric (e.g., claim revenue).
+    * If the Current Question introduces a new metric (e.g., gross margin instead of claim revenue), replace the metric in the template.
+    * Discard filler phrases like "I need", "show me", "what about", "why is that".
+    * Always rewrite into a full standalone question beginning with "What is ..." or "What are ...".
+    * Apply Rule 1 (Month→Year) ONLY to new months introduced without a year.
+    * Do NOT reapply Rule 2 (Product Category) if already present in the inherited template.
 
 - If the Current Question ALREADY HAS all attributes, metrics, and date ranges:
     * Do NOT use history at all.
@@ -478,6 +482,7 @@ OUTPUT FORMAT (STRICT)
   "violation_flag": "none or reason"
 }}
 """
+
 
 
 

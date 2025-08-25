@@ -94,3 +94,20 @@ Objective: Get the top 5 customers by total spending from a `sales` table locate
   "schema_name": "retail",
   "session_id": "user-session-42"
 }
+
+### cURL Example
+
+This shows how to make the API call from the command line, including the authentication header.
+
+```bash
+curl --request POST \
+  --url https://<your-databricks-workspace>/api/2.0/genie/conversation \
+  --header "Authorization: Bearer $DATABRICKS_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "prompt": "Write a SQL query to find the top 5 customers by total spending.",
+    "warehouse_id": "1234567890abcdef",
+    "catalog_name": "main",
+    "schema_name": "retail",
+    "session_id": "user-session-42"
+  }'

@@ -86,7 +86,7 @@ Objective: Get the top 5 customers by total spending from a `sales` table locate
 
 #### 1. API Request Payload
 
-```json
+json
 {
   "prompt": "Write a SQL query to find the top 5 customers by total spending.",
   "warehouse_id": "1234567890abcdef",
@@ -111,3 +111,16 @@ curl --request POST \
     "schema_name": "retail",
     "session_id": "user-session-42"
   }
+The API returns a JSON object. The generated code and explanation are found within the reply object.
+{
+  "session_id": "user-session-42",
+  "reply": {
+    "type": "sql",
+    "content": "SELECT\n  customer_id,\n  SUM(quantity * price_per_unit) AS total_spending\nFROM\n  main.retail.sales\nGROUP BY\n  customer_id\nORDER BY\n  total_spending DESC\nLIMIT 5;",
+    "explanation": "This SQL query calculates the total spending for each customer by multiplying the quantity by the price per unit. It then groups the results by customer, orders the results by total spending in descending order, and returns the top 5 customers."
+  },
+  "status": {
+    "state": "SUCCESS"
+  }
+}
+

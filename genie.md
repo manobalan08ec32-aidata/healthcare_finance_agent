@@ -60,6 +60,22 @@ Genie will automatically generate the corresponding chart within the notebook, b
 
 ---
 
+## Building an Agentic Framework with the Genie API
+
+An agentic framework uses an AI agent to reason and execute a series of tasks. The official Genie API is the reasoning engine for this.
+
+The agent operates in a loop: **Plan -> Act -> Observe -> Repeat**
+
+- **Plan:** The agent breaks down a high-level goal (for example, "Analyze last quarter's sales performance") into a specific question. It then constructs the JSON payload for the Genie API, including the prompt, warehouse_id, and other context.  
+
+- **Act:** The agent sends the POST request to the `/api/2.0/genie/conversation` endpoint. It parses the JSON response to extract the generated SQL or Python code from the `reply.content` field.  
+
+- **Observe:** The agent executes the extracted code against the Databricks environment (for example, using the Databricks SQL Connector). The result of the execution (data or an error) becomes the observation.  
+
+- **Repeat:** Based on the observation, the agent plans its next step. If the first query returned a list of top products, its next plan might be to generate a new query to analyze the sales trend for each of those products, using the same `session_id` to maintain context. This loop continues until the high-level goal is achieved.
+
+---
+
 ## The Genie Conversation API: Automation and Integration
 
 While the Genie UI is powerful for interactive analysis, its true potential for automation is unlocked via the official Conversation API. This API allows you to programmatically access the same powerful models that drive the conversational experience.

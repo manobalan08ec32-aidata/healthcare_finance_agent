@@ -99,7 +99,7 @@ Objective: Get the top 5 customers by total spending from a `sales` table locate
 
 This shows how to make the API call from the command line, including the authentication header.
 
-```bash
+bash
 curl --request POST \
   --url https://<your-databricks-workspace>/api/2.0/genie/conversation \
   --header "Authorization: Bearer $DATABRICKS_TOKEN" \
@@ -110,4 +110,4 @@ curl --request POST \
     "catalog_name": "main",
     "schema_name": "retail",
     "session_id": "user-session-42"
-  }'
+  }

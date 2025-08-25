@@ -62,31 +62,31 @@ Genie will automatically generate the corresponding chart within the notebook, b
 
 ## The Genie Conversation API: Automation and Integration
 
-While the Genie UI is powerful for interactive analysis, its true potential for automation is unlocked via the official **Conversation API**. This API allows you to programmatically access the same powerful models that drive the conversational experience.
+While the Genie UI is powerful for interactive analysis, its true potential for automation is unlocked via the official Conversation API. This API allows you to programmatically access the same powerful models that drive the conversational experience.
 
 ### API Endpoint and Authentication
 
-* **Method:** `POST`  
-* **Endpoint URL:** `https://<your-databricks-workspace>/api/2.0/genie/conversation`  
-* **Authentication:** Requests are authenticated using a Databricks Personal Access Token (PAT) passed in the `Authorization: Bearer <token>` header.  
+- Method: `POST`
+- Endpoint URL: `https://<your-databricks-workspace>/api/2.0/genie/conversation`
+- Authentication: Requests are authenticated using a Databricks Personal Access Token (PAT) passed in the `Authorization: Bearer <token>` header.
 
 ### Key Request Parameters
 
-* `session_id`: (Optional) A unique identifier to maintain conversation history.  
-* `prompt`: (Required) The natural language question or command for Genie.  
-* `warehouse_id`: (Required) The ID of the SQL warehouse to use as context for schemas and tables.  
-* `catalog_name`: (Optional) The name of the catalog to use for context.  
-* `schema_name`: (Optional) The name of the schema to use for context.  
+- `session_id`: (Optional) A unique identifier to maintain conversation history.
+- `prompt`: (Required) The natural language question or command for Genie.
+- `warehouse_id`: (Required) The ID of the SQL warehouse to use as context for schemas and tables.
+- `catalog_name`: (Optional) The name of the catalog to use for context.
+- `schema_name`: (Optional) The name of the schema to use for context.
 
 ---
 
 ### API Request and Response Samples
 
-**Objective:** Get the top 5 customers by total spending from a `sales` table located in the `main.retail` schema.
+Objective: Get the top 5 customers by total spending from a `sales` table located in the `main.retail` schema.
 
 #### 1. API Request Payload
 
-json
+```json
 {
   "prompt": "Write a SQL query to find the top 5 customers by total spending.",
   "warehouse_id": "1234567890abcdef",
@@ -94,40 +94,3 @@ json
   "schema_name": "retail",
   "session_id": "user-session-42"
 }
-2. cURL Example
-This shows how to make the API call from the command line, including the authentication header.
-curl --request POST \
-  --url https://<your-databricks-workspace>/api/2.0/genie/conversation \
-  --header "Authorization: Bearer $DATABRICKS_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{
-    "prompt": "Write a SQL query to find the top 5 customers by total spending.",
-    "warehouse_id": "1234567890abcdef",
-    "catalog_name": "main",
-    "schema_name": "retail",
-    "session_id": "user-session-42"
-  }
-  
-3. API Response
-The API returns a JSON object. The generated code and explanation are found within the reply object.
-{
-  "session_id": "user-session-42",
-  "reply": {
-    "type": "sql",
-    "content": "SELECT\n  customer_id,\n  SUM(quantity * price_per_unit) AS total_spending\nFROM\n  main.retail.sales\nGROUP BY\n  customer_id\nORDER BY\n  total_spending DESC\nLIMIT 5;",
-    "explanation": "This SQL query calculates the total spending for each customer by multiplying the quantity by the price per unit. It then groups the results by customer, orders them in descending order of total spending, and returns the top 5 customers."
-  },
-  "status": {
-    "state": "SUCCESS"
-  }
-}
-
-
-### Building an Agentic Framework with the Genie API
-An agentic framework uses an AI agent to reason and execute a series of tasks. The official Genie API is the perfect "reasoning engine" for this.
-The agent operates in a loop: Plan → Act → Observe → Repeat.
-
-Plan: The agent breaks down a high-level goal (e.g., "Analyze last quarter's sales performance") into a specific question. It then constructs the JSON payload for the Genie API, including the prompt, warehouse_id, and other context.
-Act: The agent sends the POST request to the /api/2.0/genie/conversation endpoint. It then parses the JSON response to extract the generated SQL or Python code from the reply.content field.
-Observe: The agent executes the extracted code against the Databricks environment (e.g., using the Databricks SQL Connector). The result of the execution (data or an error) becomes the observation.
-Repeat: Based on the observation, the agent plans its next step. If the first query returned a list of top products, its next plan might be to generate a new query to analyze the sales trend for each of those products, using the same session_id to maintain context. This loop continues until the high-level goal is achieved.

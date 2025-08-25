@@ -120,6 +120,8 @@ The API returns a JSON object. The generated code and explanation are found with
     "state": "SUCCESS"
   }
 }
+
+
 Building an Agentic Framework with the Genie API
 An agentic framework uses an AI agent to reason and execute a series of tasks. The official Genie API is the perfect "reasoning engine" for this.
 The agent operates in a loop: Plan → Act → Observe → Repeat.

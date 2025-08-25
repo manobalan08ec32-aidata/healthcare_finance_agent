@@ -85,7 +85,7 @@ While the Genie UI is powerful for interactive analysis, its true potential for 
 Objective: Get the top 5 customers by total spending from a `sales` table located in the `main.retail` schema.
 
 #### 1. API Request Payload
-
+```
 json
 {
   "prompt": "Write a SQL query to find the top 5 customers by total spending.",

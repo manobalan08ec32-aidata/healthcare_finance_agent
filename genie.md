@@ -140,3 +140,8 @@ The API returns a JSON object. The generated code and explanation are found with
   }
 }
 
+### Flow diagram
+<img width="1652" height="1276" alt="image" src="https://github.com/user-attachments/assets/699c77e6-9d5b-45f5-97dd-df6348dcef9d" />
+
+
+

@@ -107,6 +107,7 @@ curl --request POST \
     "schema_name": "retail",
     "session_id": "user-session-42"
   }
+  
 3. API Response
 The API returns a JSON object. The generated code and explanation are found within the reply object.
 {
@@ -122,7 +123,7 @@ The API returns a JSON object. The generated code and explanation are found with
 }
 
 
-###Building an Agentic Framework with the Genie API
+### Building an Agentic Framework with the Genie API
 An agentic framework uses an AI agent to reason and execute a series of tasks. The official Genie API is the perfect "reasoning engine" for this.
 The agent operates in a loop: Plan → Act → Observe → Repeat.
 

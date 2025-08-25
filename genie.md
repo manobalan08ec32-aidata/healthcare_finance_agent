@@ -1,6 +1,6 @@
 # Mastering Data Analysis with the Databricks Genie API
 
-This document provides a comprehensive overview of Databricks Genie, focusing on its core capabilities and how to leverage its functionality through the API to build powerful, automated data solutions.
+This document provides a comprehensive overview of Databricks Genie, focusing on its core capabilities and how to leverage its official Conversation API to build powerful, automated data solutions.
 
 Genie is the **conversational AI** integrated within the Databricks platform. Its primary role is to act as a data expert you can chat with, translating natural language prompts into executable code, explanations, and visualizations.
 
@@ -10,20 +10,48 @@ Genie is the **conversational AI** integrated within the Databricks platform. It
 
 Genie empowers data teams by simplifying complex tasks and accelerating the path from question to insight.
 
+### Databricks AI/BI Genie Overview
+
+Databricks AI/BI Genie is an AI-powered feature within the Databricks platform designed to enable natural language interaction with organizational data for business intelligence and data exploration.  
+
+**Key aspects of Databricks AI/BI Genie:**
+
+- **Natural Language Querying:**  
+  Genie allows users to ask questions about their data using everyday language, eliminating the need for advanced technical skills like SQL.
+
+- **Generative AI:**  
+  It leverages generative AI models to translate natural language questions into analytical queries (e.g., SQL) and generate relevant responses, including data visualizations.
+
+- **Contextual Understanding:**  
+  Genie utilizes metadata from Unity Catalog, user-provided instructions, and sample queries to understand the specific terminology, business logic, and relationships within an organization's data.
+
+- **Conversational Interface:**  
+  It provides a conversational interface, allowing users to ask follow-up questions and refine their queries based on previous interactions.
+
+- **Self-Service Analytics:**  
+  Genie aims to empower business users to perform self-service data exploration and answer ad-hoc questions that might not be covered by existing dashboards or reports.
+
+- **Continuous Improvement:**  
+  It incorporates user feedback and clarifications to continuously refine its understanding of the data and improve the accuracy and relevance of its responses over time.
+
+- **Integration with Dashboards:**  
+  Genie can be embedded within Databricks AI/BI Dashboards, providing a seamless experience for asking follow-up questions directly within visualizations.
+
+- **Genie Spaces:**  
+  Genie operates within "Genie spaces," which are configurable environments where data analysts can define datasets, provide sample queries, and add instructions to guide Genie's performance and ensure accurate responses.
+
+---
+
 ### 1. Natural Language to Code (SQL & Python)
+
 This is Genie's cornerstone feature. It understands the context of your data (schemas, tables, columns) to generate high-quality code.
 
 > **User Prompt:** "Show me the monthly revenue growth for our top 5 products in 2024. Also include the total number of unique customers for each product."
 
 Genie translates this directly into an executable SQL query or a PySpark DataFrame operation, saving significant development time.
 
-### 2. Code Explanation and Debugging
-You can use Genie to understand or fix existing code. Paste a complex script and ask it to:
-* **Explain this query:** Genie provides a step-by-step breakdown in plain English.
-* **Fix the error in this code:** Genie analyzes the code, identifies syntax or logical errors, and suggests a corrected version.
-* **Convert this Pandas code to PySpark:** Genie refactors code to make it scalable and optimized for the Databricks environment.
+### 2. Automated Visualization
 
-### 3. Automated Visualization
 After generating a dataset, you can conversationally ask Genie to visualize the results.
 
 > **User Prompt:** "Visualize this data as a stacked bar chart, with months on the x-axis and products stacked by revenue."
@@ -32,104 +60,71 @@ Genie will automatically generate the corresponding chart within the notebook, b
 
 ---
 
-## The Genie API: Automation and Integration
+## The Genie Conversation API: Automation and Integration
 
-While the Genie UI is powerful for interactive analysis, its true potential for automation is unlocked via its API. The functionality of Genie is exposed through the **Databricks Foundation Model APIs**, which allow you to programmatically access the same powerful models that drive the conversational experience.
+While the Genie UI is powerful for interactive analysis, its true potential for automation is unlocked via the official **Conversation API**. This API allows you to programmatically access the same powerful models that drive the conversational experience.
 
-### How it Works
-You can build applications that send prompts (including context like table schemas) to a hosted large language model endpoint (e.g., DBRX Instruct). The model processes the request and returns a structured JSON object containing the generated code or explanation.
+### API Endpoint and Authentication
 
-* **API Endpoint:** The API is served through Databricks Model Serving endpoints.
-* **Authentication:** Requests are authenticated using Databricks Personal Access Tokens (PAT).
-* **Context is Key:** For the best results, your API prompt must include schema information (e.g., `CREATE TABLE` statements or column descriptions) along with your natural language question.
+* **Method:** `POST`  
+* **Endpoint URL:** `https://<your-databricks-workspace>/api/2.0/genie/conversation`  
+* **Authentication:** Requests are authenticated using a Databricks Personal Access Token (PAT) passed in the `Authorization: Bearer <token>` header.  
+
+### Key Request Parameters
+
+* `session_id`: (Optional) A unique identifier to maintain conversation history.  
+* `prompt`: (Required) The natural language question or command for Genie.  
+* `warehouse_id`: (Required) The ID of the SQL warehouse to use as context for schemas and tables.  
+* `catalog_name`: (Optional) The name of the catalog to use for context.  
+* `schema_name`: (Optional) The name of the schema to use for context.  
+
+---
 
 ### API Request and Response Samples
 
-Here are practical examples of how to interact with the API that powers Genie's capabilities.
+**Objective:** Get the top 5 customers by total spending from a `sales` table located in the `main.retail` schema.
 
-#### Example 1: Text-to-SQL Generation
-
-**Objective:** Get the top 5 customers by total spending from a `sales` table.
-
-**1. The Prompt (with Schema Context)**
-
-To ensure accuracy, we provide the table schema within the prompt itself.
-
-You are an expert SQL analyst. Given the following database schema, write a SQL query to find the top 5 customers by total spending.
-
-Schema:
-CREATE TABLE sales (
-customer_id STRING,
-product_id STRING,
-sale_date DATE,
-quantity INT,
-price_per_unit DECIMAL(10, 2)
-);
-
-
-**2. API Request Payload**
-
-The request is sent to the model serving endpoint. We use the `messages` format for conversational models.
+#### 1. API Request Payload
 
 ```json
 {
-  "messages": [
-    {
-      "role": "user",
-      "content": "You are an expert SQL analyst. Given the following database schema, write a SQL query to find the top 5 customers by total spending.\n\nSchema:\nCREATE TABLE sales (\n  customer_id STRING,\n  product_id STRING,\n  sale_date DATE,\n  quantity INT,\n  price_per_unit DECIMAL(10, 2)\n);"
-    }
-  ],
-  "max_tokens": 1024
+  "prompt": "Write a SQL query to find the top 5 customers by total spending.",
+  "warehouse_id": "1234567890abcdef",
+  "catalog_name": "main",
+  "schema_name": "retail",
+  "session_id": "user-session-42"
 }
-3. cURL Example
-
-This shows how to make the API call from the command line.
-
-Bash
-curl -X POST -u "token:$DATABRICKS_TOKEN" \
-  https://<your-databricks-workspace>.databricks.net/serving-endpoints/databricks-dbrx-instruct/invocations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {
-        "role": "user",
-        "content": "You are an expert SQL analyst. Given the following database schema, write a SQL query to find the top 5 customers by total spending.\n\nSchema:\nCREATE TABLE sales (\n  customer_id STRING,\n  product_id STRING,\n  sale_date DATE,\n  quantity INT,\n  price_per_unit DECIMAL(10, 2)\n);"
-      }
-    ],
-    "max_tokens": 1024
+2. cURL Example
+This shows how to make the API call from the command line, including the authentication header.
+curl --request POST \
+  --url https://<your-databricks-workspace>/api/2.0/genie/conversation \
+  --header "Authorization: Bearer $DATABRICKS_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "prompt": "Write a SQL query to find the top 5 customers by total spending.",
+    "warehouse_id": "1234567890abcdef",
+    "catalog_name": "main",
+    "schema_name": "retail",
+    "session_id": "user-session-42"
   }'
-4. API Response
-
-The API returns a JSON object containing the model's response. The generated SQL is in the content field.
-
-JSON
+3. API Response
+The API returns a JSON object. The generated code and explanation are found within the reply object.
 {
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Of course. Here is the SQL query to find the top 5 customers by total spending:\n\n```sql\nSELECT\n  customer_id,\n  SUM(quantity * price_per_unit) AS total_spending\nFROM\n  sales\nGROUP BY\n  customer_id\nORDER BY\n  total_spending DESC\nLIMIT 5;\n```"
-      }
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 88,
-    "completion_tokens": 76,
-    "total_tokens": 164
+  "session_id": "user-session-42",
+  "reply": {
+    "type": "sql",
+    "content": "SELECT\n  customer_id,\n  SUM(quantity * price_per_unit) AS total_spending\nFROM\n  main.retail.sales\nGROUP BY\n  customer_id\nORDER BY\n  total_spending DESC\nLIMIT 5;",
+    "explanation": "This SQL query calculates the total spending for each customer by multiplying the quantity by the price per unit. It then groups the results by customer, orders them in descending order of total spending, and returns the top 5 customers."
+  },
+  "status": {
+    "state": "SUCCESS"
   }
 }
 Building an Agentic Framework with the Genie API
-An agentic framework uses an AI agent to reason and execute a series of tasks to achieve a goal. The Genie API is the perfect "reasoning engine" for this.
+An agentic framework uses an AI agent to reason and execute a series of tasks. The official Genie API is the perfect "reasoning engine" for this.
+The agent operates in a loop: Plan → Act → Observe → Repeat.
 
-The agent operates in a loop: Plan -> Observe -> Act.
-
-Plan: The agent breaks down a high-level goal (e.g., "Analyze last quarter's sales performance") into a specific question. It then constructs the JSON payload for the Genie API, including the prompt and necessary schema context.
-
-Act: The agent sends the request to the API endpoint. It then parses the JSON response to extract the generated SQL or Python code from the content field.
-
+Plan: The agent breaks down a high-level goal (e.g., "Analyze last quarter's sales performance") into a specific question. It then constructs the JSON payload for the Genie API, including the prompt, warehouse_id, and other context.
+Act: The agent sends the POST request to the /api/2.0/genie/conversation endpoint. It then parses the JSON response to extract the generated SQL or Python code from the reply.content field.
 Observe: The agent executes the extracted code against the Databricks environment (e.g., using the Databricks SQL Connector). The result of the execution (data or an error) becomes the observation.
-
-Repeat: Based on the observation, the agent plans its next step. If the first query returned a list of top products, its next plan might be to generate a new query to analyze the sales trend for each of those products. This loop continues until the high-level goal is achieved.
-
-By integrating the Genie API in this way, you can build autonomous agents that perform complex data analysis, generate reports, and monitor metrics with minimal human intervention.
+Repeat: Based on the observation, the agent plans its next step. If the first query returned a list of top products, its next plan might be to generate a new query to analyze the sales trend for each of those products, using the same session_id to maintain context. This loop continues until the high-level goal is achieved.

@@ -95,6 +95,8 @@ While the Genie UI is powerful for interactive analysis, its true potential for 
 - `schema_name`: (Optional) The name of the schema to use for context.
 
 ---
+### Flow diagram
+<img width="1652" height="1276" alt="image" src="https://github.com/user-attachments/assets/699c77e6-9d5b-45f5-97dd-df6348dcef9d" />
 
 ### API Request and Response Samples
 
@@ -140,8 +142,7 @@ The API returns a JSON object. The generated code and explanation are found with
   }
 }
 
-### Flow diagram
-<img width="1652" height="1276" alt="image" src="https://github.com/user-attachments/assets/699c77e6-9d5b-45f5-97dd-df6348dcef9d" />
+
 
 
 

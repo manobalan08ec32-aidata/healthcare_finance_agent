@@ -816,10 +816,11 @@ def render_sql_response(response_data):
         </div>
         """, unsafe_allow_html=True)
     
-    # 4. FEEDBACK UI (NEW)
+    # 4. FEEDBACK UI (NEW) - Create unique feedback ID
     if response_data.get('show_feedback', False):
-        # Set unique feedback target ID for this response
-        feedback_target = response_data.get('feedback_target', 'default')
+        import hashlib
+        content_hash = hashlib.md5(str(response_data.get('content', '') + str(response_data.get('sql_query', ''))).encode()).hexdigest()[:8]
+        feedback_target = f"{response_data.get('feedback_target', 'default')}_{content_hash}"
         st.session_state['feedback_target_id'] = feedback_target
         render_feedback_ui(st.session_state.current_query)
 
@@ -867,10 +868,12 @@ def render_root_cause_response(response_data):
     else:
         print("⚠️ No dataframes found in root_cause_detailed response")
     
-    # 5. FEEDBACK UI (NEW) - Show at the end of all root cause analysis
+    # 5. FEEDBACK UI (NEW) - Create unique feedback ID
     if response_data.get('show_feedback', False):
-        # Set unique feedback target ID for this response
-        feedback_target = response_data.get('feedback_target', 'default')
+        import hashlib
+        dataframes_str = str([df.get('title', '') for df in response_data.get('dataframes', [])])
+        content_hash = hashlib.md5(str(dataframes_str + str(response_data.get('content', ''))).encode()).hexdigest()[:8]
+        feedback_target = f"{response_data.get('feedback_target', 'default')}_{content_hash}"
         st.session_state['feedback_target_id'] = feedback_target
         render_feedback_ui(st.session_state.current_query)
 
@@ -906,13 +909,12 @@ def render_chat_message(message):
                 
                 # NEW: Render feedback UI for simple text messages that have feedback flag
                 if message.get('show_feedback', False):
-                    # Create unique feedback ID based on message content and timestamp
                     import hashlib
                     message_hash = hashlib.md5(str(message.get('content', '') + str(message.get('timestamp', ''))).encode()).hexdigest()[:8]
                     feedback_target = f"{message.get('feedback_target', 'default')}_{message_hash}"
                     st.session_state['feedback_target_id'] = feedback_target
                     render_feedback_ui(st.session_state.current_query)
-
+                    
 def render_persistent_followup_questions():
     """Renders follow-up buttons if they exist in the session state."""
     if st.session_state.current_followup_questions and not st.session_state.processing:

@@ -286,34 +286,32 @@ st.markdown("""
             
     .followup-buttons-container {
         display: flex !important;
-        flex-wrap: wrap !important;
+        flex-direction: column !important; /* Stack buttons vertically */
         gap: 8px !important;
-        align-items: center !important;
+        align-items: stretch !important; /* Make buttons same width */
         justify-content: flex-start !important;
         max-width: 95% !important;
         margin: 0.5rem 0 !important;
         padding: 0 !important;
     }
 
-    /* Much smaller, horizontal buttons */
+    /* MODIFICATION 2: Button styles updated for full width and text wrapping */
     .stButton > button {
         background-color: white !important;
         color: #007bff !important;
         border: 1px solid #007bff !important;
-        border-radius: 4px !important;
-        padding: 4px 8px !important;
+        border-radius: 8px !important;
+        padding: 10px 16px !important;
         margin: 0 !important;
-        width: auto !important;
-        text-align: center !important;
-        font-size: 11px !important;
-        line-height: 1.1 !important;
-        transition: all 0.2s ease !important;
-        min-height: 24px !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis !important;
-        max-width: 180px !important;
-        flex-shrink: 0 !important;
+        width: 100% !important; /* Make button take full width of its container */
+        text-align: left !important; /* Align text to the left */
+        font-size: 14px !important;
+        line-height: 1.4 !important;
+        transition: all 0.2s ease !important;   
+        height: auto !important; /* Allow button to grow vertically */
+        min-height: 40px !important;
+        white-space: normal !important; /* Allow text to wrap */
+        word-wrap: break-word !important;
     }
 
     .stButton > button:hover {
@@ -513,9 +511,7 @@ def convert_text_to_safe_html(text):
 
 def extract_response_content(step_data):
     """Extract meaningful response content from workflow step with better debugging"""
-    
-    print(f"🔍 EXTRACT_RESPONSE_CONTENT - Raw step_data: {step_data}")
-    
+        
     if isinstance(step_data, dict):
         if 'step' in step_data:
             step_content = step_data['step']
@@ -530,10 +526,33 @@ def extract_response_content(step_data):
             
             print(f"📊 Processing node: {node_name}")
             print(f"📊 Node state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
-            print(f"📊 Node state content: {node_state}")
             
             # Handle navigation controller domain clarification
             if node_name == 'navigation_controller':
+                print(f"🔎 navigation_controller node_state: {json.dumps(node_state, indent=2, default=str)}")
+                greeting_response = node_state.get('greeting_response')
+                is_dml_ddl = node_state.get('is_dml_ddl', False)
+                nav_error_msg = node_state.get('nav_error_msg')
+
+                if nav_error_msg and nav_error_msg.strip():
+                    print(f"🔍 Navigation - Found error")                    
+                    formatted_greeting = convert_text_to_safe_html(nav_error_msg)
+                    return {
+                        'type': 'text',
+                        'content': formatted_greeting,
+                        'immediate_render': True
+                    }
+                
+                if greeting_response and greeting_response.strip():
+                    print(f"🔍 Navigation - Found greeting response: {greeting_response}")
+                    print(f"🔍 Navigation - Is DML/DDL: {is_dml_ddl}")
+                    
+                    formatted_greeting = convert_text_to_safe_html(greeting_response)
+                    return {
+                        'type': 'text',
+                        'content': formatted_greeting,
+                        'immediate_render': True
+                    }
                 domain_followup = node_state.get('domain_followup_question')
                 requires_clarification = node_state.get('requires_domain_clarification', False)
                 
@@ -553,12 +572,32 @@ def extract_response_content(step_data):
             
             elif node_name == 'router_agent':
                 print("🚫 Skipping router_agent output - hidden from UI")
+                router_error_msg = node_state.get('router_error_msg')
+
+                if router_error_msg and router_error_msg.strip():
+                    print(f"🔍 Navigation - Found error")                    
+                    formatted_greeting = convert_text_to_safe_html(router_error_msg)
+                    return {
+                        'type': 'text',
+                        'content': formatted_greeting,
+                        'immediate_render': True
+                    }
                 continue
             
             elif node_name == 'sql_generator_agent':
                 sql_query = node_state.get('sql_query', '')
                 query_results = node_state.get('query_results', [])
                 narrative_response = node_state.get('narrative_response', '')
+                sql_gen_error_msg = node_state.get('router_error_msg')
+
+                if sql_gen_error_msg and sql_gen_error_msg.strip():
+                    print(f"🔍 Navigation - Found error")                    
+                    formatted_greeting = convert_text_to_safe_html(sql_gen_error_msg)
+                    return {
+                        'type': 'text',
+                        'content': formatted_greeting,
+                        'immediate_render': True
+                    }
                 
                 print(f"🔍 SQL Generator - Query: {bool(sql_query)}")
                 print(f"🔍 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
@@ -609,6 +648,16 @@ def extract_response_content(step_data):
             # Follow-up question handler
             elif node_name == 'followup_question_agent':
                 print(f"🔍 Followup Question Agent - Processing generated questions")
+                follow_up_error_msg = node_state.get('follow_up_error_msg')
+
+                if follow_up_error_msg and follow_up_error_msg.strip():
+                    print(f"🔍 Navigation - Found error")                    
+                    formatted_greeting = convert_text_to_safe_html(follow_up_error_msg)
+                    return {
+                        'type': 'text',
+                        'content': formatted_greeting,
+                        'immediate_render': True
+                    }
                 
                 followup_questions = node_state.get('followup_questions', [])
                 success = node_state.get('followup_generation_success', False)
@@ -1128,7 +1177,7 @@ def render_chat_input(workflow):
         print(f"User query received: {user_query}")
         start_processing(user_query)
 
-ddef main():
+def main():
     """Main Streamlit application with session isolation"""
 
     with st.sidebar:

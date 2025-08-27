@@ -471,6 +471,45 @@ def format_query_results_as_table(query_results):
         print(f"❌ Error formatting table: {str(e)}")
         return None, f"Error displaying table: {str(e)}"
 
+def save_feedback_data(session_id, user_response, feedback_type):
+    """Saves user feedback to the Unity Catalog table with safer queries."""
+    try:
+        db_client = st.session_state.workflow.db_client
+        # Sanitize the user response to prevent basic SQL injection
+        safe_response = user_response.replace("'", "''")
+        feedback_query = f"""
+            INSERT INTO fdmenh.chatbot_user_feedback (
+                session_id, user_response, feedback_type, created_at
+            ) VALUES (
+                '{session_id}', '{safe_response}', '{feedback_type}', current_timestamp()
+            );
+        """
+        db_client.execute_sql(feedback_query)
+        print("✅ Feedback saved successfully.")
+    except Exception as e:
+        print(f"❌ Failed to save feedback data: {e}")
+        st.error(f"Failed to save feedback data: {e}")
+
+
+def save_audit_data(session_id, full_state, node_name):
+    """Saves the full state and node name to the Unity Catalog audit table."""
+    try:
+        db_client = st.session_state.workflow.db_client
+        # Escape single quotes in the JSON string to prevent SQL injection
+        safe_state = json.dumps(full_state).replace("'", "''")
+        audit_query = f"""
+            INSERT INTO fdmenh.chatbot_audit_tracking (
+                session_id, full_state_output, node_name, created_at
+            ) VALUES (
+                '{session_id}', '{safe_state}', '{node_name}', current_timestamp()
+            );
+        """
+        db_client.execute_sql(audit_query)
+        print("✅ Audit data saved successfully.")
+    except Exception as e:
+        print(f"❌ Failed to save audit data: {e}")
+        st.error(f"Failed to save audit data: {e}")
+
 def convert_text_to_safe_html(text):
     """Convert text to HTML while preserving intentional formatting"""
     if not text:
@@ -589,7 +628,8 @@ def extract_response_content(step_data):
                 query_results = node_state.get('query_results', [])
                 narrative_response = node_state.get('narrative_response', '')
                 sql_gen_error_msg = node_state.get('router_error_msg')
-
+                user_question = st.session_state.current_query
+                
                 if sql_gen_error_msg and sql_gen_error_msg.strip():
                     print(f"🔍 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(sql_gen_error_msg)
@@ -631,7 +671,9 @@ def extract_response_content(step_data):
                         'content': "".join(response_parts),
                         'sql_query': sql_query,
                         'dataframe': table_df,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,
+                        'user_current_question': user_question
                     }
                     print(f"✅ Returning SQL response - Table: {table_df is not None}, Content: {bool(response_parts)}")
                     return result
@@ -640,7 +682,9 @@ def extract_response_content(step_data):
                         'type': 'text',
                         'content': f"⚡ <strong>Generated SQL:</strong><br><br>{sql_query}",
                         'sql_query': sql_query,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,
+                        'user_current_question': user_question
                     }
                 else:
                     print("❌ SQL Generator - No SQL query, results, or narrative found")
@@ -743,7 +787,8 @@ def extract_response_content(step_data):
                         'type': 'root_cause_detailed',
                         'content': "",  # REMOVED: "".join(response_parts),
                         'dataframes': all_dataframes,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True
                     }
                 
                 # Fallback if no details
@@ -751,7 +796,8 @@ def extract_response_content(step_data):
                     return {
                         'type': 'text',
                         'content': "✅ <strong>Root cause analysis completed successfully!</strong><br><br>Analysis has been processed across multiple data sources.",
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True
                     }
             
             # FALLBACK FOR ANY OTHER NODE - This is crucial!
@@ -781,37 +827,46 @@ def extract_response_content(step_data):
     print("❌ No response content extracted from step_data")
     return None
 
-def render_sql_response(response_data):
-    """Render SQL response with table and narrative"""
+def render_sql_response(message):
+    """Render SQL response with table and narrative, including feedback UI"""
     
-    # 1. SQL expander FIRST
-    if response_data.get('sql_query'):
+    # 1. User's original question (if available)
+    user_question = message.get('user_current_question')
+    if user_question:
+        st.markdown(f"**Your Question:** <i>{user_question}</i>")
+    
+    # 2. SQL expander FIRST
+    if message.get('sql_query'):
         with st.expander("🔍 View SQL Query", expanded=False):
-            st.code(response_data['sql_query'], language='sql')
+            st.code(message['sql_query'], language='sql')
     
-    # 2. TABLE SECOND (before narrative)
-    if response_data.get('dataframe') is not None:
-        st.dataframe(response_data['dataframe'], use_container_width=True)
-        print(f"📊 Displayed table with {len(response_data['dataframe'])} rows")
+    # 3. TABLE SECOND (before narrative)
+    if message.get('dataframe') is not None:
+        st.dataframe(message['dataframe'], use_container_width=True)
+        print(f"📊 Displayed table with {len(message['dataframe'])} rows")
     
-    # 3. NARRATIVE LAST
-    if response_data.get('content'):
+    # 4. NARRATIVE LAST
+    if message.get('content'):
         st.markdown(f"""
         <div class="assistant-message">
             <div class="assistant-message-content">
-                {response_data['content']}
+                {message['content']}
             </div>
         </div>
         """, unsafe_allow_html=True)
+        
+    # 5. Feedback UI
+    if message.get('show_feedback'):
+        render_feedback_ui(message['user_current_question'])
 
-def render_root_cause_response(response_data):
-    """Render root cause analysis response with multiple dataframes"""
+def render_root_cause_response(message):
+    """Render root cause analysis response with multiple dataframes and feedback UI"""
     
     print(f"🔥 RENDERING ROOT CAUSE DETAILED ANALYSIS")
     
     # Display each analysis one by one in the correct order
-    if response_data.get('dataframes'):
-        for idx, df_info in enumerate(response_data['dataframes']):
+    if message.get('dataframes'):
+        for idx, df_info in enumerate(message['dataframes']):
             print(f"🔥 Processing dataframe {idx+1}: {df_info.get('title', 'Unknown')}")
             
             # Only show successful analyses (ignore errors)
@@ -847,6 +902,10 @@ def render_root_cause_response(response_data):
                 print(f"❌ Skipping unsuccessful analysis: {df_info.get('title', 'Unknown')}")
     else:
         print("⚠️ No dataframes found in root_cause_detailed response")
+    
+    # Feedback UI at the end
+    if message.get('show_feedback'):
+        render_feedback_ui(st.session_state.current_query)
     
     # REMOVED: Display consolidated summary at the end
     # if response_data.get('content'):
@@ -888,6 +947,42 @@ def render_chat_message(message):
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+def render_feedback_ui(user_question):
+    """Renders the feedback UI with thumbs-up/down and an optional text box."""
+    
+    feedback_id = st.session_state.feedback_target_id
+    if f"feedback_submitted_{feedback_id}" not in st.session_state:
+        st.markdown("<br>Did this answer your question?")
+        
+        # Use two columns to place the buttons side-by-side and close to each other
+        col1, col2 = st.columns([0.1, 0.1])
+        
+        with col1:
+            if st.button("👍", key=f"thumbs_up_{feedback_id}"):
+                save_feedback_data(st.session_state.session_id, user_question, "thumbs_up")
+                st.session_state[f"feedback_submitted_{feedback_id}"] = "up"
+                st.toast("Thanks for the feedback!")
+                st.rerun()
+                
+        with col2:
+            if st.button("👎", key=f"thumbs_down_{feedback_id}"):
+                st.session_state[f"feedback_submitted_{feedback_id}"] = "down"
+                st.rerun()
+                
+    if st.session_state.get(f"feedback_submitted_{feedback_id}") == "down":
+        with st.form(key=f"feedback_form_{feedback_id}"):
+            feedback_text = st.text_area("Please provide feedback:", key=f"feedback_text_{feedback_id}")
+            submit_button = st.form_submit_button(label="Submit Feedback")
+            
+            if submit_button:
+                if feedback_text:
+                    save_feedback_data(st.session_state.session_id, feedback_text, "thumbs_down")
+                    st.toast("Thanks for the feedback!")
+                    del st.session_state[f"feedback_submitted_{feedback_id}"] # Clear state to hide the form
+                    st.rerun()
+                else:
+                    st.warning("Please provide feedback before submitting.")
 
 def render_persistent_followup_questions():
     """Renders follow-up buttons if they exist in the session state."""
@@ -1089,7 +1184,7 @@ def save_to_session_history(all_response_data):
 
 def execute_workflow_streaming(workflow):
     """
-    Executes the LangGraph workflow, collects all responses, and saves them to history.
+    Executes the LangGraph workflow, streams responses, and handles state changes.
     """
     st.session_state.workflow_started = True
     session_id = st.session_state.session_id
@@ -1097,16 +1192,7 @@ def execute_workflow_streaming(workflow):
     try:
         print(f"🚀 Starting workflow execution for: {st.session_state.current_query}")
         
-        all_response_data = []
         spinner_placeholder = st.empty()
-        current_node = "Starting"
-        
-        spinner_placeholder.markdown(f"""
-        <div class="spinner-container">
-            <div class="spinner"></div>
-            <div class="spinner-message">🤖 {current_node}...</div>
-        </div>
-        """, unsafe_allow_html=True)
         
         # Prepare the initial state and config for the LangGraph agent
         conversation_history = [msg['content'] for msg in st.session_state.messages if msg.get('role') == 'user']
@@ -1125,8 +1211,13 @@ def execute_workflow_streaming(workflow):
         }
         config = {"configurable": {"thread_id": session_id}}
         
-        # Stream the workflow and collect all response data packets
+        # Stream the workflow
+        step_count = 0
+        final_state = {}
         for step_data in workflow.app.stream(initial_state, config=config):
+            step_count += 1
+            final_state.update(step_data)
+            
             # Update the spinner with the current progress
             current_node = get_current_node_name(step_data)
             next_agent = get_next_agent_from_state(step_data)
@@ -1134,14 +1225,36 @@ def execute_workflow_streaming(workflow):
 
             # Extract structured data from the current step
             response_data = extract_response_content(step_data) 
-            if response_data:
-                all_response_data.append(response_data)
+            
+            if response_data and response_data.get('immediate_render'):
+                print(f"🔍 Found an immediate response from node: {current_node}")
+                
+                # Check for feedback nodes and set a session flag
+                if current_node in ["Sql Generator Agent", "Root Cause Agent"]:
+                    st.session_state.show_feedback = True
+                    st.session_state.feedback_target_id = f"feedback_{session_id}_{step_count}"
+                
+                # Append the message and trigger a rerun to show it
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response_data.get('content', ''),
+                    "response_type": response_data.get('type', 'text'),
+                    "dataframe": response_data.get('dataframe', None),
+                    "dataframes": response_data.get('dataframes', None),
+                    "sql_query": response_data.get('sql_query', None),
+                    "show_feedback": response_data.get('show_feedback', False),
+                    "user_current_question": response_data.get('user_current_question', ''),
+                })
+                st.rerun() # Rerun to display this new message
         
         spinner_placeholder.empty()
-        
-        # After the stream is complete, save the entire collected response to history
-        save_to_session_history(all_response_data)
 
+        # Check for audit tracking at the end of the full workflow
+        last_node_name = get_current_node_name(final_state)
+        print(f"🏁 Workflow completed. Final node: {last_node_name}")
+        if last_node_name in ["Followup Question Agent", "Root Cause Agent", "Root Cause Completion Node"]:
+            save_audit_data(session_id, final_state)
+            
     except Exception as e:
         st.error(f"An error occurred during workflow execution: {e}")
         import traceback
@@ -1153,7 +1266,7 @@ def execute_workflow_streaming(workflow):
         })
 
     finally:
-        # Reset processing flags and rerun the app to display the final state
+        # Reset processing flags and rerun the app one last time
         st.session_state.processing = False
         st.session_state.workflow_started = False
         st.rerun()
@@ -1186,6 +1299,12 @@ def main():
             st.switch_page("main.py")
     
     try:
+        # Initialize new state variables for feedback
+        if 'show_feedback' not in st.session_state:
+            st.session_state.show_feedback = False
+        if 'feedback_target_id' not in st.session_state:
+            st.session_state.feedback_target_id = None
+        
         initialize_session_state()
         workflow = get_session_workflow()
         
@@ -1232,3 +1351,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

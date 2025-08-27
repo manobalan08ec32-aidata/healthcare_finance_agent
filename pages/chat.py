@@ -518,7 +518,7 @@ def extract_response_content(step_data):
         else:
             step_content = step_data
         
-        print(f"🔍 Step content keys: {list(step_content.keys())}")
+        print(f"📍 Step content keys: {list(step_content.keys())}")
         
         for node_name, node_state in step_content.items():
             if node_name == '__start__':
@@ -529,13 +529,13 @@ def extract_response_content(step_data):
             
             # Handle navigation controller domain clarification
             if node_name == 'navigation_controller':
-                print(f"🔎 navigation_controller node_state: {json.dumps(node_state, indent=2, default=str)}")
+                print(f"🔍 navigation_controller node_state: {json.dumps(node_state, indent=2, default=str)}")
                 greeting_response = node_state.get('greeting_response')
                 is_dml_ddl = node_state.get('is_dml_ddl', False)
                 nav_error_msg = node_state.get('nav_error_msg')
 
                 if nav_error_msg and nav_error_msg.strip():
-                    print(f"🔍 Navigation - Found error")                    
+                    print(f"🚨 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(nav_error_msg)
                     return {
                         'type': 'text',
@@ -544,8 +544,8 @@ def extract_response_content(step_data):
                     }
                 
                 if greeting_response and greeting_response.strip():
-                    print(f"🔍 Navigation - Found greeting response: {greeting_response}")
-                    print(f"🔍 Navigation - Is DML/DDL: {is_dml_ddl}")
+                    print(f"🎯 Navigation - Found greeting response: {greeting_response}")
+                    print(f"🎯 Navigation - Is DML/DDL: {is_dml_ddl}")
                     
                     formatted_greeting = convert_text_to_safe_html(greeting_response)
                     return {
@@ -556,8 +556,8 @@ def extract_response_content(step_data):
                 domain_followup = node_state.get('domain_followup_question')
                 requires_clarification = node_state.get('requires_domain_clarification', False)
                 
-                print(f"🔍 Navigation - requires_clarification: {requires_clarification}")
-                print(f"🔍 Navigation - domain_followup: {domain_followup}")
+                print(f"🎯 Navigation - requires_clarification: {requires_clarification}")
+                print(f"🎯 Navigation - domain_followup: {domain_followup}")
                 
                 if requires_clarification and domain_followup:
                     formatted_question = convert_text_to_safe_html(domain_followup)
@@ -575,7 +575,7 @@ def extract_response_content(step_data):
                 router_error_msg = node_state.get('router_error_msg')
 
                 if router_error_msg and router_error_msg.strip():
-                    print(f"🔍 Navigation - Found error")                    
+                    print(f"🚨 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(router_error_msg)
                     return {
                         'type': 'text',
@@ -591,7 +591,7 @@ def extract_response_content(step_data):
                 sql_gen_error_msg = node_state.get('router_error_msg')
 
                 if sql_gen_error_msg and sql_gen_error_msg.strip():
-                    print(f"🔍 Navigation - Found error")                    
+                    print(f"🚨 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(sql_gen_error_msg)
                     return {
                         'type': 'text',
@@ -599,19 +599,25 @@ def extract_response_content(step_data):
                         'immediate_render': True
                     }
                 
-                print(f"🔍 SQL Generator - Query: {bool(sql_query)}")
-                print(f"🔍 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
-                print(f"🔍 SQL Generator - Results count: {len(query_results) if query_results else 0}")
-                print(f"🔍 SQL Generator - Results sample: {query_results[:2] if query_results else 'No results'}")
-                print(f"🔍 SQL Generator - Narrative: {bool(narrative_response)}")
-                print(f"🔍 SQL Generator - Narrative content: {narrative_response[:100]}..." if narrative_response else "No narrative")
+                print(f"🎯 SQL Generator - Query: {bool(sql_query)}")
+                print(f"🎯 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
+                print(f"🎯 SQL Generator - Results count: {len(query_results) if query_results else 0}")
+                print(f"🎯 SQL Generator - Results sample: {query_results[:2] if query_results else 'No results'}")
+                print(f"🎯 SQL Generator - Narrative: {bool(narrative_response)}")
+                print(f"🎯 SQL Generator - Narrative content: {narrative_response[:100]}..." if narrative_response else "No narrative")
+                
+                # Save audit data for sql_generator node
+                try:
+                    save_audit_data(st.session_state.session_id, node_state, 'sql_generator_agent')
+                except Exception as e:
+                    print(f"⚠️ Failed to save audit data for sql_generator: {e}")
                 
                 response_parts = []
                 table_df = None
                 
                 # Process table data FIRST (before narrative)
                 if query_results and isinstance(query_results, list) and len(query_results) > 0:
-                    print(f"🔍 Processing {len(query_results)} query results")
+                    print(f"🎯 Processing {len(query_results)} query results")
                     table_df, table_info = format_query_results_as_table(query_results)
                     if table_df is not None:
                         print(f"✅ Table created successfully with {len(table_df)} rows")
@@ -624,14 +630,16 @@ def extract_response_content(step_data):
                     formatted_narrative = convert_text_to_safe_html(narrative_response)
                     response_parts.append(f"📈 <strong>Analysis:</strong><br><br>{formatted_narrative}")
                 
-                # Return with table data for immediate rendering
+                # Return with table data for immediate rendering AND feedback flag
                 if table_df is not None or response_parts:
                     result = {
                         'type': 'sql_with_table',
                         'content': "".join(response_parts),
                         'sql_query': sql_query,
                         'dataframe': table_df,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,  # NEW: Flag to show feedback UI
+                        'feedback_target': 'sql_generator'  # NEW: Identify the feedback target
                     }
                     print(f"✅ Returning SQL response - Table: {table_df is not None}, Content: {bool(response_parts)}")
                     return result
@@ -640,18 +648,20 @@ def extract_response_content(step_data):
                         'type': 'text',
                         'content': f"⚡ <strong>Generated SQL:</strong><br><br>{sql_query}",
                         'sql_query': sql_query,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,  # NEW: Flag to show feedback UI
+                        'feedback_target': 'sql_generator'  # NEW: Identify the feedback target
                     }
                 else:
                     print("❌ SQL Generator - No SQL query, results, or narrative found")
             
             # Follow-up question handler
             elif node_name == 'followup_question_agent':
-                print(f"🔍 Followup Question Agent - Processing generated questions")
+                print(f"🎯 Followup Question Agent - Processing generated questions")
                 follow_up_error_msg = node_state.get('follow_up_error_msg')
 
                 if follow_up_error_msg and follow_up_error_msg.strip():
-                    print(f"🔍 Navigation - Found error")                    
+                    print(f"🚨 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(follow_up_error_msg)
                     return {
                         'type': 'text',
@@ -662,14 +672,14 @@ def extract_response_content(step_data):
                 followup_questions = node_state.get('followup_questions', [])
                 success = node_state.get('followup_generation_success', False)
                 
-                print(f"🔍 Follow-up questions found: {followup_questions}")
-                print(f"🔍 Follow-up questions count: {len(followup_questions)}")
-                print(f"🔍 Generation success: {success}")
+                print(f"🎯 Follow-up questions found: {followup_questions}")
+                print(f"🎯 Follow-up questions count: {len(followup_questions)}")
+                print(f"🎯 Generation success: {success}")
                 
                 if followup_questions and len(followup_questions) > 0:
                     print("🎯 QUESTIONS FOUND - STORING AND DISPLAYING FOLLOWUP BUTTONS")
                     
-                    # REFACTORED: Store in the simplified session state
+                    # Store in the simplified session state
                     st.session_state.current_followup_questions = followup_questions
                     
                     return {
@@ -684,15 +694,18 @@ def extract_response_content(step_data):
                     
             # Root cause node - REMOVED CONSOLIDATED NARRATIVE
             elif node_name == 'root_cause_agent':
-                print(f"🔍 Root Cause Agent - Processing detailed output")
+                print(f"🎯 Root Cause Agent - Processing detailed output")
                 
                 consolidated_query_details = node_state.get('consolidated_query_details', [])
-                # REMOVED: narrative_response = node_state.get('narrative_response', '')
                 
-                print(f"🔍 Consolidated query details count: {len(consolidated_query_details)}")
-                # REMOVED: print(f"🔍 Narrative response available: {bool(narrative_response)}")
+                print(f"🎯 Consolidated query details count: {len(consolidated_query_details)}")
                 
-                # REMOVED: response_parts = []
+                # Save audit data for root_cause node
+                try:
+                    save_audit_data(st.session_state.session_id, node_state, 'root_cause_agent')
+                except Exception as e:
+                    print(f"⚠️ Failed to save audit data for root_cause: {e}")
+                
                 all_dataframes = []
                 
                 # Process each consolidated query detail individually
@@ -706,7 +719,7 @@ def extract_response_content(step_data):
                         success = query_detail.get('success', False)
                         row_count = query_detail.get('row_count', 0)
                         
-                        print(f"🔍 Processing query {i}: Success: {success}, Rows: {row_count}")
+                        print(f"🎯 Processing query {i}: Success: {success}, Rows: {row_count}")
                         
                         # Only process successful queries (ignore errors)
                         if success and row_count > 0:
@@ -732,18 +745,15 @@ def extract_response_content(step_data):
                         else:
                             print(f"❌ Skipping failed/empty query {i}: {purpose} - Success: {success}, Rows: {row_count}")
                 
-                # REMOVED: Add Consolidated Narrative Response at the end
-                # if narrative_response:
-                #     formatted_narrative = convert_text_to_safe_html(narrative_response)
-                #     response_parts.append(f"<strong>🎯 Consolidated Analysis Summary:</strong><br><br>{formatted_narrative}")
-                
-                # Return structured response with multiple dataframes (NO CONSOLIDATED CONTENT)
+                # Return structured response with multiple dataframes AND feedback flag
                 if all_dataframes:
                     return {
                         'type': 'root_cause_detailed',
-                        'content': "",  # REMOVED: "".join(response_parts),
+                        'content': "",
                         'dataframes': all_dataframes,
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,  # NEW: Flag to show feedback UI
+                        'feedback_target': 'root_cause'  # NEW: Identify the feedback target
                     }
                 
                 # Fallback if no details
@@ -751,12 +761,14 @@ def extract_response_content(step_data):
                     return {
                         'type': 'text',
                         'content': "✅ <strong>Root cause analysis completed successfully!</strong><br><br>Analysis has been processed across multiple data sources.",
-                        'immediate_render': True
+                        'immediate_render': True,
+                        'show_feedback': True,  # NEW: Flag to show feedback UI
+                        'feedback_target': 'root_cause'  # NEW: Identify the feedback target
                     }
             
             # FALLBACK FOR ANY OTHER NODE - This is crucial!
             else:
-                print(f"🔍 Processing fallback node: {node_name}")
+                print(f"🎯 Processing fallback node: {node_name}")
                 if isinstance(node_state, dict) and node_state:
                     # Look for common response fields
                     for key in ['narrative_response', 'response', 'result', 'analysis', 'content', 'output']:
@@ -803,6 +815,13 @@ def render_sql_response(response_data):
             </div>
         </div>
         """, unsafe_allow_html=True)
+    
+    # 4. FEEDBACK UI (NEW)
+    if response_data.get('show_feedback', False):
+        # Set unique feedback target ID for this response
+        feedback_target = response_data.get('feedback_target', 'default')
+        st.session_state['feedback_target_id'] = feedback_target
+        render_feedback_ui(st.session_state.current_query)
 
 def render_root_cause_response(response_data):
     """Render root cause analysis response with multiple dataframes"""
@@ -848,17 +867,12 @@ def render_root_cause_response(response_data):
     else:
         print("⚠️ No dataframes found in root_cause_detailed response")
     
-    # REMOVED: Display consolidated summary at the end
-    # if response_data.get('content'):
-    #     st.markdown(f"""
-    #     <div class="assistant-message">
-    #         <div class="assistant-message-content">
-    #             {response_data['content']}
-    #         </div>
-    #     </div>
-    #     """, unsafe_allow_html=True)
-    # else:
-    #     print("⚠️ No consolidated content found")
+    # 5. FEEDBACK UI (NEW) - Show at the end of all root cause analysis
+    if response_data.get('show_feedback', False):
+        # Set unique feedback target ID for this response
+        feedback_target = response_data.get('feedback_target', 'default')
+        st.session_state['feedback_target_id'] = feedback_target
+        render_feedback_ui(st.session_state.current_query)
 
 def render_chat_message(message):
     """
@@ -888,28 +902,45 @@ def render_chat_message(message):
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # NEW: Render feedback UI for simple text messages that have feedback flag
+                if message.get('show_feedback', False):
+                    feedback_target = message.get('feedback_target', 'default')
+                    st.session_state['feedback_target_id'] = feedback_target
+                    render_feedback_ui(st.session_state.current_query)
 
 def render_persistent_followup_questions():
     """Renders follow-up buttons if they exist in the session state."""
     if st.session_state.current_followup_questions and not st.session_state.processing:
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                💡 <strong>Would you like to explore further? Here are some suggested follow-up questions:</strong>
+        # Check if feedback is currently being displayed to avoid conflicts
+        current_feedback_id = st.session_state.get('feedback_target_id')
+        feedback_key = f"feedback_submitted_{current_feedback_id}" if current_feedback_id else None
+        
+        # Only show followup questions if no feedback form is currently open
+        show_followup = True
+        if feedback_key and feedback_key in st.session_state:
+            if st.session_state[feedback_key] == "down":  # Feedback form is open
+                show_followup = False
+        
+        if show_followup:
+            st.markdown(f"""
+            <div class="assistant-message">
+                <div class="assistant-message-content">
+                    💡 <strong>Would you like to explore further? Here are some suggested follow-up questions:</strong>
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">', unsafe_allow_html=True)
-        
-        for i, question in enumerate(st.session_state.current_followup_questions):
-            st.button(
-                question,
-                key=f"persistent_btn_{i}_{abs(hash(question))}",
-                on_click=start_processing,
-                args=(question,) # Pass the question to the callback
-            )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+            st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">', unsafe_allow_html=True)
+            
+            for i, question in enumerate(st.session_state.current_followup_questions):
+                st.button(
+                    question,
+                    key=f"persistent_btn_{i}_{abs(hash(question))}",
+                    on_click=start_processing,
+                    args=(question,) # Pass the question to the callback
+                )
+            
+            st.markdown('</div>', unsafe_allow_html=True)
 
 def get_current_node_name(step_data):
     """Extract current node name for display"""
@@ -1157,6 +1188,10 @@ def save_to_session_history(all_response_data):
             assistant_message['response_type'] = 'root_cause_detailed'
             has_content = True
         elif data['type'] == 'text':
+            # Preserve feedback flags when saving to history
+            if data.get('show_feedback'):
+                assistant_message['show_feedback'] = data['show_feedback']
+                assistant_message['feedback_target'] = data.get('feedback_target', 'default')
             assistant_message['content'] += data['content'] + "<br>"
             has_content = True
         elif data['type'] == 'followup_questions':
@@ -1166,6 +1201,7 @@ def save_to_session_history(all_response_data):
     # Only append to history if there was actual content to display
     if has_content:
         st.session_state.messages.append(assistant_message)
+
 
 def execute_workflow_streaming(workflow):
     """

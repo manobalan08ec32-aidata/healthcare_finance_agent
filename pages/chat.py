@@ -874,6 +874,7 @@ def render_root_cause_response(response_data):
         st.session_state['feedback_target_id'] = feedback_target
         render_feedback_ui(st.session_state.current_query)
 
+
 def render_chat_message(message):
     """
     Renders a single message from the chat history, routing to the correct display function.
@@ -905,7 +906,10 @@ def render_chat_message(message):
                 
                 # NEW: Render feedback UI for simple text messages that have feedback flag
                 if message.get('show_feedback', False):
-                    feedback_target = message.get('feedback_target', 'default')
+                    # Create unique feedback ID based on message content and timestamp
+                    import hashlib
+                    message_hash = hashlib.md5(str(message.get('content', '') + str(message.get('timestamp', ''))).encode()).hexdigest()[:8]
+                    feedback_target = f"{message.get('feedback_target', 'default')}_{message_hash}"
                     st.session_state['feedback_target_id'] = feedback_target
                     render_feedback_ui(st.session_state.current_query)
 

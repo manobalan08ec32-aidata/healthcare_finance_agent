@@ -471,40 +471,6 @@ def format_query_results_as_table(query_results):
         print(f"❌ Error formatting table: {str(e)}")
         return None, f"Error displaying table: {str(e)}"
 
-def save_feedback_data(session_id, user_response, feedback_type):
-    """Saves user feedback to the Unity Catalog table."""
-    try:
-        db_client = st.session_state.workflow.db_client
-        # Use parameterized query to prevent SQL injection
-        feedback_query = """
-            INSERT INTO fdmenh.chatbot_user_feedback (
-                session_id, user_response, feedback_type, created_at
-            ) VALUES (?, ?, ?, current_timestamp())
-        """
-        db_client.execute_sql(feedback_query, [session_id, user_response, feedback_type])
-        print("✅ Feedback saved successfully.")
-    except Exception as e:
-        print(f"❌ Failed to save feedback data: {e}")
-        st.error(f"Failed to save feedback data: {e}")
-
-
-def save_audit_data(session_id, full_state, node_name):
-    """Saves the full state to the Unity Catalog audit table."""
-    try:
-        db_client = st.session_state.workflow.db_client
-        # Use parameterized query with proper JSON handling
-        audit_query = """
-            INSERT INTO fdmenh.chatbot_audit_tracking (
-                session_id, full_state_output, node_name, created_at
-            ) VALUES (?, ?, ?, current_timestamp())
-        """
-        # Convert state to JSON string safely
-        full_state_json = json.dumps(full_state, default=str)
-        db_client.execute_sql(audit_query, [session_id, full_state_json, node_name])
-        print(f"✅ Audit data saved successfully for node: {node_name}")
-    except Exception as e:
-        print(f"❌ Failed to save audit data: {e}")
-
 def convert_text_to_safe_html(text):
     """Convert text to HTML while preserving intentional formatting"""
     if not text:
@@ -569,42 +535,36 @@ def extract_response_content(step_data):
                 nav_error_msg = node_state.get('nav_error_msg')
 
                 if nav_error_msg and nav_error_msg.strip():
-                    print(f"🔴 Navigation - Found error")                    
+                    print(f"🔍 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(nav_error_msg)
                     return {
                         'type': 'text',
                         'content': formatted_greeting,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 
                 if greeting_response and greeting_response.strip():
-                    print(f"🔴 Navigation - Found greeting response: {greeting_response}")
-                    print(f"🔴 Navigation - Is DML/DDL: {is_dml_ddl}")
+                    print(f"🔍 Navigation - Found greeting response: {greeting_response}")
+                    print(f"🔍 Navigation - Is DML/DDL: {is_dml_ddl}")
                     
                     formatted_greeting = convert_text_to_safe_html(greeting_response)
                     return {
                         'type': 'text',
                         'content': formatted_greeting,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 domain_followup = node_state.get('domain_followup_question')
                 requires_clarification = node_state.get('requires_domain_clarification', False)
                 
-                print(f"🔴 Navigation - requires_clarification: {requires_clarification}")
-                print(f"🔴 Navigation - domain_followup: {domain_followup}")
+                print(f"🔍 Navigation - requires_clarification: {requires_clarification}")
+                print(f"🔍 Navigation - domain_followup: {domain_followup}")
                 
                 if requires_clarification and domain_followup:
                     formatted_question = convert_text_to_safe_html(domain_followup)
                     return {
                         'type': 'text',
                         'content': formatted_question,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 else:
                     print("🚫 Skipping navigation_controller output - no clarification needed")
@@ -615,14 +575,12 @@ def extract_response_content(step_data):
                 router_error_msg = node_state.get('router_error_msg')
 
                 if router_error_msg and router_error_msg.strip():
-                    print(f"🔴 Navigation - Found error")                    
+                    print(f"🔍 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(router_error_msg)
                     return {
                         'type': 'text',
                         'content': formatted_greeting,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 continue
             
@@ -631,33 +589,29 @@ def extract_response_content(step_data):
                 query_results = node_state.get('query_results', [])
                 narrative_response = node_state.get('narrative_response', '')
                 sql_gen_error_msg = node_state.get('router_error_msg')
-                # Get user question from node state or session state
-                user_question = node_state.get('user_current_question', st.session_state.current_query)
-                
+
                 if sql_gen_error_msg and sql_gen_error_msg.strip():
-                    print(f"🔴 Navigation - Found error")                    
+                    print(f"🔍 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(sql_gen_error_msg)
                     return {
                         'type': 'text',
                         'content': formatted_greeting,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 
-                print(f"🔴 SQL Generator - Query: {bool(sql_query)}")
-                print(f"🔴 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
-                print(f"🔴 SQL Generator - Results count: {len(query_results) if query_results else 0}")
-                print(f"🔴 SQL Generator - Results sample: {query_results[:2] if query_results else 'No results'}")
-                print(f"🔴 SQL Generator - Narrative: {bool(narrative_response)}")
-                print(f"🔴 SQL Generator - Narrative content: {narrative_response[:100]}..." if narrative_response else "No narrative")
+                print(f"🔍 SQL Generator - Query: {bool(sql_query)}")
+                print(f"🔍 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
+                print(f"🔍 SQL Generator - Results count: {len(query_results) if query_results else 0}")
+                print(f"🔍 SQL Generator - Results sample: {query_results[:2] if query_results else 'No results'}")
+                print(f"🔍 SQL Generator - Narrative: {bool(narrative_response)}")
+                print(f"🔍 SQL Generator - Narrative content: {narrative_response[:100]}..." if narrative_response else "No narrative")
                 
                 response_parts = []
                 table_df = None
                 
                 # Process table data FIRST (before narrative)
                 if query_results and isinstance(query_results, list) and len(query_results) > 0:
-                    print(f"🔴 Processing {len(query_results)} query results")
+                    print(f"🔍 Processing {len(query_results)} query results")
                     table_df, table_info = format_query_results_as_table(query_results)
                     if table_df is not None:
                         print(f"✅ Table created successfully with {len(table_df)} rows")
@@ -677,11 +631,7 @@ def extract_response_content(step_data):
                         'content': "".join(response_parts),
                         'sql_query': sql_query,
                         'dataframe': table_df,
-                        'immediate_render': True,
-                        'show_feedback': True,
-                        'user_current_question': user_question,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                     print(f"✅ Returning SQL response - Table: {table_df is not None}, Content: {bool(response_parts)}")
                     return result
@@ -690,67 +640,59 @@ def extract_response_content(step_data):
                         'type': 'text',
                         'content': f"⚡ <strong>Generated SQL:</strong><br><br>{sql_query}",
                         'sql_query': sql_query,
-                        'immediate_render': True,
-                        'show_feedback': True,
-                        'user_current_question': user_question,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 else:
                     print("❌ SQL Generator - No SQL query, results, or narrative found")
-                
-                continue  # CRITICAL: Added missing continue statement
             
             # Follow-up question handler
             elif node_name == 'followup_question_agent':
-                print(f"🔴 Followup Question Agent - Processing generated questions")
+                print(f"🔍 Followup Question Agent - Processing generated questions")
                 follow_up_error_msg = node_state.get('follow_up_error_msg')
 
                 if follow_up_error_msg and follow_up_error_msg.strip():
-                    print(f"🔴 Navigation - Found error")                    
+                    print(f"🔍 Navigation - Found error")                    
                     formatted_greeting = convert_text_to_safe_html(follow_up_error_msg)
                     return {
                         'type': 'text',
                         'content': formatted_greeting,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 
                 followup_questions = node_state.get('followup_questions', [])
                 success = node_state.get('followup_generation_success', False)
                 
-                print(f"🔴 Follow-up questions found: {followup_questions}")
-                print(f"🔴 Follow-up questions count: {len(followup_questions)}")
-                print(f"🔴 Generation success: {success}")
+                print(f"🔍 Follow-up questions found: {followup_questions}")
+                print(f"🔍 Follow-up questions count: {len(followup_questions)}")
+                print(f"🔍 Generation success: {success}")
                 
                 if followup_questions and len(followup_questions) > 0:
                     print("🎯 QUESTIONS FOUND - STORING AND DISPLAYING FOLLOWUP BUTTONS")
                     
-                    # Store in the simplified session state
+                    # REFACTORED: Store in the simplified session state
                     st.session_state.current_followup_questions = followup_questions
                     
                     return {
                         'type': 'followup_questions',
                         'content': "💡 <strong>Would you like to explore further? Here are some suggested follow-up questions:</strong>",
                         'followup_questions': followup_questions,
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 else:
                     print("⚠️ No follow-up questions found - skipping display")
-                
-                continue  # CRITICAL: Added missing continue statement
+                    return None
                     
-            # Root cause node
+            # Root cause node - REMOVED CONSOLIDATED NARRATIVE
             elif node_name == 'root_cause_agent':
-                print(f"🔴 Root Cause Agent - Processing detailed output")
+                print(f"🔍 Root Cause Agent - Processing detailed output")
                 
                 consolidated_query_details = node_state.get('consolidated_query_details', [])
+                # REMOVED: narrative_response = node_state.get('narrative_response', '')
                 
-                print(f"🔴 Consolidated query details count: {len(consolidated_query_details)}")
+                print(f"🔍 Consolidated query details count: {len(consolidated_query_details)}")
+                # REMOVED: print(f"🔍 Narrative response available: {bool(narrative_response)}")
                 
+                # REMOVED: response_parts = []
                 all_dataframes = []
                 
                 # Process each consolidated query detail individually
@@ -764,7 +706,7 @@ def extract_response_content(step_data):
                         success = query_detail.get('success', False)
                         row_count = query_detail.get('row_count', 0)
                         
-                        print(f"🔴 Processing query {i}: Success: {success}, Rows: {row_count}")
+                        print(f"🔍 Processing query {i}: Success: {success}, Rows: {row_count}")
                         
                         # Only process successful queries (ignore errors)
                         if success and row_count > 0:
@@ -790,16 +732,18 @@ def extract_response_content(step_data):
                         else:
                             print(f"❌ Skipping failed/empty query {i}: {purpose} - Success: {success}, Rows: {row_count}")
                 
-                # Return structured response with multiple dataframes
+                # REMOVED: Add Consolidated Narrative Response at the end
+                # if narrative_response:
+                #     formatted_narrative = convert_text_to_safe_html(narrative_response)
+                #     response_parts.append(f"<strong>🎯 Consolidated Analysis Summary:</strong><br><br>{formatted_narrative}")
+                
+                # Return structured response with multiple dataframes (NO CONSOLIDATED CONTENT)
                 if all_dataframes:
                     return {
                         'type': 'root_cause_detailed',
-                        'content': "",
+                        'content': "",  # REMOVED: "".join(response_parts),
                         'dataframes': all_dataframes,
-                        'immediate_render': True,
-                        'show_feedback': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
                 
                 # Fallback if no details
@@ -807,15 +751,12 @@ def extract_response_content(step_data):
                     return {
                         'type': 'text',
                         'content': "✅ <strong>Root cause analysis completed successfully!</strong><br><br>Analysis has been processed across multiple data sources.",
-                        'immediate_render': True,
-                        'show_feedback': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
             
-            # FALLBACK FOR ANY OTHER NODE
+            # FALLBACK FOR ANY OTHER NODE - This is crucial!
             else:
-                print(f"🔴 Processing fallback node: {node_name}")
+                print(f"🔍 Processing fallback node: {node_name}")
                 if isinstance(node_state, dict) and node_state:
                     # Look for common response fields
                     for key in ['narrative_response', 'response', 'result', 'analysis', 'content', 'output']:
@@ -825,9 +766,7 @@ def extract_response_content(step_data):
                             return {
                                 'type': 'text',
                                 'content': f"🤖 <strong>{node_name.replace('_', ' ').title()}:</strong><br><br>{formatted_content}",
-                                'immediate_render': True,
-                                'node_name': node_name,
-                                'full_state': node_state
+                                'immediate_render': True
                             }
                     
                     # If no standard fields, show entire node state
@@ -836,55 +775,43 @@ def extract_response_content(step_data):
                     return {
                         'type': 'text',
                         'content': f"🤖 <strong>{node_name.replace('_', ' ').title()}:</strong><br><br><pre>{content}</pre>",
-                        'immediate_render': True,
-                        'node_name': node_name,
-                        'full_state': node_state
+                        'immediate_render': True
                     }
     
     print("❌ No response content extracted from step_data")
     return None
 
-
-def render_sql_response(message):
-    """Render SQL response with table and narrative, including feedback UI"""
+def render_sql_response(response_data):
+    """Render SQL response with table and narrative"""
     
-    # 1. User's original question (if available)
-    user_question = message.get('user_current_question')
-    if user_question:
-        st.markdown(f"**Your Question:** <i>{user_question}</i>")
-    
-    # 2. SQL expander FIRST
-    if message.get('sql_query'):
+    # 1. SQL expander FIRST
+    if response_data.get('sql_query'):
         with st.expander("🔍 View SQL Query", expanded=False):
-            st.code(message['sql_query'], language='sql')
+            st.code(response_data['sql_query'], language='sql')
     
-    # 3. TABLE SECOND (before narrative)
-    if message.get('dataframe') is not None:
-        st.dataframe(message['dataframe'], use_container_width=True)
-        print(f"📊 Displayed table with {len(message['dataframe'])} rows")
+    # 2. TABLE SECOND (before narrative)
+    if response_data.get('dataframe') is not None:
+        st.dataframe(response_data['dataframe'], use_container_width=True)
+        print(f"📊 Displayed table with {len(response_data['dataframe'])} rows")
     
-    # 4. NARRATIVE LAST
-    if message.get('content'):
+    # 3. NARRATIVE LAST
+    if response_data.get('content'):
         st.markdown(f"""
         <div class="assistant-message">
             <div class="assistant-message-content">
-                {message['content']}
+                {response_data['content']}
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-    # 5. Feedback UI
-    if message.get('show_feedback'):
-        render_feedback_ui(message['user_current_question'])
 
-def render_root_cause_response(message):
-    """Render root cause analysis response with multiple dataframes and feedback UI"""
+def render_root_cause_response(response_data):
+    """Render root cause analysis response with multiple dataframes"""
     
     print(f"🔥 RENDERING ROOT CAUSE DETAILED ANALYSIS")
     
     # Display each analysis one by one in the correct order
-    if message.get('dataframes'):
-        for idx, df_info in enumerate(message['dataframes']):
+    if response_data.get('dataframes'):
+        for idx, df_info in enumerate(response_data['dataframes']):
             print(f"🔥 Processing dataframe {idx+1}: {df_info.get('title', 'Unknown')}")
             
             # Only show successful analyses (ignore errors)
@@ -920,10 +847,6 @@ def render_root_cause_response(message):
                 print(f"❌ Skipping unsuccessful analysis: {df_info.get('title', 'Unknown')}")
     else:
         print("⚠️ No dataframes found in root_cause_detailed response")
-    
-    # Feedback UI at the end
-    if message.get('show_feedback'):
-        render_feedback_ui(st.session_state.current_query)
     
     # REMOVED: Display consolidated summary at the end
     # if response_data.get('content'):
@@ -965,51 +888,6 @@ def render_chat_message(message):
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-
-def render_feedback_ui(user_question):
-    """Renders the feedback UI with thumbs-up/down and an optional text box."""
-    
-    feedback_id = st.session_state.get('feedback_target_id', 'default')
-    feedback_key = f"feedback_submitted_{feedback_id}"
-    
-    if feedback_key not in st.session_state:
-        st.session_state[feedback_key] = None
-    
-    if st.session_state[feedback_key] is None:
-        st.markdown("<br>Did this answer your question?")
-        
-        # Use columns for side-by-side buttons
-        col1, col2, col3 = st.columns([0.1, 0.1, 0.8])
-        
-        with col1:
-            if st.button("👍", key=f"thumbs_up_{feedback_id}", help="This response was helpful"):
-                save_feedback_data(st.session_state.session_id, user_question, "thumbs_up")
-                st.session_state[feedback_key] = "up"
-                st.success("Thanks for the feedback!")
-                st.rerun()
-                
-        with col2:
-            if st.button("👎", key=f"thumbs_down_{feedback_id}", help="This response needs improvement"):
-                st.session_state[feedback_key] = "down"
-                st.rerun()
-                
-    elif st.session_state[feedback_key] == "down":
-        # Show feedback form
-        with st.form(key=f"feedback_form_{feedback_id}"):
-            feedback_text = st.text_area("Please tell us how we can improve:", key=f"feedback_text_{feedback_id}")
-            col1, col2 = st.columns([0.2, 0.8])
-            with col1:
-                submit_button = st.form_submit_button(label="Submit")
-            
-            if submit_button:
-                feedback_response = f"thumbs_down: {feedback_text}" if feedback_text.strip() else "thumbs_down: No comment"
-                save_feedback_data(st.session_state.session_id, feedback_response, "thumbs_down")
-                st.session_state[feedback_key] = "submitted"
-                st.success("Thanks for the feedback!")
-                st.rerun()
-                
-    elif st.session_state[feedback_key] in ["up", "submitted"]:
-        st.success("Thanks for the feedback!")
 
 def render_persistent_followup_questions():
     """Renders follow-up buttons if they exist in the session state."""
@@ -1177,18 +1055,121 @@ def render_immediate_response(response_data, step_count, session_id):
             </div>
             """, unsafe_allow_html=True)
 
+def save_feedback_data(session_id, user_response, feedback_type):
+    """Saves user feedback to the Unity Catalog table."""
+    try:
+        db_client = st.session_state.workflow.db_client
+        # Use parameterized query to prevent SQL injection
+        feedback_query = """
+            INSERT INTO fdmenh.chatbot_user_feedback (
+                session_id, user_response, feedback_type, created_at
+            ) VALUES (?, ?, ?, current_timestamp())
+        """
+        db_client.execute_sql(feedback_query, [session_id, user_response, feedback_type])
+        print("✅ Feedback saved successfully.")
+    except Exception as e:
+        print(f"❌ Failed to save feedback data: {e}")
+        st.error(f"Failed to save feedback data: {e}")
+
+
+def save_audit_data(session_id, full_state, node_name):
+    """Saves the full state to the Unity Catalog audit table."""
+    try:
+        db_client = st.session_state.workflow.db_client
+        # Use parameterized query with proper JSON handling
+        audit_query = """
+            INSERT INTO fdmenh.chatbot_audit_tracking (
+                session_id, full_state_output, node_name, created_at
+            ) VALUES (?, ?, ?, current_timestamp())
+        """
+        # Convert state to JSON string safely
+        full_state_json = json.dumps(full_state, default=str)
+        db_client.execute_sql(audit_query, [session_id, full_state_json, node_name])
+        print(f"✅ Audit data saved successfully for node: {node_name}")
+    except Exception as e:
+        print(f"❌ Failed to save audit data: {e}")
+
+def render_feedback_ui(user_question):
+    """Renders the feedback UI with thumbs-up/down and an optional text box."""
+    
+    feedback_id = st.session_state.get('feedback_target_id', 'default')
+    feedback_key = f"feedback_submitted_{feedback_id}"
+    
+    if feedback_key not in st.session_state:
+        st.session_state[feedback_key] = None
+    
+    if st.session_state[feedback_key] is None:
+        st.markdown("<br>Did this answer your question?")
+        
+        # Use columns for side-by-side buttons
+        col1, col2, col3 = st.columns([0.1, 0.1, 0.8])
+        
+        with col1:
+            if st.button("👍", key=f"thumbs_up_{feedback_id}", help="This response was helpful"):
+                save_feedback_data(st.session_state.session_id, user_question, "thumbs_up")
+                st.session_state[feedback_key] = "up"
+                st.success("Thanks for the feedback!")
+                st.rerun()
+                
+        with col2:
+            if st.button("👎", key=f"thumbs_down_{feedback_id}", help="This response needs improvement"):
+                st.session_state[feedback_key] = "down"
+                st.rerun()
+                
+    elif st.session_state[feedback_key] == "down":
+        # Show feedback form
+        with st.form(key=f"feedback_form_{feedback_id}"):
+            feedback_text = st.text_area("Please tell us how we can improve:", key=f"feedback_text_{feedback_id}")
+            col1, col2 = st.columns([0.2, 0.8])
+            with col1:
+                submit_button = st.form_submit_button(label="Submit")
+            
+            if submit_button:
+                feedback_response = f"thumbs_down: {feedback_text}" if feedback_text.strip() else "thumbs_down: No comment"
+                save_feedback_data(st.session_state.session_id, feedback_response, "thumbs_down")
+                st.session_state[feedback_key] = "submitted"
+                st.success("Thanks for the feedback!")
+                st.rerun()
+                
+    elif st.session_state[feedback_key] in ["up", "submitted"]:
+        st.success("Thanks for the feedback!")
+
+
 def save_to_session_history(all_response_data):
     """
     Saves the final, consolidated assistant response to chat history.
-    This function is replaced by save_streaming_to_history for immediate rendering.
     """
-    # This function is now redundant since we use save_streaming_to_history
-    # Keep it for backwards compatibility but don't use it
-    pass
+    assistant_message = {
+        "role": "assistant",
+        "content": "",
+        "response_type": "text", # Default type
+        "timestamp": datetime.now()
+    }
+    
+    has_content = False
+    for data in all_response_data:
+        if data['type'] == 'sql_with_table':
+            assistant_message.update(data)
+            assistant_message['response_type'] = 'sql_with_table'
+            has_content = True
+        elif data['type'] == 'root_cause_detailed':
+            assistant_message.update(data)
+            assistant_message['response_type'] = 'root_cause_detailed'
+            has_content = True
+        elif data['type'] == 'text':
+            assistant_message['content'] += data['content'] + "<br>"
+            has_content = True
+        elif data['type'] == 'followup_questions':
+            # Follow-up questions are not saved to history, but to a separate state variable
+            st.session_state.current_followup_questions = data.get('followup_questions', [])
+
+    # Only append to history if there was actual content to display
+    if has_content:
+        st.session_state.messages.append(assistant_message)
 
 def execute_workflow_streaming(workflow):
     """
-    Executes the LangGraph workflow with true immediate rendering.
+    Executes the LangGraph workflow, collects all responses, and saves them to history.
     """
     st.session_state.workflow_started = True
     session_id = st.session_state.session_id
@@ -1196,12 +1177,11 @@ def execute_workflow_streaming(workflow):
     try:
         print(f"🚀 Starting workflow execution for: {st.session_state.current_query}")
         
-        # Create containers for immediate streaming output
-        spinner_container = st.empty()
-        output_container = st.container()
-        
+        all_response_data = []
+        spinner_placeholder = st.empty()
         current_node = "Starting"
-        spinner_container.markdown(f"""
+        
+        spinner_placeholder.markdown(f"""
         <div class="spinner-container">
             <div class="spinner"></div>
             <div class="spinner-message">🤖 {current_node}...</div>
@@ -1225,104 +1205,38 @@ def execute_workflow_streaming(workflow):
         }
         config = {"configurable": {"thread_id": session_id}}
         
-        # Stream the workflow with immediate rendering
-        collected_responses = []
-        
+        # Stream the workflow and collect all response data packets
         for step_data in workflow.app.stream(initial_state, config=config):
-            # Update spinner
+            # Update the spinner with the current progress
             current_node = get_current_node_name(step_data)
             next_agent = get_next_agent_from_state(step_data)
-            update_spinner(spinner_container, current_node, next_agent)
+            update_spinner(spinner_placeholder, current_node, next_agent)
 
-            # Extract and immediately render response
+            # Extract structured data from the current step
             response_data = extract_response_content(step_data) 
-            if response_data and response_data.get('immediate_render'):
-                # Clear spinner before showing content
-                spinner_container.empty()
-                
-                # RENDER IMMEDIATELY in the output container
-                with output_container:
-                    render_streaming_response(response_data, session_id)
-                
-                # Handle feedback setup
-                if response_data.get('show_feedback'):
-                    st.session_state.show_feedback = True
-                    st.session_state.feedback_target_id = f"feedback_{session_id}_{len(collected_responses)}"
-                
-                # Handle audit tracking
-                node_name = response_data.get('node_name', '')
-                if node_name in ['followup_question_agent', 'root_cause_agent']:
-                    full_state = response_data.get('full_state', {})
-                    save_audit_data(session_id, full_state, node_name)
-                
-                collected_responses.append(response_data)
-                
-                # Restore spinner for next step if there are more steps
-                spinner_container.markdown(f"""
-                <div class="spinner-container">
-                    <div class="spinner"></div>
-                    <div class="spinner-message">🤖 Processing...</div>
-                </div>
-                """, unsafe_allow_html=True)
+            if response_data:
+                all_response_data.append(response_data)
         
-        # Clear final spinner
-        spinner_container.empty()
+        spinner_placeholder.empty()
         
-        # Save all responses to session history for persistence
-        save_streaming_to_history(collected_responses)
+        # After the stream is complete, save the entire collected response to history
+        save_to_session_history(all_response_data)
 
     except Exception as e:
         st.error(f"An error occurred during workflow execution: {e}")
         import traceback
         traceback.print_exc()
+        # Also save the error to the chat history for visibility
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"I encountered an error: {e}"
+        })
 
     finally:
-        # Reset processing flags
+        # Reset processing flags and rerun the app to display the final state
         st.session_state.processing = False
         st.session_state.workflow_started = False
-
-def save_streaming_to_history(collected_responses):
-    """Save streaming responses to session history for persistence"""
-    
-    for response_data in collected_responses:
-        if response_data['type'] == 'sql_with_table':
-            message = {
-                "role": "assistant",
-                "content": response_data.get('content', ''),
-                "response_type": 'sql_with_table',
-                "dataframe": response_data.get('dataframe'),
-                "sql_query": response_data.get('sql_query'),
-                "show_feedback": response_data.get('show_feedback', False),
-                "user_current_question": response_data.get('user_current_question', ''),
-                "timestamp": datetime.now()
-            }
-            st.session_state.messages.append(message)
-        
-        elif response_data['type'] == 'root_cause_detailed':
-            message = {
-                "role": "assistant",
-                "content": response_data.get('content', ''),
-                "response_type": 'root_cause_detailed',
-                "dataframes": response_data.get('dataframes'),
-                "show_feedback": response_data.get('show_feedback', False),
-                "timestamp": datetime.now()
-            }
-            st.session_state.messages.append(message)
-        
-        elif response_data['type'] == 'text':
-            message = {
-                "role": "assistant",
-                "content": response_data.get('content', ''),
-                "response_type": 'text',
-                "show_feedback": response_data.get('show_feedback', False),
-                "timestamp": datetime.now()
-            }
-            st.session_state.messages.append(message)
-        
-        elif response_data['type'] == 'followup_questions':
-            # Store followup questions in session state
-            st.session_state.current_followup_questions = response_data.get('followup_questions', [])
-
+        st.rerun()
 
 def render_chat_input(workflow):
     """Render fixed bottom chat input"""
@@ -1343,106 +1257,6 @@ def render_chat_input(workflow):
         print(f"User query received: {user_query}")
         start_processing(user_query)
 
-def render_streaming_response(response_data, session_id):
-    """Render a single streaming response immediately"""
-    
-    if response_data['type'] == 'sql_with_table':
-        # User question first
-        if response_data.get('user_current_question'):
-            st.markdown(f"**🔍 Your Question:** {response_data['user_current_question']}")
-        
-        # SQL expander (collapsed)
-        if response_data.get('sql_query'):
-            with st.expander("🔍 View SQL Query", expanded=False):
-                st.code(response_data['sql_query'], language='sql')
-        
-        # Table output
-        if response_data.get('dataframe') is not None:
-            st.dataframe(response_data['dataframe'], use_container_width=True)
-        
-        # Narrative content
-        if response_data.get('content'):
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div class="assistant-message-content">
-                    {response_data['content']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Feedback UI
-        if response_data.get('show_feedback'):
-            render_feedback_ui(response_data.get('user_current_question', ''))
-    
-    elif response_data['type'] == 'root_cause_detailed':
-        # Render each dataframe analysis
-        if response_data.get('dataframes'):
-            for idx, df_info in enumerate(response_data['dataframes']):
-                if df_info.get('success', False):
-                    st.markdown(f"**📊 {df_info['title']}**")
-                    
-                    # SQL expander (collapsed)
-                    if df_info.get('sql'):
-                        with st.expander("🔍 View SQL Query", expanded=False):
-                            st.code(df_info['sql'], language='sql')
-                    
-                    # Table output
-                    if df_info.get('dataframe') is not None:
-                        st.dataframe(df_info['dataframe'], use_container_width=True)
-                    
-                    # Insight
-                    if df_info.get('insight'):
-                        st.markdown(f"""
-                        <div class="assistant-message">
-                            <div class="assistant-message-content">
-                                {df_info['insight']}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    st.markdown("---")
-        
-        # Feedback UI
-        if response_data.get('show_feedback'):
-            render_feedback_ui(st.session_state.current_query)
-    
-    elif response_data['type'] == 'followup_questions':
-        # Display followup content
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                {response_data['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Render followup buttons
-        followup_questions = response_data.get('followup_questions', [])
-        if followup_questions:
-            st.markdown('<div class="followup-buttons-container">', unsafe_allow_html=True)
-            for i, question in enumerate(followup_questions):
-                button_key = f"streaming_btn_{session_id}_{i}_{abs(hash(question)) % 10000}"
-                st.button(
-                    question,
-                    key=button_key,
-                    type="secondary",
-                    help="Click to explore this follow-up question",
-                    on_click=start_processing,
-                    args=(question,)
-                )
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    elif response_data['type'] == 'text':
-        # Simple text response
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                {response_data['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
 def main():
     """Main Streamlit application with session isolation"""
 
@@ -1452,12 +1266,6 @@ def main():
             st.switch_page("main.py")
     
     try:
-        # Initialize state
-        if 'show_feedback' not in st.session_state:
-            st.session_state.show_feedback = False
-        if 'feedback_target_id' not in st.session_state:
-            st.session_state.feedback_target_id = None
-        
         initialize_session_state()
         workflow = get_session_workflow()
         
@@ -1479,21 +1287,20 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         
-        # Render chat history (only if not currently processing)
-        if not st.session_state.processing:
-            for message in st.session_state.messages:
-                render_chat_message(message)
-            
-            # Render persistent follow-up questions
-            render_persistent_followup_questions()
+        # Render the entire chat history, including complex messages
+        for message in st.session_state.messages:
+            render_chat_message(message)
         
-        # If processing, run the workflow with streaming
+        # Render follow-up questions from the last turn
+        render_persistent_followup_questions()
+        
+        # If processing, show a spinner and run the workflow
         if st.session_state.processing and not st.session_state.workflow_started:
             execute_workflow_streaming(workflow)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Chat input
+        # The chat input is now handled outside the main container for fixed positioning
         if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
             start_processing(prompt)
             st.rerun()
@@ -1505,4 +1312,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

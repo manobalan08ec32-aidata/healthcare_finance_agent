@@ -1,18 +1,3 @@
-You are generating simple follow-up questions for healthcare finance analysis using only available attributes for breakdown.
-
-CURRENT CONTEXT:
-Current Question: "{current_question}"
-Current Analysis Output Summary: "{narrative_response}"
-
-USER QUESTION HISTORY (Last 3):
-{recent_user_questions}
-
-PREVIOUS FOLLOW-UP QUESTIONS (Last 6):
-{recent_followup_questions}
-
-DATASET METADATA:
-{metadata_str}
-
 ==============================
 CRITICAL RULES - FOLLOW EXACTLY
 ==============================
@@ -30,14 +15,25 @@ CRITICAL RULES - FOLLOW EXACTLY
 - If narrative says "PBM" → use "PBM" in follow-ups
 - If narrative says "California" → use "California" in follow-ups
 
-3. USE AVAILABLE ATTRIBUTES ONLY
+3. INTELLIGENT ATTRIBUTE SELECTION
 - Only use attributes that exist in the provided metadata
+- Select attributes most relevant to user's current analysis focus
 - Convert technical column names to business-friendly terms:
   * therapy_class_name → "therapeutic class"
   * state_cd → "state" 
   * line_of_business → "line of business"
   * brand_vs_generic_ind → "brand vs generic"
   * product_category → "product category"
+  * drug_name → "drug name"
+  * pharmacy_type → "pharmacy type"
+  * member_age_group → "age group"
+
+Attribute Priority Based on User Focus:
+- If analyzing **costs/revenue**: state, therapeutic class, line of business, brand vs generic
+- If analyzing **specific drugs/therapy**: state, line of business, brand vs generic, pharmacy type  
+- If analyzing **product categories**: therapeutic class, state, line of business, drug name
+- If analyzing **geographic patterns**: therapeutic class, line of business, product category
+- If analyzing **member patterns**: age group, state, therapeutic class
 
 4. MAINTAIN CURRENT CONTEXT
 - Keep same time period as current analysis
@@ -65,23 +61,58 @@ Examples:
 ❌ BAD: "Compare PBM vs Specialty performance"
 
 ==============================
-STEP-BY-STEP PROCESS
+INTELLIGENT CONTEXT ALIGNMENT
 ==============================
 
-Step 1: Extract from narrative
-- Main metric mentioned (revenue, costs, script count, etc.)
-- Specific entities mentioned (PBM, Specialty, California, diabetes, etc.)
-- Time period mentioned (June 2025, Q2 2025, etc.)
+Step 1: Analyze Current User Focus
+- What metric is the user most interested in? (revenue, costs, claims, script count, etc.)
+- What domain/category are they exploring? (PBM, Specialty, Home Delivery, etc.)
+- What time period are they analyzing? (June 2025, Q2 2025, etc.)
+- What filters/context are currently applied?
 
-Step 2: Find available attributes in metadata
-- Look for dimensions suitable for breakdown
-- Convert to business-friendly terms
-- Prioritize: therapeutic class, state, line of business, brand vs generic, product category
+Step 2: Smart Attribute Selection Based on Context
+**IF user is focused on:**
+- **Financial metrics** (revenue, costs) → prioritize: state, therapeutic class, line of business, brand vs generic
+- **Specialty products** → prioritize: therapeutic class, drug name, state, line of business  
+- **PBM category** → prioritize: line of business, state, therapeutic class, brand vs generic
+- **Geographic analysis** → prioritize: therapeutic class, line of business, product category
+- **Drug-specific analysis** → prioritize: state, line of business, brand vs generic, therapeutic class
 
-Step 3: Generate 3 simple breakdown questions
-- Use extracted metric + available attribute + current context
-- Ensure each uses different attribute
-- Keep it simple - just "What is X by Y for Z?"
+Step 3: Maintain User's Analytical Journey
+- Keep the SAME metric user is exploring (don't switch from revenue to claims)
+- Keep the SAME filters/domain context (if they're looking at PBM, stay with PBM)
+- Keep the SAME time period (if they're analyzing June 2025, stay with June 2025)
+- Only change the grouping attribute for different breakdowns
+
+Step 4: Generate Contextually Relevant Questions
+- Use the user's current metric + smart attribute selection + current context
+- Ensure each question provides meaningful business insight for their current focus
+- Make sure attributes are available in metadata and not null-heavy
+
+==============================
+CONTEXT ALIGNMENT EXAMPLES
+==============================
+
+**Example 1 - User exploring PBM revenue:**
+Current Question: "What is total PBM revenue for June 2025?"
+Smart Follow-ups:
+✅ "What is the PBM revenue by state for June 2025?"
+✅ "What is the PBM revenue by line of business for June 2025?"
+✅ "What is the PBM revenue by therapeutic class for June 2025?"
+
+**Example 2 - User exploring Specialty costs by state:**
+Current Question: "What are Specialty costs by state for Q2 2025?"  
+Smart Follow-ups:
+✅ "What are the Specialty costs by therapeutic class for Q2 2025?"
+✅ "What are the Specialty costs by brand vs generic for Q2 2025?"
+✅ "What are the California Specialty costs by therapeutic class for Q2 2025?" (drill into top state)
+
+**Example 3 - User exploring diabetes drugs:**
+Current Question: "What is diabetes script count for 2025?"
+Smart Follow-ups:
+✅ "What is the diabetes script count by state for 2025?"
+✅ "What is the diabetes script count by brand vs generic for 2025?"
+✅ "What is the diabetes script count by line of business for 2025?"
 
 ==============================
 RESPONSE FORMAT

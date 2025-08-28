@@ -1,100 +1,148 @@
-def _generate_sql_queries_for_single_kg(self, knowledge_graph: Dict, user_question: str, kg_id: str,question_type:str) -> List[Dict]:
-        """Generate SQL queries for a single knowledge graph - your existing logic"""
-        
-        sql_generation_prompt = f"""
-                You are Databricks SQL Expert Agent  and your objective Build SQL queries to support Healthcare Finance Deep Analysis using Databricks
+def _generate_sql_queries_for_single_kg(self, knowledge_graph: Dict, user_question: str, kg_id: str, question_type: str) -> List[Dict]:
+    """Generate SQL queries for a single knowledge graph - your existing logic"""
+    
+    sql_generation_prompt = f"""
+            You are Databricks SQL Expert Agent and your objective Build SQL queries to support Healthcare Finance Deep Analysis using Databricks
 
-                
-                User Question: "{user_question}"
-                Knowledge Graph ID: {kg_id}
-                
-                Available metadata information:
-                {json.dumps(knowledge_graph, indent=2)}
-                
+            
+            User Question: "{user_question}"
+            Knowledge Graph ID: {kg_id}
+            
+            Available metadata information:
+            {json.dumps(knowledge_graph, indent=2)}
+            
 
-                =============================
-                SYSTEM PROMPT - Databricks SQL Agent
-                =============================
- 
-                [ROLE & PURPOSE]
-                - Generate **multiple Databricks SQL queries** aligned with the user’s intent and metadata.
-                - Follow all rules, recipes, and ranking logic from metadata (including llm_instructions).
+            =============================
+            SYSTEM PROMPT - Databricks SQL Agent
+            =============================
 
-                [RULES]
-                1. **Understand intent**:
-                - Detect if the question is about single period, MoM, QoQ, YoY, growth, or decline.
-                - Use llm_instructions.comparison_modes and parameters for time windows and thresholds.
-                2.**METADATA COVERAGE & VALIDATION**
-                - Before generating SQL, parse the metadata JSON and build an internal index of:
-                (a) datasets (id, table, columns, date, metrics),
-                (b) all group_set entries and each group_set's query_hint,
-                (c) llm_instructions (parameters, comparison_modes, ranking_policy, growth/decline recipes),
-                (d) sample_questions (for intent steering; do not copy verbatim).
-                - Coverage policy:
-                * General questions → produce 5-8 meaningful queries that collectively cover every group_set in each relevant dataset (ledger and/or claims), unless the user explicitly restricts scope.
-                * Attribute-specific questions → focus on the attribute but still pair it with 4–5 other group_sets to surface drivers.
-                * Always apply dataset default filters from metadata.
-                * Always respect group_set.query_hint to determine ORDER BY and LIMIT semantics.
-                - Comparison & time grain:
-                * Select comparison_mode from llm_instructions.comparison_modes: single_period, MoM, QoQ, YoY_month, YoY_quarter.
-                * Use dataset.date.default_grain unless the user specifies month/quarter explicitly.
-                * Follow llm_instructions.parameters for recent/baseline windows, thresholds, seasonality, and date_alignment_policy (MTD/QTD vs prior MTD/QTD if current period incomplete).
-                - Growth vs Decline:
-                * Growth → rank by positive pct_change (tie-break abs_change) after applying baseline thresholds from parameters.
-                * Decline → rank by negative pct_change (tie-break abs_change) and require baseline strength (baseline_avg >= threshold) to exclude chronic underperformers; optionally check moving-average slope and, in claims, delta_rev_per_script if applicable.
-                - Query hint application:
-                * 'top_10' → ORDER BY primary metric (single_period) or pct_change (comparative) DESC LIMIT 10.
-                * 'bottom_10' → ORDER BY primary metric or pct_change ASC LIMIT 10.
-                * 'All' → return all groups sorted by primary metric DESC unless user specifies otherwise.
-                6. **Output format**:
-                - JSON array of objects with:
-                    * query_id: short descriptive name
-                    * table: dataset name
-                    * purpose: short human-readable title
-                    * sql: single-line Databricks SQL
-                    * narrative: 2–3 sentences explaining purpose, time window, and ranking logic
-                7. **Databricks SQL rules**:
-                - -Generate the SQL in single line and dont add '\n' for nrw line.
-                - Use exact table and column names from metadata.
-                - Apply DATE_TRUNC for month/quarter.
-                - Return YYYY-MM for monthly analysis.
-                - Round percentages to 2 decimals.
-                - Always include overall totals in attribute-level queries.
-                        
-                =============================
-                EXAMPLE OUTPUT
-                =============================
-                -Generate SQL as a single line without line breaks.o NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
+            [ROLE & PURPOSE]
+            - Generate **multiple Databricks SQL queries** aligned with the user's intent and metadata.
+            - Follow all rules, recipes, and ranking logic from metadata (including llm_instructions).
 
-                    [
-                        {{
-                            "query_id": "title_of_query_1",
-                            "table": "ledger",
-                            "purpose": "Monthly revenue trend analysis",
-                            "sql": "SELECT line_of_business, DATE_TRUNC('month', fscl_date) AS month, SUM(amount) AS revenue FROM table_name WHERE conditions GROUP BY line_of_business, month ORDER BY month",
-                            "narrative": "Analyzes monthly revenue trends by business line to identify growth patterns."
-                        }}
-                    ]
+            [RULES]
+            1. **Understand intent**:
+            - Detect if the question is about single period, MoM, QoQ, YoY, growth, or decline.
+            - Use llm_instructions.comparison_modes and parameters for time windows and thresholds.
+            2.**METADATA COVERAGE & VALIDATION**
+            - Before generating SQL, parse the metadata JSON and build an internal index of:
+            (a) datasets (id, table, columns, date, metrics),
+            (b) all group_set entries and each group_set's query_hint,
+            (c) llm_instructions (parameters, comparison_modes, ranking_policy, growth/decline recipes),
+            (d) sample_questions (for intent steering; do not copy verbatim).
+            - Coverage policy:
+            * General questions → produce 5-8 meaningful queries that collectively cover every group_set in each relevant dataset (ledger and/or claims), unless the user explicitly restricts scope.
+            * Attribute-specific questions → focus on the attribute but still pair it with 4–5 other group_sets to surface drivers.
+            * Always apply dataset default filters from metadata.
+            * Always respect group_set.query_hint to determine ORDER BY and LIMIT semantics.
+            - Comparison & time grain:
+            * Select comparison_mode from llm_instructions.comparison_modes: single_period, MoM, QoQ, YoY_month, YoY_quarter.
+            * Use dataset.date.default_grain unless the user specifies month/quarter explicitly.
+            * Follow llm_instructions.parameters for recent/baseline windows, thresholds, seasonality, and date_alignment_policy (MTD/QTD vs prior MTD/QTD if current period incomplete).
+            - Growth vs Decline:
+            * Growth → rank by positive pct_change (tie-break abs_change) after applying baseline thresholds from parameters.
+            * Decline → rank by negative pct_change (tie-break abs_change) and require baseline strength (baseline_avg >= threshold) to exclude chronic underperformers; optionally check moving-average slope and, in claims, delta_rev_per_script if applicable.
+            - Query hint application:
+            * 'top_10' → ORDER BY primary metric (single_period) or pct_change (comparative) DESC LIMIT 10.
+            * 'bottom_10' → ORDER BY primary metric or pct_change ASC LIMIT 10.
+            * 'All' → return all groups sorted by primary metric DESC unless user specifies otherwise.
+            6. **Output format**:
+            - Return queries wrapped in XML tags with proper structure
+            7. **Databricks SQL rules**:
+            - Use exact table and column names from metadata.
+            - Apply DATE_TRUNC for month/quarter.
+            - Return YYYY-MM for monthly analysis.
+            - Round percentages to 2 decimals.
+            - Always include overall totals in attribute-level queries.
                     
-                CRITICAL: Write the entire SQL query on one line, using spaces instead of \n characters. This prevents JSON parsing errors while allowing complex queries.
+            =============================
+            RESPONSE FORMAT
+            =============================
+            Return the SQL queries wrapped in XML tags. You can use proper SQL formatting with line breaks.
 
-                    """
+            <queries>
+            <query>
+                <query_id>title_of_query_1</query_id>
+                <table>ledger</table>
+                <purpose>Monthly revenue trend analysis</purpose>
+                <sql>
+                SELECT line_of_business, 
+                       DATE_TRUNC('month', fscl_date) AS month, 
+                       SUM(amount) AS revenue 
+                FROM table_name 
+                WHERE conditions 
+                GROUP BY line_of_business, month 
+                ORDER BY month
+                </sql>
+                <narrative>Analyzes monthly revenue trends by business line to identify growth patterns.</narrative>
+            </query>
+            <query>
+                <query_id>title_of_query_2</query_id>
+                <table>claims</table>
+                <purpose>Top performing regions</purpose>
+                <sql>
+                SELECT region,
+                       SUM(revenue_amt) as total_revenue,
+                       COUNT(*) as script_count
+                FROM claims_table
+                WHERE year = 2025
+                GROUP BY region
+                ORDER BY total_revenue DESC
+                LIMIT 10
+                </sql>
+                <narrative>Identifies top 10 regions by total revenue for current year analysis.</narrative>
+            </query>
+            </queries>
+
+            IMPORTANT: You can use proper SQL formatting with indentation and line breaks inside the <sql> tags.
+            """
+    
+    
+    try:
+        # Generate queries for this specific knowledge graph
+        llm_response = self.db_client.call_claude_api([
+            {"role": "user", "content": sql_generation_prompt}
+        ])
         
+        # Parse XML response
+        queries = self._parse_xml_queries(llm_response)
+        print('root cause sql response', queries)
+        print(f"✅ Generated {len(queries)} SQL queries for KG {kg_id}")
         
+        return queries
+        
+    except Exception as e:
+        print(f"❌ SQL generation failed for KG {kg_id}: {str(e)}")
+        return []
+
+def _parse_xml_queries(self, xml_response: str) -> List[Dict]:
+    """Parse XML response to extract multiple SQL queries"""
+    import re
+    
+    queries = []
+    
+    # Find all query blocks
+    query_blocks = re.findall(r'<query>(.*?)</query>', xml_response, re.DOTALL)
+    
+    for block in query_blocks:
         try:
-            # Generate queries for this specific knowledge graph
-            llm_response = self.db_client.call_claude_api([
-                {"role": "user", "content": sql_generation_prompt}
-            ])
+            # Extract individual fields
+            query_id = re.search(r'<query_id>(.*?)</query_id>', block, re.DOTALL)
+            table = re.search(r'<table>(.*?)</table>', block, re.DOTALL)
+            purpose = re.search(r'<purpose>(.*?)</purpose>', block, re.DOTALL)
+            sql = re.search(r'<sql>(.*?)</sql>', block, re.DOTALL)
+            narrative = re.search(r'<narrative>(.*?)</narrative>', block, re.DOTALL)
             
-            # Clean and parse response
-            cleaned_response = self._clean_llm_json_response(llm_response)
-            queries = json.loads(cleaned_response)
-            print('root cause sql response',queries)
-            print(f"✅ Generated {len(queries)} SQL queries for KG {kg_id}")
-            
-            return queries
-            
+            if query_id and table and purpose and sql and narrative:
+                queries.append({
+                    "query_id": query_id.group(1).strip(),
+                    "table": table.group(1).strip(),
+                    "purpose": purpose.group(1).strip(),
+                    "sql": sql.group(1).strip().replace('`', ''),  # Remove backticks, keep formatting
+                    "narrative": narrative.group(1).strip()
+                })
         except Exception as e:
-            print(f"❌ SQL generation failed for KG {kg_id}: {str(e)}")
-            return []
+            print(f"⚠️  Failed to parse query block: {str(e)}")
+            continue
+    
+    return queries

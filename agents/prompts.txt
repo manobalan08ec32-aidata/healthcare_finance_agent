@@ -24,6 +24,14 @@ DATASET METADATA:
 - Extract key entities or focus areas mentioned (e.g., "Specialty", "Q2 2025")
 - Note any interesting patterns, peaks, or standout values
 
+**Step 1.5: Extract Exact Values from Narrative**
+- Identify specific entities mentioned in narrative (drug names, therapy classes, states, LOB, etc.)
+- Use these EXACT values in follow-up questions - do NOT assume or invent values
+- If narrative says "diabetes drugs" → use "diabetes" in follow-ups
+- If narrative says "California" → use "California" in follow-ups  
+- If narrative says "C&S line of business" → use "C&S" in follow-ups
+- Preserve exact entity names as they appear in the narrative results
+
 **Step 2: Apply Metadata Intelligence with Contextual Importance**  
 - Use metadata to find available drill-down dimensions relevant to the narrative finding
 - Apply contextual importance ranking based on current analysis focus
@@ -78,12 +86,20 @@ Context-Driven Priority Override:
 8. **Null Handling (STRICT)**: Do NOT generate questions that mention or target NULL/missing/unknown/unassigned/blank/N/A values. Avoid dimensions flagged as null-heavy in the analysis summary. If all viable dimensions are null-heavy or context is empty, return an empty array.
 
 ## LANGUAGE GUIDELINES:
-✅ **USE BUSINESS TERMS**: "costs", "revenue", "claims", "members", "therapeutic classes", "states", "age groups"
+✅ **USE BUSINESS TERMS FOR ATTRIBUTES/METRICS**: "costs", "revenue", "claims", "members", "script count", "Generic Dispense Rate", "revenue per script", "therapeutic classes", "states", "age groups"
 ❌ **AVOID COLUMN NAMES**: technical/physical like "total_paid_amt", "member_cnt", "therapy_class_nm", "state_cd", "age_band"
 ✅ **USE CANONICAL TIME TERMS**: "Q1 2025", "January 2025", "2024", "monthly", "quarterly"  
 ❌ **AVOID TECHNICAL TIME TERMS**: "service_month", "date_part", "year_month"
-✅ **USE FRIENDLY GROUPINGS**: "by state", "by age group", "by therapeutic class", "by product category"
+✅ **USE FRIENDLY GROUPINGS**: "by state", "by age group", "by therapeutic class", "by product category", "by brand vs generic"
 ❌ **AVOID TECHNICAL GROUPINGS**: "GROUP BY state_cd", etc.
+✅ **USE EXACT VALUES FROM NARRATIVE**: If narrative mentions "Humira", "diabetes", "California" → use these exact terms
+❌ **AVOID ASSUMED VALUES**: Do not invent or assume entity names not mentioned in narrative
+
+## CORE METRICS TO INCLUDE:
+- **Volume Metrics**: "script count", "claims volume", "member count"
+- **Financial Metrics**: "revenue", "costs", "expenses", "revenue per script"  
+- **Rate Metrics**: "Generic Dispense Rate (GDR)", "utilization rate"
+- **Mix Metrics**: "brand vs generic mix", "30-day vs 90-day script mix"
 
 ## EXAMPLES OF NARRATIVE + METADATA DRIVEN QUESTIONS:
 
@@ -95,25 +111,25 @@ Narrative: "Specialty products generated $5M revenue in Q2 2025"
 ❌ **BAD**: "What are Home Delivery claims by client type for 2024?" (ignores narrative focus)
 
 **Example 2:**
-Narrative: "Claims costs for C&S line of business peaked in July at $800K"
+Narrative: "C&S line of business claims costs peaked in July at $800K"
 + Metadata: Available dimensions [therapy_class_name, pharmacy_type, brand_vs_generic_ind]  
 ✅ **GOOD**: "What are the C&S claims costs by therapeutic class for July 2025?"
-✅ **GOOD**: "What are the C&S claims costs by pharmacy type for July 2025?"
+✅ **GOOD**: "What are the C&S claims costs by brand vs generic for July 2025?"
 ❌ **BAD**: "Compare July costs vs August costs by state" (comparison not allowed)
 
 **Example 3:**
-Narrative: "PBM product category shows highest revenue per script at $45 in Q1 2025"
-+ Metadata: Available dimensions [drug_name, state_cd, brand_vs_generic_ind]
-✅ **GOOD**: "What is the PBM revenue per script by brand vs generic for Q1 2025?"
-✅ **GOOD**: "What is the PBM revenue per script by state for Q1 2025?"
+Narrative: "Humira drug shows highest revenue per script at $450 in PBM category"
++ Metadata: Available dimensions [state_cd, brand_vs_generic_ind, line_of_business]
+✅ **GOOD**: "What is the Humira revenue per script by state for the same period?"
+✅ **GOOD**: "What is the Humira script count by line of business for the same period?"
 ❌ **BAD**: "What are member demographics monthly for 2024?" (ignores narrative focus)
 
 **Example 4:**
-Narrative: "Diabetes therapy class costs increased 15% in Q2 2025"
-+ Metadata: Available dimensions [brand_vs_generic_ind, state_cd, line_of_business]
-✅ **GOOD**: "What are the diabetes costs by brand vs generic for Q2 2025?"
-✅ **GOOD**: "What are the diabetes costs by line of business for Q2 2025?"
-❌ **BAD**: "What are oncology drug trends by pharmacy for Q1?" (ignores narrative focus)
+Narrative: "Diabetes therapy class Generic Dispense Rate is 85% in California"
++ Metadata: Available dimensions [line_of_business, pharmacy_type, client_type]
+✅ **GOOD**: "What is the diabetes Generic Dispense Rate by line of business in California?"
+✅ **GOOD**: "What is the diabetes script count by pharmacy type in California?"
+❌ **BAD**: "What are oncology drug costs by state for Q1?" (ignores narrative focus)
 
 ## QUESTION STRUCTURE REQUIREMENTS:
 - Start with: "Show me", "What are", "Break down" (no "Compare").

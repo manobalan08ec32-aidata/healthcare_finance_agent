@@ -1,94 +1,57 @@
-Your job is to **rewrite and classify the user's question**. Follow the rules strictly.
+ You are generating intelligent follow-up questions for healthcare finance analysis to help users drill down deeper into their data.
 
-Current Question: "{business_question}"
-Domain Context (append exactly as-is if needed): "{domain_text}"
-Previous Question History: "{history_context}" (if empty, treat as first question)
+                CURRENT CONTEXT:
+                Current Question: "{current_question}"
+                Current Analysis Output Summary: "{narrative_response}"
 
-## TASK 1 - QUESTION COMPLETENESS ANALYSIS
+                USER QUESTION HISTORY (Last 3):
+                {recent_user_questions}
 
-BEFORE applying any rewriting, determine if the current question needs history context:
+                PREVIOUS FOLLOW-UP QUESTIONS (Last 6):
+                {recent_followup_questions}
 
-### Independence Check Rules:
-1) **Self-Contained Question Indicators** (DO NOT use history):
-   - Contains specific metrics ("claim revenue", "top 10 drugs", "total sales")
-   - Contains specific timeframes ("July 2025", "Q3 2024", "last month")
-   - Contains specific dimensions/filters ("line of business C&S", "North region", "product category")
-   - Has complete business context with clear what/when/where components
-   - Question is asking about a completely different topic/metric than previous questions
+                DOMAIN SELECTION CONTEXT:
+                {domain_context}
 
-2) **Incomplete Question Indicators** (USE history):
-   - Contains pronouns: "that", "it", "those", "this", "same"
-   - Vague references: "why is that", "show me more", "what about trends", "explain that"
-   - Missing critical context: "I need expenses" (missing timeframe/filters)
-   - Direct follow-ups: "drill down", "show details", "break it down"
+                DATASET METADATA:
+                {metadata_str}
 
-## TASK 2 - REWRITE THE QUESTION BASED ON HISTORY
+                CRITICAL REQUIREMENTS:
+                1. Complete Questions: Each question MUST include a business-friendly metric, exactly one grouping dimension, and an explicit time period (and time grain if trending).
+                2. SQL-Ready: Questions must be complete enough to generate precise SQL without additional clarification.
+                3. Business Language: Use business/canonical terms derived from metadata column descriptions; never use technical/physical column names.
+                4. Domain Compliance: Respect the domain selection context; do not cross domains.
+                5. Avoid Repetition: Do not propose anything similar to PREVIOUS FOLLOW-UP QUESTIONS.
+                6. Single Focus: One metric and one grouping dimension per question.
+                7. No Comparisons: Do NOT generate comparison-style questions (no “compare”, no “vs”, no cross-domain comparisons).
+                8. Null Handling (STRICT): Do NOT generate questions that mention or target NULL/missing/unknown/unassigned/blank/N/A values. Avoid dimensions flagged as null‑heavy in the analysis summary. If all viable dimensions are null‑heavy or context is empty, return an empty array.
 
-### Rewriting Rules (apply only if question is incomplete):
+                LANGUAGE GUIDELINES:
+                ✅ USE BUSINESS TERMS: "costs", "revenue", "claims", "members", "therapeutic classes", "states", "age groups"
+                ❌ AVOID COLUMN NAMES: technical/physical like "total_paid_amt", "member_cnt", "therapy_class_nm", "state_cd", "age_band"
+                ✅ USE CANONICAL TIME TERMS: "Q1 2025", "January 2025", "2024", "monthly", "quarterly"
+                ❌ AVOID TECHNICAL TIME TERMS: "service_month", "date_part", "year_month"
+                ✅ USE FRIENDLY GROUPINGS: "by state", "by age group", "by therapeutic class", "by product category"
+                ❌ AVOID TECHNICAL GROUPINGS: "GROUP BY state_cd", etc.
 
-1) **Follow-up Handling**:
-   - If the current question is a follow-up (e.g., "why is that", "what about", "show me more", "I need expenses"), rewrite it using the most recent relevant item in the previous questions context.
-   - Replace pronouns with specific references from history
-   - Inherit timeframes, filters, and dimensional context when missing
+                EXAMPLES OF BUSINESS-FRIENDLY QUESTIONS:
+                ✅ GOOD: "Show me the total claim costs by state for Specialty products in Q2 2025."
+                ✅ GOOD: "What are the top 10 therapeutic classes by total revenue for Home Delivery in July 2025?"
+                ❌ BAD: "Show me total_paid_amt by state_cd for product_category = 'Specialty'."
+                ❌ BAD: "Which states have NULL prescriber specialty in 2025?"
 
-2) **New Topic Handling**:
-   - If it is a new topic or already complete, treat it as standalone and do not import unrelated history.
+                QUESTION STRUCTURE REQUIREMENTS:
+                - Start with: "Show me", "What are", "Break down" (no "Compare").
+                - Include one business-friendly metric (e.g., costs, revenue, claims, members).
+                - Include exactly one grouping dimension (e.g., by state, by age group, by therapeutic class, by product category).
+                - Include an explicit time period (e.g., "Q2 2025", "January 2025"); include time grain when trend language is used (monthly/quarterly).
+                - Use exact domain names when referencing product category: "Specialty", "Home Delivery", "PBM".
+                - Ensure the three questions are distinct from each other and from PREVIOUS FOLLOW-UP QUESTIONS.
 
-3) **Context Preservation**:
-   - Always preserve specific time periods (Q3, January, last month) from history when current question lacks timeframe
-   - Always preserve geographic/dimensional filters (North region, by product) when relevant
-   - Maintain business terminology exactly as used in history
-   - If multiple previous questions exist, use the most recent relevant one
+                RESPONSE FORMAT:
+                The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+                {{
+                "followup_questions": ["complete question 1", "complete question 2", "complete question 3"]
+                }}
 
-4) **Temporal Enhancement**:
-   - If a month is mentioned without a year, add 2025.
-   - Do not modify if a year already exists or if phrasing is like "next January".
-   - Recognize month names and common abbreviations (e.g., Jan, Feb, Mar).
-
-5) **Domain Appending**:
-   - If Domain Context to Append is non-empty, append it at the end of the rewritten question.
-   - If the rewritten question ends with "?", insert the domain text before the "?".
-   - Ensure a single space before the domain text and avoid double punctuation.
-
-6) **Quality Requirements**:
-   - Keep grammar natural, preserve important keywords, and make it sufficient for SQL generation.
-   - Rewritten question must be self-contained (readable without history)
-   - Length must be 15–500 characters.
-   - Trim extra spaces and ensure the first letter is capitalized.
-
-### Rewriting Examples:
-- Current: "I need expenses" + History: "What was Q3 2025 revenue for North region?" → "What were the expenses for North region in Q3 2025?"
-- Current: "what about trends" + History: "How much did we sell in January?" → "What are the sales trends for January 2025?"
-- Current: "why is that happening" + History: "top 10 drugs for July 2025" → "Why are those top 10 drugs performing that way in July 2025?"
-
-### Independence Examples:
-- Current: "what is the claim revenue for line of business C&S for July" → Keep as-is (already complete)
-- Current: "what are the top 10 drugs for the month of July 2025" → Keep as-is (already complete)
-
-## TASK 3 - QUESTION TYPE CLASSIFICATION
-
-- **"what"**: Data requests, facts, numbers, reports, trends, quantities
-  - Includes: "what", "how much", "how many", "which", "when", "where"
-- **"why"**: Explanations, causes, drivers, root cause analysis, drill-through analysis  
-  - Includes: "why", "how did", "what caused", "what's driving"
-- Follow-ups inherit the type unless explicitly asking for explanations.
-
-## RESPONSE FORMAT
-
-The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-
-```
-{
-  "context_type": "new_independent|true_followup|filter_refinement|metric_expansion",
-  "inherited_context": "specific context inherited from previous question or 'none' if independent",
-  "rewritten_question": "complete rewritten question with appropriate context inheritance",
-  "question_type": "what|why",
-  "used_history": true/false
-}
-```
-
-### Context Type Definitions:
-- **"new_independent"**: Completely new topic or already complete question, no relation to previous questions
-- **"true_followup"**: Refers to previous answer (e.g., "why is that", "show me more")  
-- **"filter_refinement"**: Same topic but different filters/parameters while inheriting context
-- **"metric_expansion"**: Same topic but asking for additional metrics/dimensions
+        """

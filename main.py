@@ -58,41 +58,42 @@ st.markdown("""
     /* Knowledge base content styling - plain page */
     .knowledge-section {
         width: 100%;
-        margin: 0 auto 2rem auto;
-        padding: 1rem 0;
+        margin: 0 auto 1rem auto;
+        padding: 0.5rem 0;
     }
     
     .knowledge-title {
-        font-size: 1.8rem;
-        font-weight: 600;
-        color: #007bff;
-        margin-bottom: 1.5rem;
-        text-align: center;
-        border-bottom: 2px solid #007bff;
-        padding-bottom: 0.5rem;
-    }
-    
-    /* Content styling */
-    .knowledge-section h2 {
         font-size: 1.4rem;
         font-weight: 600;
         color: #007bff;
-        margin: 1.5rem 0 1rem 0;
+        margin-bottom: 1rem;
+        text-align: center;
         border-bottom: 2px solid #007bff;
         padding-bottom: 0.3rem;
     }
     
+    /* Content styling */
+    .knowledge-section h2 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #007bff;
+        margin: 1rem 0 0.5rem 0;
+        border-bottom: 1px solid #007bff;
+        padding-bottom: 0.2rem;
+    }
+    
     .knowledge-section h3 {
-        font-size: 1.2rem;
+        font-size: 1rem;
         font-weight: 600;
         color: #0056b3;
-        margin: 1rem 0 0.5rem 0;
+        margin: 0.8rem 0 0.3rem 0;
     }
     
     .knowledge-section p {
-        margin: 0.5rem 0;
-        line-height: 1.5;
+        margin: 0.3rem 0;
+        line-height: 1.4;
         color: #555;
+        font-size: 0.9rem;
     }
     
     .knowledge-section strong {
@@ -104,27 +105,28 @@ st.markdown("""
     .important-note {
         background-color: #fff3cd;
         border: 1px solid #ffeaa7;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1rem;
+        border-radius: 6px;
+        padding: 0.8rem;
+        margin-bottom: 0.8rem;
     }
     
     .important-note h3 {
         color: #856404 !important;
         margin-top: 0 !important;
-        font-size: 1.1rem !important;
+        font-size: 1rem !important;
+        margin-bottom: 0.3rem !important;
     }
     
     .important-note p {
         color: #856404 !important;
         margin-bottom: 0;
-        font-size: 0.95rem;
+        font-size: 0.85rem;
     }
     
     /* Button section */
     .button-section {
         text-align: center;
-        padding: 2rem 0 1rem 0;
+        padding: 1rem 0 0.5rem 0;
     }
     
     /* Button styling */
@@ -133,11 +135,11 @@ st.markdown("""
         color: white !important;
         border: none !important;
         border-radius: 8px !important;
-        padding: 1rem 3rem !important;
-        font-size: 1.2rem !important;
+        padding: 0.8rem 2.5rem !important;
+        font-size: 1.1rem !important;
         font-weight: 500 !important;
-        width: 250px !important;
-        height: 65px !important;
+        width: 220px !important;
+        height: 55px !important;
         transition: all 0.3s ease !important;
         box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
     }

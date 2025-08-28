@@ -1,110 +1,100 @@
-def _generate_sql(self, context: Dict) -> Dict[str, Any]:
-    """Generate high-quality Databricks SQL with retry logic"""
-
-    current_question = context.get('current_question', '')
-    recent_history = context.get('recent_history', [])
-    dataset_metadata = context.get('dataset_metadata', '')
-
-    sql_prompt = f"""
-        You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a **high-quality Databricks SQL query** based on the user's question.
-
-        CURRENT QUESTION: {current_question}
-        RECENT HISTORY: {recent_history}
-        AVAILABLE METADATA: {dataset_metadata}
-
-        ==============================
-        CRITICAL SQL GENERATION RULES
-        ==============================
-
-        1. **MEANINGFUL COLUMN NAMES**
-       
-        - Generate a month-over-month comparison that clearly displays month names side by side in the output
-
-        2. **SHOW CALCULATION COMPONENTS**
-        - Include all columns used in calculations in the output.
-        - For example:
-        - If calculating a percentage, include the numerator, denominator, and the percentage itself.
-        - If calculating a variance, include the original values and the variance.
-        - This ensures users can see the full context of how the results were derived.
-
-        3.Special Table-Level Filtering Rules 
-        -When building SQL queries using this table's metadata, check if the special_table_level_instruction key is present. If it exists, follow the filtering rules defined in it. For example, if the instruction specifies that no filters should be applied to product_category when the user mentions 'Specialty', 'Home Delivery', and 'PBM' together—or 'PBM' alone—then ensure that no filters are added to product_category in those cases
-
-        4. **METRICS & AGGREGATIONS**
-        - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
-        - When the question specifies only a month, use the current year for calculations.
-
-        5. **ATTRIBUTE-ONLY QUERIES**
-        - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
-
-        6. **STRING FILTERING - CASE INSENSITIVE**
-        - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
-        - Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-        7. **TOP/BOTTOM QUERIES WITH TOTALS**
-        - When the user asks for "top 10" or "bottom 10", also include the overall total/count for context.
-        - Show both the individual top/bottom records AND the grand total across all records.
-        - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
-
-        8. **HEALTHCARE FINANCE BEST PRACTICES**
-        - Always include time dimensions (month, quarter, year) when relevant to the user's question.
-        - Use business-friendly dimensions (e.g., therapeutic class, service type, age group, state).
-
-        9. **DATABRICKS SQL COMPATIBILITY**
-        - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-        - Use date functions: date_trunc(), year(), month(), quarter()
-        - Use CASE WHEN for conditional logic
-        - Use CTEs (WITH clauses) for complex logic
-
-        10. **FORMATTING**
-        - Show whole numbers for metrics and round percentages to two decimal places.
-        - Use the ORDER BY clause only for date columns and use descending order.
-
-        ============================== 
-        RESPONSE FORMAT 
-        ==============================
-        Return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting.
-
-        <sql>
-        WITH cte AS (SELECT col FROM table) SELECT * FROM cte
-        </sql>
-
-        IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the <sql> tags. This makes the SQL readable and maintainable.
-        """
-    
-    for attempt in range(self.max_retries):
-        try:
-            llm_response = self.db_client.call_claude_api_endpoint([
-                {"role": "user", "content": sql_prompt}
-            ])
-            print('sql gen', llm_response)
-            
-            # Extract SQL from XML tags
-            import re
-            match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-            if match:
-                sql_query = match.group(1).strip()
-                # Keep original formatting - just remove backticks
-                sql_query = sql_query.replace('`', '')  # Remove backticks
-                
-                if not sql_query:
-                    raise ValueError("Empty SQL query in XML response")
-                
-                return {
-                    'success': True,
-                    'sql_query': sql_query
-                }
-            else:
-                raise ValueError("No SQL found in XML tags")
+def _generate_sql_queries_for_single_kg(self, knowledge_graph: Dict, user_question: str, kg_id: str,question_type:str) -> List[Dict]:
+        """Generate SQL queries for a single knowledge graph - your existing logic"""
         
-        except Exception as e:
-            print(f"❌ SQL generation attempt {attempt + 1} failed: {str(e)}")
+        sql_generation_prompt = f"""
+                You are Databricks SQL Expert Agent  and your objective Build SQL queries to support Healthcare Finance Deep Analysis using Databricks
+
+                
+                User Question: "{user_question}"
+                Knowledge Graph ID: {kg_id}
+                
+                Available metadata information:
+                {json.dumps(knowledge_graph, indent=2)}
+                
+
+                =============================
+                SYSTEM PROMPT - Databricks SQL Agent
+                =============================
+ 
+                [ROLE & PURPOSE]
+                - Generate **multiple Databricks SQL queries** aligned with the user’s intent and metadata.
+                - Follow all rules, recipes, and ranking logic from metadata (including llm_instructions).
+
+                [RULES]
+                1. **Understand intent**:
+                - Detect if the question is about single period, MoM, QoQ, YoY, growth, or decline.
+                - Use llm_instructions.comparison_modes and parameters for time windows and thresholds.
+                2.**METADATA COVERAGE & VALIDATION**
+                - Before generating SQL, parse the metadata JSON and build an internal index of:
+                (a) datasets (id, table, columns, date, metrics),
+                (b) all group_set entries and each group_set's query_hint,
+                (c) llm_instructions (parameters, comparison_modes, ranking_policy, growth/decline recipes),
+                (d) sample_questions (for intent steering; do not copy verbatim).
+                - Coverage policy:
+                * General questions → produce 5-8 meaningful queries that collectively cover every group_set in each relevant dataset (ledger and/or claims), unless the user explicitly restricts scope.
+                * Attribute-specific questions → focus on the attribute but still pair it with 4–5 other group_sets to surface drivers.
+                * Always apply dataset default filters from metadata.
+                * Always respect group_set.query_hint to determine ORDER BY and LIMIT semantics.
+                - Comparison & time grain:
+                * Select comparison_mode from llm_instructions.comparison_modes: single_period, MoM, QoQ, YoY_month, YoY_quarter.
+                * Use dataset.date.default_grain unless the user specifies month/quarter explicitly.
+                * Follow llm_instructions.parameters for recent/baseline windows, thresholds, seasonality, and date_alignment_policy (MTD/QTD vs prior MTD/QTD if current period incomplete).
+                - Growth vs Decline:
+                * Growth → rank by positive pct_change (tie-break abs_change) after applying baseline thresholds from parameters.
+                * Decline → rank by negative pct_change (tie-break abs_change) and require baseline strength (baseline_avg >= threshold) to exclude chronic underperformers; optionally check moving-average slope and, in claims, delta_rev_per_script if applicable.
+                - Query hint application:
+                * 'top_10' → ORDER BY primary metric (single_period) or pct_change (comparative) DESC LIMIT 10.
+                * 'bottom_10' → ORDER BY primary metric or pct_change ASC LIMIT 10.
+                * 'All' → return all groups sorted by primary metric DESC unless user specifies otherwise.
+                6. **Output format**:
+                - JSON array of objects with:
+                    * query_id: short descriptive name
+                    * table: dataset name
+                    * purpose: short human-readable title
+                    * sql: single-line Databricks SQL
+                    * narrative: 2–3 sentences explaining purpose, time window, and ranking logic
+                7. **Databricks SQL rules**:
+                - -Generate the SQL in single line and dont add '\n' for nrw line.
+                - Use exact table and column names from metadata.
+                - Apply DATE_TRUNC for month/quarter.
+                - Return YYYY-MM for monthly analysis.
+                - Round percentages to 2 decimals.
+                - Always include overall totals in attribute-level queries.
+                        
+                =============================
+                EXAMPLE OUTPUT
+                =============================
+                -Generate SQL as a single line without line breaks.o NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
+
+                    [
+                        {{
+                            "query_id": "title_of_query_1",
+                            "table": "ledger",
+                            "purpose": "Monthly revenue trend analysis",
+                            "sql": "SELECT line_of_business, DATE_TRUNC('month', fscl_date) AS month, SUM(amount) AS revenue FROM table_name WHERE conditions GROUP BY line_of_business, month ORDER BY month",
+                            "narrative": "Analyzes monthly revenue trends by business line to identify growth patterns."
+                        }}
+                    ]
+                    
+                CRITICAL: Write the entire SQL query on one line, using spaces instead of \n characters. This prevents JSON parsing errors while allowing complex queries.
+
+                    """
+        
+        
+        try:
+            # Generate queries for this specific knowledge graph
+            llm_response = self.db_client.call_claude_api([
+                {"role": "user", "content": sql_generation_prompt}
+            ])
             
-            if attempt < self.max_retries - 1:
-                print(f"🔄 Retrying SQL generation... (Attempt {attempt + 1}/{self.max_retries})")
-                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
-    
-    return {
-        'success': False,
-        'error': f"SQL generation failed after {self.max_retries} attempts due to Model errors"
-    }
+            # Clean and parse response
+            cleaned_response = self._clean_llm_json_response(llm_response)
+            queries = json.loads(cleaned_response)
+            print('root cause sql response',queries)
+            print(f"✅ Generated {len(queries)} SQL queries for KG {kg_id}")
+            
+            return queries
+            
+        except Exception as e:
+            print(f"❌ SQL generation failed for KG {kg_id}: {str(e)}")
+            return []

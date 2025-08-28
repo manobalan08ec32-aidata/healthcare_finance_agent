@@ -1,3 +1,4 @@
+
 import streamlit as st
 import os
 
@@ -212,50 +213,26 @@ st.markdown("""
 
 def get_hardcoded_content():
     """Return hardcoded markdown content as HTML"""
-    return """<p>The current agent supports Pharmacy and PBM teams by answering "what" and "drill-through" questions using two foundational datasets built for <strong>Specialty</strong>, <strong>Home Delivery</strong>, and <strong>PBM</strong> segments.</p>
+    return """
+<h3>Important Note</h3>
+<p>The agent's knowledge is limited to the below datasets, attributes, and metrics. For additional data needs or to expand its capabilities, please contact the FDMTeam.</p>
+<hr>
+<p>The current agent supports Pharmacy and PBM teams by answering "what" and "drill-through" questions using two foundational datasets built for <strong>Specialty</strong>, <strong>Home Delivery</strong>, and <strong>PBM</strong> segments.</p>
 <hr>
 <h3>1. Actuals vs Forecast Analysis Dataset</h3>
 
-<p>Provides financial insights for analyzing actuals, forecasts, and budgets across time and business segments. Supports trend, mix, and variance analysis.</p>
-
-<p><strong>Attributes:</strong><br>
-Financial Ledger Type, Metric Category, Business Segment, Product Category, Product Subcategory Level 1, Product Subcategory Level 2, Transaction Date</p>
-
-<p><strong>Metrics:</strong><br>
-Financial or Volume Value</p>
-
-<p><strong>Details:</strong></p>
-<ul>
-    <li><strong>Financial Ledger Type:</strong> Includes GAAP (Actuals), BUDGET, and forecast types like 8+4, 2+10, 5+7. Used to distinguish financial perspectives for variance analysis.</li>
-    <li><strong>Metric Category:</strong> Covers Unadjusted Scripts, Adjusted Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, Total Membership. Always group by this field for accurate aggregations.</li>
-    <li><strong>Financial or Volume Value:</strong> Raw values tied to each metric type. Must be filtered or grouped appropriately to avoid misaggregation.</li>
-</ul>
+<p>
+An analytics-ready dataset for comparing actual results, forecast scenarios (8+4, 2+10, 5+7), and budget plans (BUDGET, GAAP) across key pharmacy and healthcare performance metrics. The measures span prescription counts (total, adjusted, 30-day, 90-day), revenue, cost of goods sold (COGS) after reclassification, SG&A after reclassification, IOI, and total membership. Each record contains a single value for the selected measure, enabling flexible aggregation and comparison. Analysis can be segmented by line of business (e.g., Community & State, Employer & Individual, Medicare & Retirement, Optum, External), product category and its sub-categories, state or region, and standard time periods (date, year, month, quarter). This table supports use cases such as variance analysis between actuals and forecast/budget, mix shift tracking by LOB or product category, and trend reporting where the same measure is evaluated across multiple timeframes.
+</p>
 
 <hr>
 
 <h3>2. Pharmacy Claim Transaction Dataset</h3>
 
-<p>Provides claim-level granularity for utilization and financial analysis at the drug, pharmacy, and client level. Supports detailed breakdowns and derived metrics.</p>
+<p>
+A detailed claim-level dataset capturing pharmacy benefit manager (PBM) activity, with one record per submitted claim. It includes claim identifiers for tracking individual transactions, submission dates for time-based analysis, and claim status indicators showing whether a claim was paid, reversed, or rejected (with paid and reversed used for net calculations). Business context is provided through line of business, client, carrier, account, and group details. Pharmacy-related fields capture the dispensing location name and national provider identifier (NPI). Drug-related fields include the medication name, therapeutic class, brand/generic classification, generic product identifier (GPI), national drug code (NDC), and manufacturer name. Core utilization metrics track total prescriptions, adjusted counts, and 30-day / 90-day fills. Financial metrics include revenue, expenses/COGS, wholesale acquisition cost (WAC), and average wholesale price (AWP), with derived indicators like revenue per prescription and generic dispense rate (GDR). Typical analyses include prescription volume and mix trends, brand vs generic comparisons, LOB and client performance, geographic patterns, and financial performance by drug or pharmacy.</p>
+"""
 
-<p><strong>Attributes:</strong><br>
-Product Category, Claim Number, Claim Sequence, Claim Status, Business Segment, Business Segment Description, Carrier ID, Account ID, Group ID, Claim Submission Date, Pharmacy Name, Pharmacy NPI, Client ID, Client Name, Drug Name, Therapy Class, Brand/Generic Indicator, Drug Classification Code, Drug Manufacturer, State Code, Member Date of Birth, Member Gender, Client Type, Pharmacy Type</p>
-
-<p><strong>Metrics:</strong><br>
-Unadjusted Script Count, 90-Day Script Count, 30-Day Script Count, Adjusted Script Count, Revenue Amount, Expense Amount, Wholesale Acquisition Cost, Average Wholesale Price, Revenue per Script, Generic Dispense Rate</p>
-
-<p><strong>Details:</strong></p>
-<ul>
-    <li><strong>Claim Status:</strong> Use Paid and Reversed to reflect net activity.</li>
-    <li><strong>Therapy Class:</strong> Includes categories like GLP-1 Receptor Agonists, Oncology, SGLT-2 Inhibitors. Use LIKE operator for broader class queries (e.g., GLP-1).</li>
-    <li><strong>Revenue per Script:</strong> Derived as Revenue Amount ÷ Unadjusted Script Count.</li>
-    <li><strong>Generic Dispense Rate:</strong> Percentage of generic scripts based on Brand/Generic Indicator.</li>
-</ul>
-
-<hr>
-
-<h3>Important Note</h3>
-
-<p>The agent's knowledge is limited to the above datasets, attributes, and metrics. For additional data needs or to expand its capabilities, please contact the FDMTeam.</p>"""
 
 def main():
     """Main landing page with horizontally aligned logo/title, expanded card, and visible button"""

@@ -55,49 +55,21 @@ st.markdown("""
         line-height: 1.2;
     }
     
-    /* Knowledge base content styling */
+    /* Knowledge base content styling - plain page */
     .knowledge-section {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 2rem;
-        margin: 0 auto 2rem auto;
-        border-left: 4px solid #007bff;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         width: 100%;
-        max-height: 70vh;
-        overflow-y: auto;
-        
-        /* Scrollbar styling */
-        scrollbar-width: thick;
-        scrollbar-color: #007bff #e0e0e0;
-    }
-    
-    .knowledge-section::-webkit-scrollbar {
-        width: 12px;
-    }
-    
-    .knowledge-section::-webkit-scrollbar-track {
-        background: #e0e0e0;
-        border-radius: 6px;
-    }
-    
-    .knowledge-section::-webkit-scrollbar-thumb {
-        background: #007bff;
-        border-radius: 6px;
-    }
-    
-    .knowledge-section::-webkit-scrollbar-thumb:hover {
-        background: #0056b3;
+        margin: 0 auto 2rem auto;
+        padding: 1rem 0;
     }
     
     .knowledge-title {
         font-size: 1.8rem;
         font-weight: 600;
         color: #007bff;
-        margin-bottom: 1rem;
+        margin-bottom: 1.5rem;
+        text-align: center;
         border-bottom: 2px solid #007bff;
         padding-bottom: 0.5rem;
-        text-align: center;
     }
     
     /* Content styling */
@@ -105,21 +77,21 @@ st.markdown("""
         font-size: 1.4rem;
         font-weight: 600;
         color: #007bff;
-        margin: 2rem 0 1rem 0;
+        margin: 1.5rem 0 1rem 0;
         border-bottom: 2px solid #007bff;
-        padding-bottom: 0.5rem;
+        padding-bottom: 0.3rem;
     }
     
     .knowledge-section h3 {
         font-size: 1.2rem;
         font-weight: 600;
         color: #0056b3;
-        margin: 1.5rem 0 0.8rem 0;
+        margin: 1rem 0 0.5rem 0;
     }
     
     .knowledge-section p {
-        margin: 0.8rem 0;
-        line-height: 1.6;
+        margin: 0.5rem 0;
+        line-height: 1.5;
         color: #555;
     }
     
@@ -128,40 +100,25 @@ st.markdown("""
         color: #333;
     }
     
-    .knowledge-section ul {
-        margin: 1rem 0;
-        padding-left: 1.5rem;
-    }
-    
-    .knowledge-section li {
-        margin: 0.5rem 0;
-        line-height: 1.6;
-        color: #555;
-    }
-    
-    .knowledge-section hr {
-        border: none;
-        border-top: 2px solid #e0e0e0;
-        margin: 2rem 0;
-    }
-    
     /* Important note styling */
     .important-note {
         background-color: #fff3cd;
         border: 1px solid #ffeaa7;
         border-radius: 8px;
         padding: 1rem;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1rem;
     }
     
     .important-note h3 {
         color: #856404 !important;
         margin-top: 0 !important;
+        font-size: 1.1rem !important;
     }
     
     .important-note p {
         color: #856404 !important;
         margin-bottom: 0;
+        font-size: 0.95rem;
     }
     
     /* Button section */
@@ -204,29 +161,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def get_knowledge_base_content():
-    """Return the organized knowledge base content - simplified"""
+    """Return the organized knowledge base content - by dataset"""
     return """
     <div class="important-note">
         <h3>Important Note</h3>
         <p>The agent's knowledge is limited to the below attributes and metrics. For additional data needs, contact the FDMTeam.</p>
     </div>
     
-    <p>The agent supports Pharmacy and PBM teams using two datasets for <strong>Specialty</strong>, <strong>Home Delivery</strong>, and <strong>PBM</strong> segments.</p>
+    <h2>📊 Dataset 1: Actuals vs Forecast Analysis</h2>
+    <p><strong>Attributes:</strong> Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)</p>
+    <p><strong>Metrics:</strong> Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis</p>
     
-    <h2>📊 Available Datasets</h2>
-    <h3>1. Actuals vs Forecast Analysis Dataset</h3>
-    <h3>2. Pharmacy Claim Transaction Dataset</h3>
-    
-    <h2>🏷️ Available Attributes</h2>
-    <p><strong>Business Context:</strong> Line of Business, Product Category, Client/Carrier/Account/Group, State/Region, Time periods (Date/Year/Month/Quarter)</p>
-    <p><strong>Pharmacy:</strong> Dispensing Location, National Provider Identifier (NPI)</p>
-    <p><strong>Drug:</strong> Medication Name, Therapeutic Class, Brand/Generic Classification, GPI, NDC, Manufacturer</p>
-    <p><strong>Claims:</strong> Claim Identifiers, Submission Dates, Status (Paid/Reversed/Rejected)</p>
-    
-    <h2>📈 Available Metrics</h2>
-    <p><strong>Utilization:</strong> Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Total Membership</p>
-    <p><strong>Financial:</strong> Revenue, COGS (after reclassification), SG&A (after reclassification), WAC, AWP, IOI</p>
-    <p><strong>Derived:</strong> Revenue per Prescription, Generic Dispense Rate (GDR), Variance Analysis, Mix Shift Analysis</p>
+    <h2>📊 Dataset 2: Pharmacy Claim Transaction</h2>
+    <p><strong>Attributes:</strong> Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status (Paid/Reversed/Rejected)</p>
+    <p><strong>Metrics:</strong> Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)</p>
     """
 
 def main():

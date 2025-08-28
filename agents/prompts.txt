@@ -1,147 +1,116 @@
- domain_parse_prompt = f"""
-        Parse a user's domain selection response and provide intelligent feedback for invalid responses.
+def call_claude_api_endpoint(self, user_message: str, max_tokens: int = 1000, system_prompt: str = "you are an AI assistant") -> str:
+        """
+        Call UHG Claude API endpoint using HCP credentials and return the response text.
+        """
+        BASE_URL = self.CLAUDE_API_URL
+        PROJECT_ID = self.CLAUDE_PROJECT_ID
+        MODEL_ID = self.CLAUDE_MODEL_ID
 
-        User Response: "{domain_response}"
+        CONFIG = {
+            "HCP_CLIENT_ID": self.CLAUDE_CLIENT_ID,
+            "HCP_CLIENT_SECRET": self.CLAUDE_CLIENT_SECRET,
+            "HCP_AUTH": self.CLAUDE_AUTH_URL,
+            "HCP_SCOPE": self.CLAUDE_SCOPE,
+            "HCP_GRANT_TYPE": self.CLAUDE_GRANT_TYPE
+        }
 
-        Available Categories:
-        - Home Delivery (HDP)
-        - Specialty (SP)
-        - PBM
+        def fetch_hcp_token(config):
+            data = {
+                "grant_type": config["HCP_GRANT_TYPE"],
+                "client_id": config["HCP_CLIENT_ID"],
+                "client_secret": config["HCP_CLIENT_SECRET"],
+                "scope": config["HCP_SCOPE"],
+            }
+            resp = requests.post(config["HCP_AUTH"], data=data)
+            resp.raise_for_status()
+            return resp.json()["access_token"]
 
-        PARSING RULES:
-        1. Valid Selections:
-        - Numbers: "1"→Home Delivery, "2"→Specialty, "3"→PBM, "4"→All
-        - Names: "Home Delivery", "Specialty", "PBM", "ALL"
-        - Combinations: "1 and 2", "Specialty and PBM"
+        try:
+            # Step 1: Get token
+            token = fetch_hcp_token(CONFIG)
 
-        2. Invalid Response Types:
-        - "confused": "I don't know", "maybe", "not sure", unclear responses
-        - "new_question": User asks new question instead of selecting
-        - "invalid_input": Gibberish, unrelated text
-        - "empty": Empty or very short responses
+            # Step 2: Prepare headers and payload
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+                "projectId": PROJECT_ID,
+                "guardrail": "high_strength"
+            }
+            payload = {
+                "system": [{"text": system_prompt}],
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"text": user_message}]
+                    }
+                ],
+                "inferenceConfig": {
+                    "maxTokens": max_tokens
+                }
+            }
+            url = f"{BASE_URL}/model/{MODEL_ID}/converse"
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
+            result = response.json()
+            # Correct extraction for UHG Claude API:
+            return result["output"]["message"]["content"][0]["text"]
+        except Exception as e:
+            raise Exception(f"Claude API endpoint call failed: {str(e)}")
 
-        3. Smart Response Generation:
-        Generate helpful, context-aware follow-up messages for invalid responses.
+❌ All unified analysis retries failed: Claude API endpoint call failed: 400 Client Error: Bad Request for url: https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0/model/us.anthropic.claude-sonnet-4-20250514-v1:0/converse
 
-        EXAMPLES:
-        - "1" → valid=true, domains=["Home Delivery"]
-        - "PBM" → valid=true, domains=["PBM"]
-        - "I don't know" → valid=false, error_type="confused"
-        - "What is revenue?" → valid=false, error_type="new_question"
+import requests
 
-        RESPONSE FORMAT:
-        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-        {{
-            "valid_domain_selection": true/false,
-            "selected_domains": ["list"] or [],
-            "error_type": "confused|new_question|invalid_input|empty" or null,
-            "smart_followup_message": "helpful message for invalid responses" or null
-        }}
+BASE_URL = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
+PROJECT_ID = "****************"
+MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"  # Use the deployment name with underscore
 
+CONFIG = {
+    "HCP_CLIENT_ID": "*****************",
+    "HCP_CLIENT_SECRET": "********************",
+    "HCP_AUTH": "https://api.uhg.com/oauth2/token",
+    "HCP_SCOPE": "https://api.uhg.com/.default",
+    "HCP_GRANT_TYPE": "client_credentials"
+}
 
-You are a healthcare finance analytics assistant specialized in pharmacy and healthcare performance data analysis.
+def fetch_hcp_token(config):
+    data = {
+        "grant_type": config["HCP_GRANT_TYPE"],
+        "client_id": config["HCP_CLIENT_ID"],
+        "client_secret": config["HCP_CLIENT_SECRET"],
+        "scope": config["HCP_SCOPE"],
+    }
+    resp = requests.post(config["HCP_AUTH"], data=data)
+    resp.raise_for_status()
+    return resp.json()["access_token"]
 
-            SYSTEM KNOWLEDGE - WHAT THIS CHATBOT IS BUILT FOR:
+def converse_call(token, user_message):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+        "projectId": PROJECT_ID,
+        "guardrail": "high_strength"
+    }
+    payload = {
+        "system": [{"text": "you are an AI assistant"}],
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"text": user_message}]
+            }
+        ],
+        "inferenceConfig": {
+            "maxTokens": 50
+        }
+    }
+    url = f"{BASE_URL}/model/{MODEL_ID}/converse"
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    print("Status code:", response.status_code)
+    try:
+        print(response.json())
+    except Exception:
+        print(response.text)
 
-            **Primary Datasets:**
-            1. **Ledger Dataset** - Analytics-ready dataset for comparing actual results, forecast scenarios (8+4, 2+10, 5+7), and budget plans (BUDGET, GAAP) across key pharmacy and healthcare performance metrics. Measures include prescription counts (total, adjusted, 30-day, 90-day), revenue, cost of goods sold (COGS) after reclassification, SG&A after reclassification, IOI, and total membership. Analysis can be segmented by line of business (Community & State, Employer & Individual, Medicare & Retirement, Optum, External), product category and sub-categories, state/region, and time periods.
-
-            2. **Pharmacy/PBM Claims Dataset** - Analytics-ready dataset for pharmacy benefit management and claims analysis with the same metric structure as Ledger Dataset, supporting variance analysis, mix shift tracking, and trend reporting.
-
-            **Supported Analysis Types:**
-            - Variance analysis (actual vs forecast/budget)
-            - Mix shift tracking by LOB or product category
-            - Trend reporting across timeframes
-            - Prescription volume analysis
-            - Revenue and cost analysis
-            - Membership analytics
-
-            **Available Product Categories:**
-            - Home Delivery (HDP) - Home delivery pharmacy services
-            - Specialty (SP) - Specialty pharmacy services  
-            - PBM - Pharmacy Benefit Management services
-
-            NOW ANALYZE THIS USER INPUT:
-            User Input: "{current_question}"
-            Existing Domain Context: {existing_domain_selection if existing_domain_selection else "None"}
-
-            === TASK 1: CLASSIFY INPUT TYPE ===
-
-            Classify the user input into one of these categories:
-
-            1. **GREETING** - Simple greetings, capability questions, general chat
-            Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning"
-
-            2. **DML/DDL** - Data modification requests (not supported)
-            Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
-
-            3. **BUSINESS_QUESTION** - Questions about data, analytics, healthcare finance
-            Examples: "Show me revenue", "Prescription counts", "Cost analysis", "Performance metrics"
-
-            BUSINESS QUESTION VALIDATION RULES:
-            ✅ VALID: Healthcare/pharmacy related queries about metrics, trends, analysis
-            ✅ VALID: Vague but analytics-related: "show me data", "performance metrics"
-            ❌ INVALID: Completely unrelated topics: "weather", "sports", "personal advice"
-
-            === TASK 2: EXTRACT DOMAIN CONTEXT ===
-
-            For VALID business questions only, extract product category mentions:
-
-            **Domain Detection Rules:**
-            - Look for explicit mentions: "specialty revenue", "HDP costs", "PBM data", "home delivery"
-            - Look for abbreviations: "hdp", "sp", "pbm" 
-            - Case insensitive matching
-            - Multiple domains can be detected
-
-            **Domain Mapping:**
-            - "Home Delivery", "HDP", "home delivery" → "Home Delivery"
-            - "Specialty", "SP", "specialty" → "Specialty"  
-            - "PBM", "pbm" → "PBM"
-            - "ALL", "all categories" → ["Home Delivery", "Specialty", "PBM"]
-
-            **Domain Found Logic:**
-            - If ANY domain explicitly mentioned → domain_found = true
-            - If NO domain mentioned but valid business question → domain_found = false (need clarification)
-
-            === TASK 3: GENERATE RESPONSE MESSAGE ===
-
-            Based on input type:
-
-            - **GREETING**: Friendly welcome explaining your capabilities (2-3 lines)
-            - **DML/DDL**: Polite refusal explaining you only analyze data (2-3 lines)
-            - **VALID BUSINESS_QUESTION**: Empty string "" (will be processed further)
-            - **INVALID BUSINESS_QUESTION**: Helpful redirect to your capabilities (2-3 lines)
-
-            === EXAMPLES ===
-
-            Input: "Hi" 
-            → input_type="greeting", valid=false, domain_found=false, domains=[], response="Hello! I'm your healthcare finance analytics assistant..."
-
-            Input: "What can you do?"
-            → input_type="greeting", valid=false, domain_found=false, domains=[], response="I can help analyze pharmacy data..."
-
-            Input: "INSERT new data"
-            → input_type="dml_ddl", valid=false, domain_found=false, domains=[], response="I can only analyze data, not modify it..."
-
-            Input: "Show me revenue"
-            → input_type="business_question", valid=true, domain_found=false, domains=[], response=""
-
-            Input: "PBM revenue trends"
-            → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
-
-            Input: "Specialty and HDP costs"
-            → input_type="business_question", valid=true, domain_found=true, domains=["Specialty", "Home Delivery"], response=""
-
-            Input: "Tell me about the weather"
-            → input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics..."
-
-            RESPONSE FORMAT:
-            The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-            {{
-                "input_type": "greeting|dml_ddl|business_question",
-                "is_valid_business_question": true/false,
-                "domain_found": true/false,
-                "detected_domains": ["list of domains"] or [],
-                "response_message": "appropriate response or empty string (2-3 lines)"
-            }}
-
+if __name__ == "__main__":
+    token = fetch_hcp_token(CONFIG)
+    converse_call(token, "reply only hi")

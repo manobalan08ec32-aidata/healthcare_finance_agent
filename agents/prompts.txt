@@ -1,115 +1,118 @@
 def _generate_sql(self, context: Dict) -> Dict[str, Any]:
-        """Generate high-quality Databricks SQL with retry logic"""
+   """Generate high-quality Databricks SQL with retry logic"""
 
-        current_question = context.get('current_question', '')
-        recent_history = context.get('recent_history', [])
-        dataset_metadata = context.get('dataset_metadata', '')
+   current_question = context.get('current_question', '')
+   recent_history = context.get('recent_history', [])
+   dataset_metadata = context.get('dataset_metadata', '')
 
-        sql_prompt = f"""
-            You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a **high-quality Databricks SQL query** based on the user's question.
+   sql_prompt = f"""
+       You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a **high-quality Databricks SQL query** based on the user's question.
 
-            CURRENT QUESTION: {current_question}
-            RECENT HISTORY: {recent_history}
-            AVAILABLE METADATA: {dataset_metadata}
+       CURRENT QUESTION: {current_question}
+       RECENT HISTORY: {recent_history}
+       AVAILABLE METADATA: {dataset_metadata}
 
-            You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a high-quality Databricks SQL query based on the user's question.
+       You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a high-quality Databricks SQL query based on the user's question.
 
-            CURRENT QUESTION: {current_question}
-            RECENT HISTORY: {recent_history}
-            AVAILABLE METADATA: {dataset_metadata}
+       CURRENT QUESTION: {current_question}
+       RECENT HISTORY: {recent_history}
+       AVAILABLE METADATA: {dataset_metadata}
 
-            ==============================
-            CRITICAL SQL GENERATION RULES
-            ==============================
+       ==============================
+       CRITICAL SQL GENERATION RULES
+       ==============================
 
-            1. **MEANINGFUL COLUMN NAMES**
+       1. **MEANINGFUL COLUMN NAMES**
+      
+       - Generate a month-over-month comparison that clearly displays month names side by side in the output
+
+       2. **SHOW CALCULATION COMPONENTS**
+       - Include all columns used in calculations in the output.
+       - For example:
+       - If calculating a percentage, include the numerator, denominator, and the percentage itself.
+       - If calculating a variance, include the original values and the variance.
+       - This ensures users can see the full context of how the results were derived.
+
+       3.Special Table-Level Filtering Rules 
+       -When building SQL queries using this table's metadata, check if the special_table_level_instruction key is present. If it exists, follow the filtering rules defined in it. For example, if the instruction specifies that no filters should be applied to product_category when the user mentions 'Specialty', 'Home Delivery', and 'PBM' together—or 'PBM' alone—then ensure that no filters are added to product_category in those cases
+
+       4. **METRICS & AGGREGATIONS**
+       - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
+       - When the question specifies only a month, use the current year for calculations.
+
+       5. **ATTRIBUTE-ONLY QUERIES**
+       - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
+
+       6. **STRING FILTERING - CASE INSENSITIVE**
+       - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
+       - Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+       7. **TOP/BOTTOM QUERIES WITH TOTALS**
+       - When the user asks for "top 10" or "bottom 10", also include the overall total/count for context.
+       - Show both the individual top/bottom records AND the grand total across all records.
+       - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
+
+       8. **HEALTHCARE FINANCE BEST PRACTICES**
+       - Always include time dimensions (month, quarter, year) when relevant to the user's question.
+       - Use business-friendly dimensions (e.g., therapeutic class, service type, age group, state).
+
+       9. **DATABRICKS SQL COMPATIBILITY**
+       -Generate the SQL in single line and dont add '\n' for nrw line.
+       - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+       - Use date functions: date_trunc(), year(), month(), quarter()
+       - Use CASE WHEN for conditional logic
+       - Use CTEs (WITH clauses) for complex logic
+
+       10. **FORMATTING**
+       - Show whole numbers for metrics and round percentages to two decimal places.
+       - Use the ORDER BY clause only for date columns and use descending order.
+
+       ============================== 
+       RESPONSE FORMAT 
+       ==============================
+       The response MUST be valid JSON. Generate SQL as a single line without line breaks.o NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
+
+       If the question is clear and SQL can be generated:
+       {{
+       "sql_query": "WITH cte AS (SELECT col FROM table) SELECT * FROM cte"
+       }}
+
+       CRITICAL: Write the entire SQL query on one line, using spaces instead of \n characters. This prevents JSON parsing errors while allowing complex queries.
+
+
+       """
+   
+   for attempt in range(self.max_retries):
+       try:
+           llm_response = self.db_client.call_claude_api_endpoint([
+               {"role": "user", "content": sql_prompt}
+           ])
+           print('sql gen', llm_response)
            
-            - Generate a month-over-month comparison that clearly displays month names side by side in the output
-
-            2. **SHOW CALCULATION COMPONENTS**
-            - Include all columns used in calculations in the output.
-            - For example:
-            - If calculating a percentage, include the numerator, denominator, and the percentage itself.
-            - If calculating a variance, include the original values and the variance.
-            - This ensures users can see the full context of how the results were derived.
-
-            3.Special Table-Level Filtering Rules 
-            -When building SQL queries using this table's metadata, check if the special_table_level_instruction key is present. If it exists, follow the filtering rules defined in it. For example, if the instruction specifies that no filters should be applied to product_category when the user mentions 'Specialty', 'Home Delivery', and 'PBM' together—or 'PBM' alone—then ensure that no filters are added to product_category in those cases
-
-            4. **METRICS & AGGREGATIONS**
-            - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
-            - When the question specifies only a month, use the current year for calculations.
-
-            5. **ATTRIBUTE-ONLY QUERIES**
-            - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
-
-            6. **STRING FILTERING - CASE INSENSITIVE**
-            - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
-            - Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-            7. **TOP/BOTTOM QUERIES WITH TOTALS**
-            - When the user asks for "top 10" or "bottom 10", also include the overall total/count for context.
-            - Show both the individual top/bottom records AND the grand total across all records.
-            - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
-
-            8. **HEALTHCARE FINANCE BEST PRACTICES**
-            - Always include time dimensions (month, quarter, year) when relevant to the user's question.
-            - Use business-friendly dimensions (e.g., therapeutic class, service type, age group, state).
-
-            9. **DATABRICKS SQL COMPATIBILITY**
-            -Generate the SQL in single line and dont add '\n' for nrw line.
-            - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-            - Use date functions: date_trunc(), year(), month(), quarter()
-            - Use CASE WHEN for conditional logic
-            - Use CTEs (WITH clauses) for complex logic
-
-            10. **FORMATTING**
-            - Show whole numbers for metrics and round percentages to two decimal places.
-            - Use the ORDER BY clause only for date columns and use descending order.
-
-            ============================== 
-            RESPONSE FORMAT 
-            ==============================
-            The response MUST be valid JSON. Generate SQL as a single line without line breaks.o NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
-
-            If the question is clear and SQL can be generated:
-            {{
-            "sql_query": "WITH cte AS (SELECT col FROM table) SELECT * FROM cte"
-            }}
-
-            CRITICAL: Write the entire SQL query on one line, using spaces instead of \n characters. This prevents JSON parsing errors while allowing complex queries.
-
-
-            """
-        
-        for attempt in range(self.max_retries):
-            try:
-                llm_response = self.db_client.call_claude_api_endpoint([
-                    {"role": "user", "content": sql_prompt}
-                ])
-                print('sql gen', llm_response)
-                
-                # Parse JSON response
-                response_json = json.loads(llm_response.strip())
-                sql_query = response_json.get('sql_query', '').strip()
-                sql_query = sql_query.replace('`', '')  # Remove backtick characters
-                
-                if not sql_query:
-                    raise ValueError("Empty SQL query in JSON response")
-                
-                return {
-                    'success': True,
-                    'sql_query': sql_query
-                }
-            
-            except Exception as e:
-                print(f"❌ SQL generation attempt {attempt + 1} failed: {str(e)}")
-                
-                if attempt < self.max_retries - 1:
-                    print(f"🔄 Retrying SQL generation... (Attempt {attempt + 1}/{self.max_retries})")
-                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
-        
-        return {
-            'success': False,
-            'error': f"SQL generation failed after {self.max_retries} attempts due to Model errors"
-        }
+           # Parse JSON response
+           response_json = json.loads(llm_response.strip())
+           sql_query = response_json.get('sql_query', '').strip()
+           
+           # GUARDRAILS: Remove any newlines and normalize whitespace
+           sql_query = ' '.join(sql_query.split())  # This removes all \n, \t, extra spaces
+           sql_query = sql_query.replace('`', '')  # Remove backtick characters
+           
+           if not sql_query:
+               raise ValueError("Empty SQL query in JSON response")
+           
+           return {
+               'success': True,
+               'sql_query': sql_query
+           }
+       
+       except Exception as e:
+           print(f"❌ SQL generation attempt {attempt + 1} failed: {str(e)}")
+           
+           if attempt < self.max_retries - 1:
+               print(f"🔄 Retrying SQL generation... (Attempt {attempt + 1}/{self.max_retries})")
+               time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+   
+   return {
+       'success': False,
+       'error': f"SQL generation failed after {self.max_retries} attempts due to Model errors"
+   }

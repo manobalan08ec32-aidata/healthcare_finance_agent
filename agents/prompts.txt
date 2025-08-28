@@ -1,125 +1,39 @@
-==============================
-CRITICAL RULES - FOLLOW EXACTLY
-==============================
+ domain_parse_prompt = f"""
+        Parse a user's domain selection response and provide intelligent feedback for invalid responses.
 
-1. SIMPLE BREAKDOWN ONLY
-- Generate only "What is [METRIC] by [ATTRIBUTE]" style questions
-- NO analysis, NO drivers, NO trends, NO explanations
-- NO "key drivers", "understand", "analyze", "compare", "trend" language
-- Only direct data breakdowns that can be answered with simple SQL
+        User Response: "{domain_response}"
 
-2. USE EXACT VALUES FROM NARRATIVE
-- Extract specific entities mentioned in narrative (drug names, states, categories, etc.)
-- Use these EXACT values in follow-up questions
-- Do NOT invent or assume values not in the narrative
-- If narrative says "PBM" → use "PBM" in follow-ups
-- If narrative says "California" → use "California" in follow-ups
+        Available Categories:
+        - Home Delivery (HDP)
+        - Specialty (SP)
+        - PBM
 
-3. INTELLIGENT ATTRIBUTE SELECTION
-- Only use attributes that exist in the provided metadata
-- Select attributes most relevant to user's current analysis focus
-- Convert technical column names to business-friendly terms:
-  * therapy_class_name → "therapeutic class"
-  * state_cd → "state" 
-  * line_of_business → "line of business"
-  * brand_vs_generic_ind → "brand vs generic"
-  * product_category → "product category"
-  * drug_name → "drug name"
-  * pharmacy_type → "pharmacy type"
-  * member_age_group → "age group"
+        PARSING RULES:
+        1. Valid Selections:
+        - Numbers: "1"→Home Delivery, "2"→Specialty, "3"→PBM, "4"→All
+        - Names: "Home Delivery", "Specialty", "PBM", "ALL"
+        - Combinations: "1 and 2", "Specialty and PBM"
 
-Attribute Priority Based on User Focus:
-- If analyzing **costs/revenue**: state, therapeutic class, line of business, brand vs generic
-- If analyzing **specific drugs/therapy**: state, line of business, brand vs generic, pharmacy type  
-- If analyzing **product categories**: therapeutic class, state, line of business, drug name
-- If analyzing **geographic patterns**: therapeutic class, line of business, product category
-- If analyzing **member patterns**: age group, state, therapeutic class
+        2. Invalid Response Types:
+        - "confused": "I don't know", "maybe", "not sure", unclear responses
+        - "new_question": User asks new question instead of selecting
+        - "invalid_input": Gibberish, unrelated text
+        - "empty": Empty or very short responses
 
-4. MAINTAIN CURRENT CONTEXT
-- Keep same time period as current analysis
-- Keep same filters/domain as current analysis
-- Only change the grouping attribute for breakdown
+        3. Smart Response Generation:
+        Generate helpful, context-aware follow-up messages for invalid responses.
 
-5. AVOID REPETITION
-- Do not repeat previous follow-up questions
-- Make each question distinct from others
+        EXAMPLES:
+        - "1" → valid=true, domains=["Home Delivery"]
+        - "PBM" → valid=true, domains=["PBM"]
+        - "I don't know" → valid=false, error_type="confused"
+        - "What is revenue?" → valid=false, error_type="new_question"
 
-==============================
-QUESTION STRUCTURE (MANDATORY)
-==============================
-
-Template: "What is the [METRIC] by [ATTRIBUTE] for [CONTEXT]?"
-
-Examples:
-✅ GOOD: "What is the PBM revenue by state for June 2025?"
-✅ GOOD: "What is the Specialty costs by therapeutic class for Q2 2025?"
-✅ GOOD: "What is the script count by line of business for May 2025?"
-
-❌ BAD: "What are the key drivers behind PBM revenue growth?"
-❌ BAD: "Analyze the monthly revenue trend for PBM"
-❌ BAD: "Why did External line of business decline?"
-❌ BAD: "Compare PBM vs Specialty performance"
-
-==============================
-INTELLIGENT CONTEXT ALIGNMENT
-==============================
-
-Step 1: Analyze Current User Focus
-- What metric is the user most interested in? (revenue, costs, claims, script count, etc.)
-- What domain/category are they exploring? (PBM, Specialty, Home Delivery, etc.)
-- What time period are they analyzing? (June 2025, Q2 2025, etc.)
-- What filters/context are currently applied?
-
-Step 2: Smart Attribute Selection Based on Context
-**IF user is focused on:**
-- **Financial metrics** (revenue, costs) → prioritize: state, therapeutic class, line of business, brand vs generic
-- **Specialty products** → prioritize: therapeutic class, drug name, state, line of business  
-- **PBM category** → prioritize: line of business, state, therapeutic class, brand vs generic
-- **Geographic analysis** → prioritize: therapeutic class, line of business, product category
-- **Drug-specific analysis** → prioritize: state, line of business, brand vs generic, therapeutic class
-
-Step 3: Maintain User's Analytical Journey
-- Keep the SAME metric user is exploring (don't switch from revenue to claims)
-- Keep the SAME filters/domain context (if they're looking at PBM, stay with PBM)
-- Keep the SAME time period (if they're analyzing June 2025, stay with June 2025)
-- Only change the grouping attribute for different breakdowns
-
-Step 4: Generate Contextually Relevant Questions
-- Use the user's current metric + smart attribute selection + current context
-- Ensure each question provides meaningful business insight for their current focus
-- Make sure attributes are available in metadata and not null-heavy
-
-==============================
-CONTEXT ALIGNMENT EXAMPLES
-==============================
-
-**Example 1 - User exploring PBM revenue:**
-Current Question: "What is total PBM revenue for June 2025?"
-Smart Follow-ups:
-✅ "What is the PBM revenue by state for June 2025?"
-✅ "What is the PBM revenue by line of business for June 2025?"
-✅ "What is the PBM revenue by therapeutic class for June 2025?"
-
-**Example 2 - User exploring Specialty costs by state:**
-Current Question: "What are Specialty costs by state for Q2 2025?"  
-Smart Follow-ups:
-✅ "What are the Specialty costs by therapeutic class for Q2 2025?"
-✅ "What are the Specialty costs by brand vs generic for Q2 2025?"
-✅ "What are the California Specialty costs by therapeutic class for Q2 2025?" (drill into top state)
-
-**Example 3 - User exploring diabetes drugs:**
-Current Question: "What is diabetes script count for 2025?"
-Smart Follow-ups:
-✅ "What is the diabetes script count by state for 2025?"
-✅ "What is the diabetes script count by brand vs generic for 2025?"
-✅ "What is the diabetes script count by line of business for 2025?"
-
-==============================
-RESPONSE FORMAT
-==============================
-
-The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting.
-
-{
-"followup_questions": ["What is the [metric] by [attribute] for [context]?", "What is the [metric] by [attribute] for [context]?", "What is the [metric] by [attribute] for [context]?"]
-}
+        RESPONSE FORMAT:
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+        {{
+            "valid_domain_selection": true/false,
+            "selected_domains": ["list"] or [],
+            "error_type": "confused|new_question|invalid_input|empty" or null,
+            "smart_followup_message": "helpful message for invalid responses" or null
+        }}

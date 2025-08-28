@@ -1,116 +1,115 @@
-def call_claude_api_endpoint(self, user_message: str, max_tokens: int = 1000, system_prompt: str = "you are an AI assistant") -> str:
-        """
-        Call UHG Claude API endpoint using HCP credentials and return the response text.
-        """
-        BASE_URL = self.CLAUDE_API_URL
-        PROJECT_ID = self.CLAUDE_PROJECT_ID
-        MODEL_ID = self.CLAUDE_MODEL_ID
+def _generate_sql(self, context: Dict) -> Dict[str, Any]:
+        """Generate high-quality Databricks SQL with retry logic"""
 
-        CONFIG = {
-            "HCP_CLIENT_ID": self.CLAUDE_CLIENT_ID,
-            "HCP_CLIENT_SECRET": self.CLAUDE_CLIENT_SECRET,
-            "HCP_AUTH": self.CLAUDE_AUTH_URL,
-            "HCP_SCOPE": self.CLAUDE_SCOPE,
-            "HCP_GRANT_TYPE": self.CLAUDE_GRANT_TYPE
-        }
+        current_question = context.get('current_question', '')
+        recent_history = context.get('recent_history', [])
+        dataset_metadata = context.get('dataset_metadata', '')
 
-        def fetch_hcp_token(config):
-            data = {
-                "grant_type": config["HCP_GRANT_TYPE"],
-                "client_id": config["HCP_CLIENT_ID"],
-                "client_secret": config["HCP_CLIENT_SECRET"],
-                "scope": config["HCP_SCOPE"],
-            }
-            resp = requests.post(config["HCP_AUTH"], data=data)
-            resp.raise_for_status()
-            return resp.json()["access_token"]
+        sql_prompt = f"""
+            You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a **high-quality Databricks SQL query** based on the user's question.
 
-        try:
-            # Step 1: Get token
-            token = fetch_hcp_token(CONFIG)
+            CURRENT QUESTION: {current_question}
+            RECENT HISTORY: {recent_history}
+            AVAILABLE METADATA: {dataset_metadata}
 
-            # Step 2: Prepare headers and payload
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-                "projectId": PROJECT_ID,
-                "guardrail": "high_strength"
-            }
-            payload = {
-                "system": [{"text": system_prompt}],
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [{"text": user_message}]
-                    }
-                ],
-                "inferenceConfig": {
-                    "maxTokens": max_tokens
+            You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a high-quality Databricks SQL query based on the user's question.
+
+            CURRENT QUESTION: {current_question}
+            RECENT HISTORY: {recent_history}
+            AVAILABLE METADATA: {dataset_metadata}
+
+            ==============================
+            CRITICAL SQL GENERATION RULES
+            ==============================
+
+            1. **MEANINGFUL COLUMN NAMES**
+           
+            - Generate a month-over-month comparison that clearly displays month names side by side in the output
+
+            2. **SHOW CALCULATION COMPONENTS**
+            - Include all columns used in calculations in the output.
+            - For example:
+            - If calculating a percentage, include the numerator, denominator, and the percentage itself.
+            - If calculating a variance, include the original values and the variance.
+            - This ensures users can see the full context of how the results were derived.
+
+            3.Special Table-Level Filtering Rules 
+            -When building SQL queries using this table's metadata, check if the special_table_level_instruction key is present. If it exists, follow the filtering rules defined in it. For example, if the instruction specifies that no filters should be applied to product_category when the user mentions 'Specialty', 'Home Delivery', and 'PBM' together—or 'PBM' alone—then ensure that no filters are added to product_category in those cases
+
+            4. **METRICS & AGGREGATIONS**
+            - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
+            - When the question specifies only a month, use the current year for calculations.
+
+            5. **ATTRIBUTE-ONLY QUERIES**
+            - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
+
+            6. **STRING FILTERING - CASE INSENSITIVE**
+            - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
+            - Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+            7. **TOP/BOTTOM QUERIES WITH TOTALS**
+            - When the user asks for "top 10" or "bottom 10", also include the overall total/count for context.
+            - Show both the individual top/bottom records AND the grand total across all records.
+            - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
+
+            8. **HEALTHCARE FINANCE BEST PRACTICES**
+            - Always include time dimensions (month, quarter, year) when relevant to the user's question.
+            - Use business-friendly dimensions (e.g., therapeutic class, service type, age group, state).
+
+            9. **DATABRICKS SQL COMPATIBILITY**
+            -Generate the SQL in single line and dont add '\n' for nrw line.
+            - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+            - Use date functions: date_trunc(), year(), month(), quarter()
+            - Use CASE WHEN for conditional logic
+            - Use CTEs (WITH clauses) for complex logic
+
+            10. **FORMATTING**
+            - Show whole numbers for metrics and round percentages to two decimal places.
+            - Use the ORDER BY clause only for date columns and use descending order.
+
+            ============================== 
+            RESPONSE FORMAT 
+            ==============================
+            The response MUST be valid JSON. Generate SQL as a single line without line breaks.o NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
+
+            If the question is clear and SQL can be generated:
+            {{
+            "sql_query": "WITH cte AS (SELECT col FROM table) SELECT * FROM cte"
+            }}
+
+            CRITICAL: Write the entire SQL query on one line, using spaces instead of \n characters. This prevents JSON parsing errors while allowing complex queries.
+
+
+            """
+        
+        for attempt in range(self.max_retries):
+            try:
+                llm_response = self.db_client.call_claude_api_endpoint([
+                    {"role": "user", "content": sql_prompt}
+                ])
+                print('sql gen', llm_response)
+                
+                # Parse JSON response
+                response_json = json.loads(llm_response.strip())
+                sql_query = response_json.get('sql_query', '').strip()
+                sql_query = sql_query.replace('`', '')  # Remove backtick characters
+                
+                if not sql_query:
+                    raise ValueError("Empty SQL query in JSON response")
+                
+                return {
+                    'success': True,
+                    'sql_query': sql_query
                 }
-            }
-            url = f"{BASE_URL}/model/{MODEL_ID}/converse"
-            response = requests.post(url, headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-            result = response.json()
-            # Correct extraction for UHG Claude API:
-            return result["output"]["message"]["content"][0]["text"]
-        except Exception as e:
-            raise Exception(f"Claude API endpoint call failed: {str(e)}")
-
-❌ All unified analysis retries failed: Claude API endpoint call failed: 400 Client Error: Bad Request for url: https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0/model/us.anthropic.claude-sonnet-4-20250514-v1:0/converse
-
-import requests
-
-BASE_URL = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
-PROJECT_ID = "****************"
-MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"  # Use the deployment name with underscore
-
-CONFIG = {
-    "HCP_CLIENT_ID": "*****************",
-    "HCP_CLIENT_SECRET": "********************",
-    "HCP_AUTH": "https://api.uhg.com/oauth2/token",
-    "HCP_SCOPE": "https://api.uhg.com/.default",
-    "HCP_GRANT_TYPE": "client_credentials"
-}
-
-def fetch_hcp_token(config):
-    data = {
-        "grant_type": config["HCP_GRANT_TYPE"],
-        "client_id": config["HCP_CLIENT_ID"],
-        "client_secret": config["HCP_CLIENT_SECRET"],
-        "scope": config["HCP_SCOPE"],
-    }
-    resp = requests.post(config["HCP_AUTH"], data=data)
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-def converse_call(token, user_message):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-        "projectId": PROJECT_ID,
-        "guardrail": "high_strength"
-    }
-    payload = {
-        "system": [{"text": "you are an AI assistant"}],
-        "messages": [
-            {
-                "role": "user",
-                "content": [{"text": user_message}]
-            }
-        ],
-        "inferenceConfig": {
-            "maxTokens": 50
+            
+            except Exception as e:
+                print(f"❌ SQL generation attempt {attempt + 1} failed: {str(e)}")
+                
+                if attempt < self.max_retries - 1:
+                    print(f"🔄 Retrying SQL generation... (Attempt {attempt + 1}/{self.max_retries})")
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+        
+        return {
+            'success': False,
+            'error': f"SQL generation failed after {self.max_retries} attempts due to Model errors"
         }
-    }
-    url = f"{BASE_URL}/model/{MODEL_ID}/converse"
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    print("Status code:", response.status_code)
-    try:
-        print(response.json())
-    except Exception:
-        print(response.text)
-
-if __name__ == "__main__":
-    token = fetch_hcp_token(CONFIG)
-    converse_call(token, "reply only hi")

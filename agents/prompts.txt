@@ -1,37 +1,59 @@
-sql assessment Looking at the user's question for rate volume variance by LOB from May 2025 to June 2025 for PBM product category, I need to assess clarity across all areas:
 
-**TASK 1: COMPREHENSIVE ASSESSMENT**
 
-A. **TIME PERIOD CLARITY**: ✓ Clear - May 2025 to June 2025 is specific
-B. **METRIC DEFINITIONS**: ❌ Unclear - "rate volume variance" is not defined. This could mean:
-   - Volume variance (change in script counts)
-   - Rate variance (change in revenue per script)
-   - Combined rate-volume variance analysis
-   - Variance decomposition showing rate vs volume effects
-C. **BUSINESS CONTEXT**: ✓ Clear - By LOB (line of business), for PBM product category
-D. **FORMULA & CALCULATION REQUIREMENTS**: ❌ Unclear - Without knowing the specific variance formula needed, I cannot determine the calculation method
-E. **METADATA MAPPING**: ✓ Clear - Can map LOB to line_of_business column, PBM to product_category
+sql_followup_question I need clarification to generate accurate SQL:
 
-**DECISION**: REQUEST FOLLOW-UP due to significant ambiguity in metric definitions and calculation requirements.
+- **Rate Volume Variance Formula**: What specific calculation do you need for "rate volume variance"? Available metrics are revenue_amt, expense_amt, unadjusted_script_count, revenue_per_script - should I calculate something like (June_revenue_per_script - May_revenue_per_script) × June_volume?
+- **Rate Definition**: There's no "rate" column in the data - should I use revenue_per_script, expense per script, or another metric as the rate component?
 
-<followup>
-To generate the most accurate SQL query for your rate volume variance analysis, I need clarification on a few points:
+==============================
+            OUTPUT FORMATS
+            ==============================
 
-1. **Variance Definition**: When you mention "rate volume variance," please specify:
-   - Are you looking for volume variance only (change in script counts between May and June)?
-   - Are you looking for rate variance only (change in revenue per script between May and June)?
-   - Do you need a combined rate-volume variance analysis showing both effects?
-   - Should this follow a specific variance decomposition formula?
+            If TASK 1 says PROCEED → Execute TASK 2:
+            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+            return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+            
+            <sql>
+            [Your complete SQL query here]
+            </sql>
 
-2. **Calculation Method**: For the variance calculation:
-   - Should this be percentage change or absolute change between the two months?
-   - What baseline should be used (May as baseline, or average of both months)?
-   - Do you need favorable/unfavorable variance indicators?
+            If TASK 1 says REQUEST FOLLOW-UP, return ONLY the followup wrapped in XML tags. No other text, explanations, or formatting
+            ==============================
+            DETERMINISTIC FOLLOW-UP RULES
+            ==============================
 
-3. **Metrics to Include**: Which specific metrics should be included:
-   - Script counts (unadjusted_script_count)?
-   - Revenue amounts and revenue per script?
-   - Both volume and rate components separately?
+            STEP 1: Identify specific missing information:
+            - Missing formula → State what's missing, suggest available alternatives
+            - Ambiguous column mapping → Identify conflicting columns, ask which one
+            - Unclear business term → Ask for specific definition
 
-Once you provide these details, I'll generate the precise SQL query for your PBM rate volume variance analysis by line of business.
-</followup>
+            STEP 2: Generate 1-2 bullet point questions maximum
+
+            FOR ANY FOLLOW-UP SITUATION:
+            <followup>
+            I need clarification to generate accurate SQL:
+
+            - **[Specific issue identified]**: [Direct question in one sentence]
+            - **[Second issue if needed]**: [Second direct question in one sentence]
+
+            Please clarify these points.
+            </followup>
+
+            QUESTION TEMPLATES:
+
+            FOR MISSING FORMULA:
+            "I don't have a formula for '[user's term]'. Available metrics are [list]. Should I use [suggested calculation]?"
+
+            FOR AMBIGUOUS MAPPING:
+            "Found '[term]' in both [column1] and [column2]. Which column should I use?"
+
+            FOR UNCLEAR DEFINITION:
+            "What specific calculation do you need for '[user's exact term]'?"
+
+            <followup>
+
+            CONSTRAINTS:
+            - Maximum 2 bullet points
+            - Each bullet = one sentence question
+            - State the specific problem, don't explain why it's a problem
+            - Suggest solutions when possible

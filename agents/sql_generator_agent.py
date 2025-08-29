@@ -23,6 +23,14 @@ class SQLGeneratorAgent:
 
             # 2. Generate initial SQL
             sql_result = self._generate_sql(context)
+            
+            if 'metadata_missing_info' in sql_result:
+                return {
+                    'success': False,
+                    'metadata_missing_info': sql_result.get('metadata_missing_info'),
+                    'available_alternatives': sql_result.get('available_alternatives'),
+                    'suggestion': sql_result.get('suggestion')
+                }
             if not sql_result['success']:
                 return {
                     'success': False,
@@ -99,78 +107,130 @@ class SQLGeneratorAgent:
             RECENT HISTORY: {recent_history}
             AVAILABLE METADATA: {dataset_metadata}
 
+            You are a highly skilled Healthcare Finance SQL analyst. Your task is to generate a high-quality Databricks SQL query based on the user's question.
+
+            CURRENT QUESTION: {current_question}
+            RECENT HISTORY: {recent_history}
+            AVAILABLE METADATA: {dataset_metadata}
+
             ==============================
             CRITICAL SQL GENERATION RULES
             ==============================
 
-            1. **METRICS & AGGREGATIONS**
-            - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
-            - When the questions has only month then use current year for calculation.
-            
-            2. **SPECIAL INSTRUCTION**
-            - When the user question involves comparing actuals vs forecast vs budget, or asks for actuals overall, and includes product categories such as Specialty, Home Delivery, and PBM (or mentions PBM alone), you must NOT apply GROUP BY on product_category.
-            - You must also NOT apply any filtering on product_category in the WHERE clause in these cases.
-            - Instead, return an overall summary view without restricting or segmenting by product_category.
+            PRIORITY DIRECTIVE: ALWAYS attempt to generate SQL using available metadata. Only return error if absolutely impossible.
 
-            3. **ATTRIBUTE-ONLY QUERIES**
+            1. MEANINGFUL COLUMN NAMES
+            - Use user-friendly, business-relevant column names that align with the user's question.
+            - Generate a month-over-month comparison that clearly displays month names side by side in the output
+
+            2. COMPLETE TRANSPARENCY - SHOW ALL COMPONENTS
+            - MANDATORY: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in the SELECT output
+            - If calculating a percentage, include the numerator, denominator, AND the percentage itself
+            - If calculating a variance, include the original values AND the variance
+            - If filtering by product_category, include product_category in SELECT
+            - If grouping by therapeutic_class, include therapeutic_class in SELECT
+            - This ensures users can see the full context and verify how results were derived
+
+            Example:
+            -- User asks: "Cost per member for Specialty products by state"
+            SELECT 
+                product_category,           -- Filter component (used in WHERE)
+                state_name,                -- Grouping component (used in GROUP BY)  
+                total_cost,                -- Numerator component
+                member_count,              -- Denominator component
+                total_cost / member_count AS cost_per_member  -- Final calculation
+            FROM table 
+            WHERE UPPER(product_category) = UPPER('Specialty')
+            GROUP BY product_category, state_name
+
+            3. SPECIAL TABLE-LEVEL FILTERING RULES
+            - When building SQL queries using this table's metadata, check if the special_table_level_instruction key is present. If it exists, follow the filtering rules defined in it. For example, if the instruction specifies that no filters should be applied to product_category when the user mentions 'Specialty', 'Home Delivery', and 'PBM' together—or 'PBM' alone—then ensure that no filters are added to product_category in those cases
+
+            4. METRICS & AGGREGATIONS
+            - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
+            - When the question specifies only a month, use the current year (2025) for calculations.
+
+            5. ATTRIBUTE-ONLY QUERIES
             - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
 
-            4. **STRING FILTERING - CASE INSENSITIVE**
+            6. STRING FILTERING - CASE INSENSITIVE
             - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
             - Example: WHERE UPPER(product_category) = UPPER('Specialty')
 
-            5. **TOP/BOTTOM QUERIES WITH TOTALS**
-            - When user asks for "top 10" or "bottom 10", also include the overall total/count for context.
+            7. TOP/BOTTOM QUERIES WITH TOTALS
+            - When the user asks for "top 10", "bottom 10", "highest", "lowest", also include the overall total/count for context.
             - Show both the individual top/bottom records AND the grand total across all records.
+            - Include ranking position information
             - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
 
-            6. **HEALTHCARE FINANCE BEST PRACTICES**
-            - Always include time dimensions (month, quarter, year) when relevant with user question.
-            - Use business-friendly dimensions (e.g., therapeutic class, service type, age group, state).
+            8. HEALTHCARE FINANCE BEST PRACTICES
+            - Always include time dimensions (month, quarter, year) when relevant to the user's question.
+            - Use business-friendly dimensions (e.g., therapeutic_class, service_type, age_group, state).
 
-            7. **SHOW CALCULATION COMPONENTS**
-            - Include underlying metrics/attributes used in calculations as separate columns.
-            - Show filter/group attribute values in results (e.g., if filtering by 'Specialty', include product_category column).
-            - For variance: show [Value1], [Value2], [Variance]. For percentages: show [Numerator], [Denominator], [Percentage].
-
-            8. **DATABRICKS SQL COMPATIBILITY**
+            9. DATABRICKS SQL COMPATIBILITY
             - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
             - Use date functions: date_trunc(), year(), month(), quarter()
             - Use CASE WHEN for conditional logic
             - Use CTEs (WITH clauses) for complex logic
 
-            9. **FORMATTING**
-            - Show whole number for metrics and round it to two decimal for percentages
-            - Use order by clause only for date columns and use desc order
+            10. FORMATTING
+            - Show whole numbers for metrics and round percentages to two decimal places.
+            - Use the ORDER BY clause only for date columns and use descending order.
 
-            RESPONSE FORMAT:
-            The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+            ==============================
+            ERROR PREVENTION CHECKLIST
+            ==============================
 
-            If the question is clear and SQL can be generated:
-            {{
-            "sql_query": "your generated SQL query here"
-            }}
+            Before returning "cannot generate":
+            - Check for similar/partial column name matches in metadata
+            - Attempt reasonable assumptions about column mappings
+            - Consider if query can be simplified to work with available data
+            - Verify that NO combination of available columns can answer the question
+
+            Before finalizing SQL:
+            - All WHERE clause columns appear in SELECT
+            - All GROUP BY columns appear in SELECT  
+            - All calculation components (numerator/denominator) are in SELECT
+            - Column names exist in provided metadata
+            - Special table instructions are followed
+            - User can verify every result from the output
+
+            ============================== 
+            RESPONSE FORMAT 
+            ==============================
+            Return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting.
+
+            <sql>
+            WITH cte AS (SELECT col FROM table) SELECT * FROM cte
+            </sql>
+
+            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the <sql> tags. This makes the SQL readable and maintainable.
             """
         
         for attempt in range(self.max_retries):
             try:
-                llm_response = self.db_client.call_uhg_openai_api([
+                llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": sql_prompt}
                 ])
                 print('sql gen', llm_response)
                 
-                # Parse JSON response
-                response_json = json.loads(llm_response.strip())
-                sql_query = response_json.get('sql_query', '').strip()
-                sql_query = sql_query.replace('`', '')  # Remove backtick characters
-                
-                if not sql_query:
-                    raise ValueError("Empty SQL query in JSON response")
-                
-                return {
-                    'success': True,
-                    'sql_query': sql_query
-                }
+                # Extract SQL from XML tags
+                import re
+                match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+                if match:
+                    sql_query = match.group(1).strip()
+                    # Keep original formatting - just remove backticks
+                    sql_query = sql_query.replace('`', '')  # Remove backticks
+                    
+                    if not sql_query:
+                        raise ValueError("Empty SQL query in XML response")
+                    
+                    return {
+                        'success': True,
+                        'sql_query': sql_query
+                    }
+                else:
+                    raise ValueError("No SQL found in XML tags")
             
             except Exception as e:
                 print(f"❌ SQL generation attempt {attempt + 1} failed: {str(e)}")
@@ -181,8 +241,9 @@ class SQLGeneratorAgent:
         
         return {
             'success': False,
-            'error': f"SQL generation failed after {self.max_retries} attempts"
+            'error': f"SQL generation failed after {self.max_retries} attempts due to Model errors"
         }
+    
     
     def _execute_sql_with_retry(self, initial_sql: str, context: Dict, max_retries: int = 3) -> Dict:
         """Execute SQL with intelligent retry logic and async handling"""
@@ -389,7 +450,7 @@ class SQLGeneratorAgent:
     
     def _fix_sql_with_llm(self, failed_sql: str, error_msg: str, errors_history: List[str], context: Dict) -> Dict[str, Any]:
         """Use LLM to fix SQL based on error with enhanced prompting and retry logic"""
-    
+
         history_text = "\n".join(errors_history) if errors_history else "No previous errors"
         current_question = context.get('current_question', '')
         dataset_metadata = context.get('dataset_metadata', '')
@@ -424,43 +485,49 @@ class SQLGeneratorAgent:
             ==============================
             RESPONSE FORMAT
             ==============================
-            The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+            Return ONLY the fixed SQL query wrapped in XML tags. No other text, explanations, or formatting.
 
-            If the query is fixed: 
-            {{
-                "fixed_sql_query": "your corrected SQL query here"
-            }}
+            <sql>
+            SELECT ...your fixed SQL here...
+            </sql>
+
+            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the <sql> tags. This makes the SQL readable and maintainable.
             """
-        
+
         for attempt in range(self.max_retries):
             try:
-                llm_response = self.db_client.call_uhg_openai_api([
+                llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": fix_prompt}
                 ])
                 print('sql fix', llm_response)
-                
-                response_json = json.loads(llm_response.strip())
-                fixed_sql = response_json.get('fixed_sql_query', '').strip()
-                fixed_sql = fixed_sql.replace('`', '')
-                
-                if not fixed_sql:
-                    raise ValueError("Empty fixed SQL query in JSON response")
-                
-                return {
-                    'success': True,
-                    'fixed_sql': fixed_sql
-                }
+
+                # Extract SQL from XML tags
+                import re
+                match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+                if match:
+                    fixed_sql = match.group(1).strip()
+                    fixed_sql = fixed_sql.replace('`', '')  # Remove backticks
+
+                    if not fixed_sql:
+                        raise ValueError("Empty fixed SQL query in XML response")
+
+                    return {
+                        'success': True,
+                        'fixed_sql': fixed_sql
+                    }
+                else:
+                    raise ValueError("No SQL found in XML tags")
 
             except Exception as e:
                 print(f"❌ SQL fix attempt {attempt + 1} failed: {str(e)}")
-                
+
                 if attempt < self.max_retries - 1:
                     print(f"🔄 Retrying SQL fix... (Attempt {attempt + 1}/{self.max_retries})")
                     time.sleep(2 ** attempt)
-        
+
         return {
             'success': False,
-            'error': f"SQL fix failed after {self.max_retries} attempts"
+            'error': f"SQL fix failed after {self.max_retries} attempts due to Model errors"
         }
     
     def _synthesize_results(self, sql_data: List[Dict], question: str, sql_query: str) -> Dict[str, Any]:
@@ -509,39 +576,57 @@ class SQLGeneratorAgent:
         - Contains date/time data: {has_date_columns}
         - Contains numeric data: {has_numeric_columns}
 
-        SAMPLE DATA (first 5 rows):
-        {json.dumps(sql_data[:5], indent=2, default=str)}
+        Query Output:
+        {json.dumps(sql_data, indent=2, default=str)}
 
         CRITICAL INSTRUCTIONS:
 
-        1. **DATA SUFFICIENCY CHECK**:
+        **DATA SUFFICIENCY CHECK**:
         - If there is only 1 record OR insufficient data for meaningful analysis, respond: "Not enough data to create comprehensive narrative analysis."
         - Only proceed with full narrative if there are multiple records with meaningful patterns to analyze
 
-        2. **NARRATIVE CONTENT** (only if sufficient data exists):
-        - **DIRECTLY ANSWER** the user's question with specific numbers
-        - **IDENTIFY TRENDS** across time periods (if date columns exist)
-        - **HIGHLIGHT ANOMALIES** or outliers in the data
-        - **SHOW VARIANCES** between different categories/groups
-
-        3. **STRICT PROHIBITIONS**:
-        - NO recommendations or suggestions
-        - NO "should do" or "consider" statements
-        - NO future predictions or advice
-        - ONLY factual observations from the data
-
-        4. **FORMAT REQUIREMENTS**:
-        - Keep response concise (3-4 sentences max)
-        - Include specific numbers in billion or Million and percentages
-        - Focus on what the data shows, not what to do about it
-        - Use professional healthcare finance terminology
+        ========================
+        GOAL & AUDIENCE
+        ========================
+        Goal: Turn SQL result tables into crisp, bullet-only insights for finance leaders.
+        Audience: FP&A and operations leaders; expect variance, drivers/suppressors, concentration, and trend callouts.
         
-        5. **USE EXACT DATA VALUES**:
+        ========================
+        CORE COMPUTATIONS (done silently, not shown in output)
+        ========================
+        - Totals & change: per period_key compute delta, pct_change (baseline=0 or missing → pct=null).
+        - Concentration: latest period top-N share; items to ~80% (Pareto).
+        - Drivers/Suppressors: rank by absolute delta (prefer attribution; else infer from top/bottom changes).
+        - Trend shape: compare last 2–3 periods’ growth rates; detect accelerations, slowdowns, reversals.
+        - Scope clarity: always state subset context (e.g., “within Client X”).
+        
+        ========================
+        NARRATIVE RULES
+        ========================
+
+        - Bullet points only inside "insight_text".
+        - No recommendations or actions—insights only.
+        - Use absolute dates from data; avoid “this month”.
+        - Auto-scale numbers:
+        - ≥1B → currency x.xB
+        - ≥1M → currency x.xM
+        - ≥1K → currency x.xK
+        - else → raw with thousands separators
+        - Percentages: 1 decimal place.
+        - Keep unit consistent in a section.
+        - Each bullet ≤ 22 words; lead with result, then cause.
         - Use ONLY the exact names, values, and terms that appear in the SQL results
         - Do NOT invent, rename, or modify any names from the data
         - Do NOT create generic categories or simplified labels
         - Keep all therapeutic classes, product categories, and other names exactly as they appear in the results
-        - When referencing calculations or trends, use the precise column names and values from the query output
+        
+        ========================
+        OUTPUT SECTIONS TO COVER IN BULLETS
+        ========================
+        1. Executive summary (1-2 bullets): direction, magnitude, key drivers/suppressors, scope.
+        2. Drivers (2-3 bullets): top contributors (↑) and suppressors (↓) with delta and share of total.
+        3. Trend insights (2–3 bullets): MoM/DoD/QoQ/YoY changes, accelerations/slowdowns, reversals.
+        
 
         RESPONSE FORMAT:
         The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
@@ -553,7 +638,7 @@ class SQLGeneratorAgent:
 
         for attempt in range(self.max_retries):
             try:
-                llm_response = self.db_client.call_uhg_openai_api([
+                llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": synthesis_prompt}
                 ])
                 print('sql narr', llm_response)
@@ -578,5 +663,5 @@ class SQLGeneratorAgent:
         
         return {
             'success': False,
-            'error': f"Narrative synthesis failed after {self.max_retries} attempts"
+            'error': f"Narrative synthesis failed after {self.max_retries} attempts due to Model errors"
         }

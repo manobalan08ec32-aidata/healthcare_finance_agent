@@ -28,28 +28,33 @@ CREATE TABLE unified_semantic_index (
 
 prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm claim-level transactions pharmacy pbm drug medication prescription 
 revenue expense WAC AWP script counts unadjusted adjusted 30-day 90-day revenue per script GDR generic dispense rate 
-client pharmacy drug therapy class brand generic utilization financial analysis 
-submit date claim status paid reversed line of business LOB carrier account group client id client name
-pharmacy name pharmacy npi drug name therapy class name GLP-1 receptor agonists SGLT-2 inhibitors oncology
-brand vs generic indicator gpi generic product identifier claim number claim sequence
-E&I FI E&I ASO C&S PDP MAPD E&I UMR External line_of_business_desc
-year month quarter daily submit_date temporal analysis YoY quarter-over-quarter
-pharmacy performance client utilization drug spend trending therapy class analysis
+claim number claim sequence claim status code paid reversed P X net activity
+client id client name carrier id account id group id client hierarchy employer insurance
+pharmacy name pharmacy npi provider dispensing national provider identifier
+drug name therapy class name GLP-1 receptor agonists SGLT-2 inhibitors oncology anti-obesity
+brand vs generic indicator brand generic gpi generic product identifier drug classification
+line of business LOB E&I FI E&I ASO C&S PDP MAPD E&I UMR External employer individual community state medicare prescription drug plan
+line of business description fully insured administrative services only united medical resources
+product category PBM home delivery HDP specialty SP
+submit date year month quarter daily temporal YoY quarter-over-quarter trending
+pharmacy performance client utilization drug spend therapy class analysis generic adoption
+carrier account group sub-client analysis insurance plan administration
 joins with actuals_vs_forecast_analysis year month quarter line_of_business product_category
-daily grain claim-level detail pharmacy network analysis client-level metrics
+claim-level detail daily grain individual transactions payment status utilization financial
 
-prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis ledger-level financials actuals forecast budget 
-revenue cogs sg&a ioi membership total prescriptions scripts adjusted unadjusted 30-day 90-day 
-ledger GAAP actuals 8+4 2+10 5+7 forecast cycles budget variance analysis
-metric_type revenues cogs post reclass sg&a post reclass ioi total membership amount_or_count
-line of business LOB C&S E&I M&R Medicare Retirement External Optum Rev Reclass
-product category home delivery HDP specialty SP PBM community pharmacies workers comp RVOH
-product_sub_category_lvl_1 product_sub_category_lvl_2 divvyDOSE retail optum store infusion
-transaction_date year month quarter temporal trending monthly quarterly yearly
-variance tracking performance monitoring financial planning actuals vs forecast vs budget
+rd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis ledger-level financials actuals forecast budget 
+ledger type GAAP actuals 8+4 forecast 2+10 forecast 5+7 forecast budget variance analysis forecast cycles
+metric type unadjusted scripts adjusted scripts 30 day scripts 90 day scripts revenues COGS post reclass SG&A post reclass IOI total membership
+amount or count values aggregation grouping metric type required
+line of business LOB C&S E&I M&R Medicare Retirement External Optum Rev Reclass community state employer individual
+product category PBM home delivery HDP specialty SP other products community pharmacies workers comp RVOH
+product sub category lvl 1 level one subcategory home delivery specialty core PBM other products community pharmacies RVOH hospice workers comp
+product sub category lvl 2 level two subcategory divvyDOSE retail other GPO optum store infusion unknown workers comp healthline healthgrades core HDP CP core mfr discount hospice RVOH corp core specialty prior auth distribution frontier pharmscript retail prevention CPS solutions nuvaila admin fees optum perks
+transaction date year month quarter temporal monthly quarterly yearly trending
+variance tracking performance monitoring financial planning actuals vs forecast vs budget comparison
+aggregated summary ledger rollups metric grouping LOB analysis product category mix
 joins with claim_transaction_for_pharmacy_pbm year month quarter line_of_business product_category
-aggregated summary level ledger financial rollups metric grouping
-
+monthly quarterly yearly grain aggregated metrics financial summaries
 
 {
   "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",

@@ -1,116 +1,18 @@
-You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
+table embeddings :
+1.Dataset prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis. Ledger-level financials for actuals, forecast, budget. Best for trend and mix across time, line_of_business, and product categories; not claim-level. Metrics: revenue, cogs, sg&a, ioi, membership, total_prescriptions, adjusted_scripts, 30_day_scripts, 90_day_scripts. Attributes: ledger, metric_type, line_of_business, product_category, product_sub_category_lvl_1, product_sub_category_lvl_2, transaction_date, year, month, quarter
 
-CURRENT QUESTION: {current_question}
-RECENT HISTORY: {recent_history}
-AVAILABLE METADATA: {dataset_metadata}
+2.Dataset prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm. Claim-level transactions with submit_date, claim identifiers and status, plus client/carrier/account/group, pharmacy, and drug attributes. Suitable for utilization and financial analyses including revenue/expense/WAC/AWP, revenue per script, and GDR. Metrics: revenue, expense, wac, awp, unadjusted_scripts, adjusted_scripts, 30_day_scripts, 90_day_scripts, revenue_per_script, gdr. Attributes: product_category, claim_nbr, claim_seq_nbr, claim_status_code, line_of_business, line_of_business_desc, carrier_id, account_id, group_id, client_id, client_name, pharmacy_name, pharmacy_npi_no, drug_name, therapy_class_name, brand_vs_generic_ind, gpi_no, ndc_code, DRUG_MANUFCTR_NM, state_code, client_type, submit_date, year, month, quarter,member date of birth and sex
 
-==============================
-TASK 1: COMPREHENSIVE ASSESSMENT
-==============================
 
-Analyze the user's question for the following clarity issues:
+but LLM sees the below :
+{"table_name":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","description":"This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.","useful_for":["monthly actuals analysis","actuals vs forecast vs budget comparison","line-of-business level tracking"],"not_useful_for":["rate_analysis","claim-level analysis","daily granularity","client-level insights"],"metrics":["revenue","expense","cogs","sg&a","ioi","membership","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","volume"],"attributes":{"ledger":"string","line_of_business":"string","transaction_date":"date","year":"integer","month":"integer","quarter":"integer","state_cd":"string"},"time_grains":["monthly","quarterly","yearly"]}
 
-A. TIME PERIOD CLARITY:
-- Is the time reference specific? ("Q3 2024" vs "last quarter")
-- If relative time mentioned, is baseline clear? ("compared to what?")
+{"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","description":"Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.","useful_for":["claim-level financial analysis","client-level analysis","drug and therapy class performance","manufacturer-level insights","revenue per script and GDR metrics","line-of-business tracking","daily and monthly trend analysis","rate analysis"],"not_useful_for":["budget-level summaries","forecast comparisons","aggregated financial reporting without claim-level detail"],"metrics":["revenue","expense","cogs","wac","awp","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","revenue_per_script","gdr","volume"],"attributes":{"claim_nbr":"string","submit_date":"date","client_id":"string","pharmacy_npi_no":"string","drug_name":"string","therapy_class_name":"string","drug_manufctr_nm":"string","line_of_business":"string","state_cd":"string","brand_vs_generic":"string","client_type":"string","gpi_no":"string","pharmacy_name":"string","pharmacy_type":"string","carrier_id":"string","member_date_of_birth":"date","member_sex":"string"},"time_grains":["daily","monthly","quarterly","yearly"]}
 
-B. METRIC DEFINITIONS:
-- Are business metrics clearly defined? ("cost" - total cost? per member cost? unit cost?)
-- Are calculation methods obvious? ("performance" - what specific measure?)
-- Are formulas needed that aren't standard? (custom ratios, complex calculations)
+after selection table metadata will be used :
+{"table_name":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","Table levl description":"Ledger-level financial dataset for actuals, forecast, budget analysis. Best for trend/mix across time, LOB level","columns":[{"column_name":"ledger","description":"Ledger type for the record. Values: 8+4 Forecast, 2+10 Forecast, 5+7 Forecast, GAAP called as Actuals, BUDGET. Used to distinguish actuals from forecast or budget data for variance analysis. If the user does not provide a forecast value, the system will default to the most current forecast cycle based on the latest closed month (e.g., 8+4 when eight months of actuals are available). Only one forecast type will be applied by default.","distinct_values":["8+4","2+10","5+7","GAAP","BUDGET"]},{"column_name":"metric_type","description":"Contains important metric types such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership. Even when product category is mentioned in the user question and they are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause. Note that Unadjusted Scripts should be used for calculation if the user simply asks for volume or total scripts","distinct_values":["Unadjusted Scripts","Adjusted Scripts","30 Day Scripts","90 Day Scripts","Revenues","COGS Post Reclass","SG&A Post Reclass","IOI","Total Membership"]},{"column_name":"line_of_business","description":"Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns.","distinct_values":["C&S","E&I","M&R","Rev Reclass","External","Optum"]},{"column_name":"product_category","description":"High-level category of products or services.Home Delivery called as HDP and Specialty called as SP","distinct_values":["PBM","Home Delivery","Other Products","Community Pharmacies","Workers Comp","Specialty","RVOH"]},{"column_name":"product_sub_category_lvl_1","description":"First-level subcategory under product_category.","distinct_values":["Home Delivery","Specialty","Core PBM","Other Products","Community Pharmacies","RVOH","Hospice","Workers Comp"]},{"column_name":"product_sub_category_lvl_2","description":"Second-level subcategory for more granularity.","distinct_values":["divvyDOSE","Retail Other","GPO","Optum Store","Infusion","Unknown","Workers Comp","Healthline/Healthgrades","Core HDP","CP Core","Mfr Discount","Hospice","RVOH Corp","Core Specialty","Prior Auth","Distribution","Frontier","PharmScript","Retail","Prevention","CPS Solutions","Nuvaila","Admin Fees","Optum Perks","Other Products"]},{"column_name":"transaction_date","description":"Exact transaction date (YYYY-MM-DD). Supports daily, monthly, quarterly, and annual trend analysis."},{"column_name":"year","description":"Four-digit year of the transaction."},{"column_name":"month","description":"Numeric month of the transaction (1-12)."},{"column_name":"quarter","description":"Quarter of the transaction (Q1-Q4)."},{"column_name":"amount_or_count","description":"Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results."}],"special_table_level_instruction":"If the user mentions Specialty, Home Delivery, and PBM together, do not apply any filters on product_category. If the user mentions PBM alone, also do not apply any filters on product_category while building SQL."}
 
-C. BUSINESS CONTEXT:
-- Are filtering criteria clear? ("top products" - by what measure?)
-- Are grouping dimensions obvious? ("by region" - state level? territory level?)
-- Are comparison baselines specified? ("variance" - vs what baseline?)
 
-D. FORMULA & CALCULATION REQUIREMENTS:
-- Does the question require custom formulas not in standard SQL functions?
-- Are there healthcare-specific calculations needed? (PMPM, utilization rates, etc.)
-- Do complex business rules need clarification? (exclusions, special logic)
+{"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","Table levl description":"Claim-level dataset with identifiers, submit dates, claim status, client/carrier/account/group, pharmacy, and drug attributes and variance analysis at drug, therapy class, manufacturer, and other attributes level. Supports utilization and financial analyses (revenue/expense/WAC/AWP), plus derived metrics like revenue per script and GDR.","columns":[{"column_name":"product_category","description":"Indicates the category of product or service for each claim. Distinct values: PBM, Home Delivery (HDP), and Specialty (SP)","distinct_values":["PBM","Home Delivery","Specialty"]},{"column_name":"claim_nbr","description":"Contains unique claim numbers used to identify individual claims in the dataset. Do not use for any calculation; use unadjusted script count for claim counts"},{"column_name":"claim_seq_nbr","description":"Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations or script counts."},{"column_name":"claim_status_code","description":"Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation.","distinct_values":["P","X"]},{"column_name":"line_of_business","description":"Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR and when the user asks plainly external then use this column for filtering and is distinct from client type .","distinct_values":["E&I FI","E&I ASO","C&S","PDP","MAPD","E&I UMR","External"]},{"column_name":"line_of_business_desc","description":"Contains detailed descriptive name of the line of business","distinct_values":["Employer & Individual - United Medical Resources","Medicare Advantage Prescription Drug","Prescription Drug Plan","Others","Community & State","Employer & Individual - Fully Insured","Employer & Individual - Administrative Services Only","External"]},{"column_name":"carrier_id","description":"Identifier of the insurance carrier administering the plan."},{"column_name":"account_id","description":"Client or employer account identifier under which the policy is issued."},{"column_name":"group_id","description":"Group/subgroup within the account; used for sub-client analysis."},{"column_name":"year","description":"Calendar year of claim submission; supports YoY comparisons."},{"column_name":"month","description":"Calendar month of submission; it has numerical value (1-12)."},{"column_name":"quarter","description":"Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4"},{"column_name":"submit_date","description":"Exact claim submission date. Use for daily trending and time-window filters."},{"column_name":"pharmacy_name","description":"Dispensing pharmacy/provider name; used for provider-level performance."},{"column_name":"pharmacy_npi_no","description":"National Provider Identifier (NPI) of the dispensing pharmacy/provider."},{"column_name":"unadjusted_script_count","description":"Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script."},{"column_name":"90_days_script_count","description":"Count of 90-day prescriptions; useful for mail-order and adherence analyses."},{"column_name":"30_days_script_count","description":"Count of 30-day prescriptions; complements 90-day for supply-mix insights."},{"column_name":"adjusted_script_count","description":"adjusted script count and should not be used for raw script count or revenue per script analysis."},{"column_name":"revenue_amt","description":"Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script."},{"column_name":"expense_amt","description":"Expense/cost of goods sold for the claim. Pairs with revenue_amt for margin views."},{"column_name":"wac_amount","description":"Wholesale Acquisition Cost reference for the dispensed drug; used in pricing/cost analytics."},{"column_name":"awp_cost_amount","description":"Average Wholesale Price reference for the dispensed drug; used in pricing/cost analytics."},{"column_name":"client_id","description":"This contain unique client id."},{"column_name":"client_name","description":"This contains client description. Return alongside client_id for user-facing reports."},{"column_name":"drug_name","description":"Name of the dispensed drug; use for molecule-level trends and financials."},{"column_name":"therapy_class_name","description":"Therapeutic class of the drug. Choose class or specific drug based on the question. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information"},{"column_name":"brand_vs_generic_ind","description":"Product type indicator. Drives brand/generic mix and Generic Dispense Rate","distinct_values":["Brand","Generic"]},{"column_name":"gpi_no","description":"Generic Product Identifier; standardized drug classification used for grouping."},{"column_name":"revenue_per_script",
 
-E. METADATA MAPPING:
-- Can all user terms be confidently mapped to available columns?
-- Are there ambiguous references that could match multiple columns?
-- Are there business terms mentioned that don't clearly exist in metadata?
 
-==============================
-TASK 1 DECISION CRITERIA
-==============================
-
-PROCEED TO TASK 2 (Generate SQL) IF:
-- All 5 areas (A-E) are sufficiently clear
-- You can map user request to available columns with 95% confidence
-- Standard SQL functions can handle all requested calculations
-- No ambiguous business logic or custom formulas needed
-
-REQUEST FOLLOW-UP IF:
-- ANY of areas A-E have significant ambiguity
-- Custom formulas/calculations need clarification
-- Business logic requires domain expertise
-- Metadata mapping is uncertain
-
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
-
-(Only execute if Task 1 assessment says "PROCEED")
-
-###SQL RULES########
-
-==============================
-OUTPUT FORMATS
-==============================
-
-If TASK 1 says PROCEED → Execute TASK 2:
-IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
-return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
-
-<sql>
-[Your complete SQL query here]
-</sql>
-
-If TASK 1 says REQUEST FOLLOW-UP, return ONLY the followup wrapped in XML tags. No other text, explanations, or formatting
-
-==============================
-DETERMINISTIC FOLLOW-UP RULES
-==============================
-
-STEP 1: Identify which specific areas from your 5-area assessment (A-E) were marked as "❌ Needs Clarification"
-
-STEP 2: Generate questions ONLY for the unclear areas identified in Step 1
-
-FOR ANY FOLLOW-UP SITUATION:
-<followup>
-I need clarification to generate accurate SQL:
-
-**[Specific issue from unclear area]**: [Direct question in one sentence]
-- Available data: [specific column names from metadata]
-- Suggested approach: [concrete calculation option]
-
-**[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
-- Available data: [relevant columns]
-- Alternative: [another option]
-
-Please clarify these points.
-</followup>
-
-FOLLOW-UP CONSTRAINTS:
-- Ask questions ONLY for areas marked as "❌ Needs Clarification" in your assessment
-- If only 1 area unclear → ask only 1 question
-- If 2+ areas unclear → maximum 2 questions for most critical areas
-- Never ask about areas already marked as "✓ Clear"
-- Each main question gets exactly 2 sub-bullets: one for available data, one for suggestion
-- Use actual column names from metadata
-- Keep all bullets short and actionable
-
-==============================
-EXECUTION INSTRUCTION
-==============================
-
-1. Complete TASK 1 assessment across all 5 areas
-2. Make clear PROCEED/FOLLOW-UP decision
-3. If PROCEED: Execute TASK 2 with full SQL generation
-4. If FOLLOW-UP: Ask questions covering ONLY the unclear areas from your assessment
-
-You only get ONE opportunity for follow-up, so be thorough in your assessment.

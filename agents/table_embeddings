@@ -1,0 +1,52 @@
+CREATE TABLE unified_semantic_index (
+    -- Primary Key
+    entry_id STRING PRIMARY KEY,  -- unique identifier
+    
+    -- Entry Classification
+    entry_type STRING,  -- 'table' | 'column_cluster' | 'relationship'
+    
+    -- Content for Embedding
+    embedding_content STRING,  -- Text optimized for vector search
+    embedding_vector ARRAY<FLOAT>,  -- Generated from embedding_content
+    
+    -- Context for LLM
+    llm_context STRING,  -- JSON string for LLM interpretation
+    
+    -- Metadata for Filtering
+    table_names ARRAY<STRING>,  -- Can be multiple for relationships
+    domain STRING,  -- 'claims' | 'financial' | 'pharmacy'
+    has_measures BOOLEAN,  -- true if contains metrics
+    has_dimensions BOOLEAN,  -- true if contains attributes
+    temporal_grain STRING,  -- 'daily' | 'monthly' | 'quarterly'
+    
+    -- Tracking
+    usage_count INT DEFAULT 0,
+    last_used TIMESTAMP,
+    created_date TIMESTAMP,
+    updated_date TIMESTAMP
+)
+
+prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm claim-level transactions pharmacy pbm drug medication prescription 
+revenue expense WAC AWP script counts unadjusted adjusted 30-day 90-day revenue per script GDR generic dispense rate 
+client pharmacy drug therapy class brand generic utilization financial analysis 
+submit date claim status paid reversed line of business LOB carrier account group client id client name
+pharmacy name pharmacy npi drug name therapy class name GLP-1 receptor agonists SGLT-2 inhibitors oncology
+brand vs generic indicator gpi generic product identifier claim number claim sequence
+E&I FI E&I ASO C&S PDP MAPD E&I UMR External line_of_business_desc
+year month quarter daily submit_date temporal analysis YoY quarter-over-quarter
+pharmacy performance client utilization drug spend trending therapy class analysis
+joins with actuals_vs_forecast_analysis year month quarter line_of_business product_category
+daily grain claim-level detail pharmacy network analysis client-level metrics
+
+prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis ledger-level financials actuals forecast budget 
+revenue cogs sg&a ioi membership total prescriptions scripts adjusted unadjusted 30-day 90-day 
+ledger GAAP actuals 8+4 2+10 5+7 forecast cycles budget variance analysis
+metric_type revenues cogs post reclass sg&a post reclass ioi total membership amount_or_count
+line of business LOB C&S E&I M&R Medicare Retirement External Optum Rev Reclass
+product category home delivery HDP specialty SP PBM community pharmacies workers comp RVOH
+product_sub_category_lvl_1 product_sub_category_lvl_2 divvyDOSE retail optum store infusion
+transaction_date year month quarter temporal trending monthly quarterly yearly
+variance tracking performance monitoring financial planning actuals vs forecast vs budget
+joins with claim_transaction_for_pharmacy_pbm year month quarter line_of_business product_category
+aggregated summary level ledger financial rollups metric grouping
+

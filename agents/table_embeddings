@@ -50,3 +50,39 @@ variance tracking performance monitoring financial planning actuals vs forecast 
 joins with claim_transaction_for_pharmacy_pbm year month quarter line_of_business product_category
 aggregated summary level ledger financial rollups metric grouping
 
+
+{
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+  "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
+  "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, claim status tracking",
+  "key_measures": ["revenue", "expense", "WAC", "AWP", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "revenue per script"],
+  "key_dimensions": ["claim identifiers", "claim status", "client id/name", "carrier", "account", "group", "pharmacy name/NPI", "drug name", "therapy class", "GPI", "line of business", "brand vs generic", "product category", "submit date", "year", "month", "quarter"],
+  "joins_with": {
+    "actuals_vs_forecast_analysis": {
+      "join_columns": ["year", "month", "quarter", "line_of_business", "product_category"],
+      "purpose": "compare actuals to forecast/budget"
+    }
+  },
+  "query_patterns": ["drug spend analysis", "pharmacy performance", "client utilization", "therapy class trending", "GLP-1 utilization", "generic adoption rates", "claim status analysis", "carrier/account analysis"],
+  "not_suitable_for": ["budget planning", "forecast generation", "ledger-level summaries"],
+  "grain": "claim_transaction",
+  "temporal": "daily via submit_date"
+}
+
+{
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+  "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for variance analysis and planning at LOB and product category levels.",
+  "core_capabilities": "actuals vs forecast comparison, budget variance analysis, line-of-business trending, product category performance, financial metrics rollup, forecast cycle analysis (8+4, 2+10, 5+7), metric type analysis",
+  "key_measures": ["revenue", "COGS post reclass", "SG&A post reclass", "IOI", "total membership", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "amount or count"],
+  "key_dimensions": ["ledger type", "metric type", "line of business", "product category", "product subcategory level 1", "product subcategory level 2", "transaction date", "year", "month", "quarter"],
+  "joins_with": {
+    "claim_transaction_for_pharmacy_pbm": {
+      "join_columns": ["year", "month", "quarter", "line_of_business", "product_category"],
+      "purpose": "drill down to claim-level detail"
+    }
+  },
+  "query_patterns": ["variance analysis", "actuals vs forecast", "budget comparison", "LOB performance", "financial trending", "metric type analysis", "product subcategory analysis"],
+  "not_suitable_for": ["claim-level analysis", "drug-level detail", "pharmacy metrics", "daily granularity", "client-specific analysis"],
+  "grain": "aggregated_metrics",
+  "temporal": "monthly/quarterly/yearly via transaction_date"
+}

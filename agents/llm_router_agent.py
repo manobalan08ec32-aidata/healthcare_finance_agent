@@ -117,7 +117,8 @@ class LLMRouterAgent:
         - "Show pharmacy performance trends" → Transaction data + Financial metrics (Complementary analysis)
         - "Compare member demographics with claim patterns" → Demographics table + Claims table (Separate analysis)
         
-        RESPONSE FORMAT (valid JSON only, no markdown):
+        RESPONSE FORMAT:
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
         {{
             "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
             "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
@@ -191,7 +192,8 @@ class LLMRouterAgent:
         
         Based on the clarification, determine which actual table names should be used.
         
-        RESPONSE FORMAT (valid JSON only):
+        RESPONSE FORMAT:
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
         {{
             "final_actual_tables": ["actual_table_name1", "actual_table_name2"],
             "selection_reasoning": "Brief explanation based on user clarification"

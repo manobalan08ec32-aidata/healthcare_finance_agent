@@ -1,1 +1,148 @@
-
+Cluster 1: Financial Metrics
+python{
+    "cluster_id": "claims_financial_metrics",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "measure",
+    "embedding_content": "revenue expense cost WAC AWP wholesale acquisition average wholesale price financial metrics amounts dollars pricing claim-level financials cost of goods sold COGS margin calculations recognized revenue",
+    "llm_context": """### Financial Metrics
+- **revenue_amt**: Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script.
+- **expense_amt**: Expense/cost of goods sold for the claim. Pairs with revenue_amt for margin views.
+- **wac_amount**: Wholesale Acquisition Cost reference for the dispensed drug; used in pricing/cost analytics.
+- **awp_cost_amount**: Average Wholesale Price reference for the dispensed drug; used in pricing/cost analytics."""
+}
+Cluster 2: Script Counts
+python{
+    "cluster_id": "claims_script_counts",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "measure",
+    "embedding_content": "scripts prescriptions counts volume unadjusted adjusted 30-day 90-day supply mail-order adherence total volume denominator revenue per script calculations raw script claim count",
+    "llm_context": """### Script Counts
+- **unadjusted_script_count**: Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script.
+- **adjusted_script_count**: adjusted script count and should not be used for raw script count or revenue per script analysis.
+- **30_days_script_count**: Count of 30-day prescriptions; complements 90-day for supply-mix insights.
+- **90_days_script_count**: Count of 90-day prescriptions; useful for mail-order and adherence analyses."""
+}
+Cluster 3: Claim Identifiers
+python{
+    "cluster_id": "claims_identifiers",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "identifier",
+    "embedding_content": "claim number identifier sequence status code paid reversed P X net activity processing original reversal unique claims utilization financial metrics",
+    "llm_context": """### Claim Identifiers
+- **claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. Do not use for any calculation; use unadjusted script count for claim counts
+- **claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations or script counts.
+- **claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]"""
+}
+Cluster 4: Client Hierarchy
+python{
+    "cluster_id": "claims_client_hierarchy",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "dimension",
+    "embedding_content": "client carrier account group hierarchy insurance employer plan administration policy issued sub-client analysis unique client id description user-facing reports",
+    "llm_context": """### Client Hierarchy
+- **client_id**: This contain unique client id.
+- **client_name**: This contains client description. Return alongside client_id for user-facing reports.
+- **carrier_id**: Identifier of the insurance carrier administering the plan.
+- **account_id**: Client or employer account identifier under which the policy is issued.
+- **group_id**: Group/subgroup within the account; used for sub-client analysis."""
+}
+Cluster 5: Business Dimensions
+python{
+    "cluster_id": "claims_business_dimensions",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "dimension",
+    "embedding_content": "line of business LOB External C&S E&I FI E&I ASO PDP MAPD E&I UMR employer individual community state medicare prescription drug plan product category PBM home delivery HDP specialty SP fully insured administrative services only united medical resources medicare advantage",
+    "llm_context": """### Business Dimensions
+- **line_of_business**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR and when the user asks plainly external then use this column for filtering and is distinct from client type. [Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External]
+- **line_of_business_desc**: Contains detailed descriptive name of the line of business [Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External]
+- **product_category**: Indicates the category of product or service for each claim. Distinct values: PBM, Home Delivery (HDP), and Specialty (SP) [Values: PBM, Home Delivery, Specialty]"""
+}
+Cluster 6: Pharmacy Dimensions
+python{
+    "cluster_id": "claims_pharmacy_dimensions",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "dimension",
+    "embedding_content": "pharmacy provider dispensing NPI national provider identifier network performance provider-level pharmacy name",
+    "llm_context": """### Pharmacy Dimensions
+- **pharmacy_name**: Dispensing pharmacy/provider name; used for provider-level performance.
+- **pharmacy_npi_no**: National Provider Identifier (NPI) of the dispensing pharmacy/provider."""
+}
+Cluster 7: Drug Dimensions
+python{
+    "cluster_id": "claims_drug_dimensions",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "dimension",
+    "embedding_content": "drug medication therapy class GLP-1 receptor agonists SGLT-2 inhibitors combos oncology anti-obesity agents brand generic GDR generic dispense rate GPI generic product identifier molecule classification dispensed drug",
+    "llm_context": """### Drug Dimensions
+- **drug_name**: Name of the dispensed drug; use for molecule-level trends and financials.
+- **therapy_class_name**: Therapeutic class of the drug. Choose class or specific drug based on the question. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information
+- **brand_vs_generic_ind**: Product type indicator. Drives brand/generic mix and Generic Dispense Rate [Values: Brand, Generic]
+- **gpi_no**: Generic Product Identifier; standardized drug classification used for grouping."""
+}
+Cluster 8: Temporal Dimensions
+python{
+    "cluster_id": "claims_temporal_dimensions",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "dimension",
+    "embedding_content": "submit date year month quarter calendar time daily trending YoY year-over-year quarter-over-quarter temporal time-window filters claim submission numeric month Q1 Q2 Q3 Q4",
+    "llm_context": """### Temporal Dimensions
+- **submit_date**: Exact claim submission date. Use for daily trending and time-window filters.
+- **year**: Calendar year of claim submission; supports YoY comparisons.
+- **month**: Calendar month of submission; it has numerical value (1-12).
+- **quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4"""
+}
+Cluster 9: Derived Metrics
+python{
+    "cluster_id": "claims_derived_metrics",
+    "table_name": "claim_transaction_for_pharmacy_pbm",
+    "cluster_type": "measure",
+    "embedding_content": "revenue per script derived calculated metrics per unit analysis",
+    "llm_context": """### Derived Metrics
+- **revenue_per_script**: Revenue per script metric - likely a calculated field from revenue_amt divided by unadjusted_script_count"""
+}
+Column Clusters for actuals_vs_forecast_analysis
+Cluster 1: Ledger and Metrics
+python{
+    "cluster_id": "actuals_ledger_metrics",
+    "table_name": "actuals_vs_forecast_analysis",
+    "cluster_type": "measure",
+    "embedding_content": "ledger GAAP actuals 8+4 2+10 5+7 forecast budget metric type unadjusted adjusted scripts 30 day 90 day revenues COGS post reclass SG&A IOI total membership amount count variance analysis forecast cycles",
+    "llm_context": """### Ledger and Metrics
+- **ledger**: Ledger type for the record. Values: 8+4 Forecast, 2+10 Forecast, 5+7 Forecast, GAAP called as Actuals, BUDGET. Used to distinguish actuals from forecast or budget data for variance analysis. If the user does not provide a forecast value, the system will default to the most current forecast cycle based on the latest closed month (e.g., 8+4 when eight months of actuals are available). Only one forecast type will be applied by default. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
+- **metric_type**: Contains important metric types such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership. Even when product category is mentioned in the user question and they are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause. Note that Unadjusted Scripts should be used for calculation if the user simply asks for volume or total scripts [Values: Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, Total Membership]
+- **amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results."""
+}
+Cluster 2: Business Dimensions
+python{
+    "cluster_id": "actuals_business_dimensions",
+    "table_name": "actuals_vs_forecast_analysis",
+    "cluster_type": "dimension",
+    "embedding_content": "line of business LOB C&S E&I M&R Medicare Retirement Optum External Rev Reclass community state employer individual portfolio market-share breakdowns",
+    "llm_context": """### Business Dimensions
+- **line_of_business**: Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]"""
+}
+Cluster 3: Product Categories
+python{
+    "cluster_id": "actuals_product_categories",
+    "table_name": "actuals_vs_forecast_analysis",
+    "cluster_type": "dimension",
+    "embedding_content": "product category PBM home delivery HDP specialty SP other products community pharmacies workers comp RVOH subcategory divvyDOSE retail GPO optum store infusion hospice core distribution frontier pharmscript prevention CPS solutions nuvaila admin fees optum perks",
+    "llm_context": """### Product Categories
+- **product_category**: High-level category of products or services.Home Delivery called as HDP and Specialty called as SP [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH]
+- **product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
+- **product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
+*Special Note*: If the user mentions Specialty, Home Delivery, and PBM together, do not apply any filters on product_category. If the user mentions PBM alone, also do not apply any filters on product_category while building SQL."""
+}
+Cluster 4: Temporal Dimensions
+python{
+    "cluster_id": "actuals_temporal_dimensions",
+    "table_name": "actuals_vs_forecast_analysis",
+    "cluster_type": "dimension",
+    "embedding_content": "transaction date year month quarter temporal daily monthly quarterly annual trend analysis four-digit numeric Q1 Q2 Q3 Q4",
+    "llm_context": """### Temporal Dimensions
+- **transaction_date**: Exact transaction date (YYYY-MM-DD). Supports daily, monthly, quarterly, and annual trend analysis.
+- **year**: Four-digit year of the transaction.
+- **month**: Numeric month of the transaction (1-12).
+- **quarter**: Quarter of the transaction (Q1-Q4)."""
+}
+All descriptions are now preserved exactly as provided in the metadata, with no truncation. The clusters are organized logically and ready for use with the markdown format for LLM presentation.

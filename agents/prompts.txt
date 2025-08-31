@@ -105,3 +105,12 @@ selection_prompt = f"""
         - Keep clarification_question short and direct when needed
         - candidate_actual_tables should be populated only when requires_clarification: true
         """
+
+llm response router {
+    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
+    "functional_names": ["Actuals vs Forecast Analysis"],
+    "requires_clarification": false,
+    "clarification_question": null,
+    "candidate_actual_tables": [],
+    "selection_reasoning": "Query asks for claim revenue by month and product category PBM. The actuals_vs_forecast_analysis table has exact matches for 'revenue', 'month', and 'product category' dimensions with monthly temporal granularity. The claim_transaction table, while having revenue data, is designed for claim-level analysis and marked as 'not suitable for ledger-level summaries', whereas this query appears to need aggregated revenue metrics by time period and product category."
+}

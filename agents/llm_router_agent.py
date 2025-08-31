@@ -16,18 +16,14 @@ class LLMRouterAgent:
         
         if not user_question:
             raise Exception("No user question found in state")
-        
-        print(f"🔍 Step 1: Direct vector search for: '{user_question}'")
-        
+                
         # 1. Direct vector search with user question
         search_results = self._direct_vector_search_dataset(user_question)
-        
         if not search_results:
             raise Exception("No datasets found in vector search")
         
         # 2. LLM selection from search results
         selection_result = self._llm_dataset_selection(search_results, state)
-        # print("selection result",selection_result)
         # 3. Check if result is ambiguous (needs user clarification)
         if selection_result.get('requires_clarification', False):
             print(f"❓ Step 3: Ambiguous result - preparing for user clarification")
@@ -62,253 +58,215 @@ class LLMRouterAgent:
             raise Exception(f"Vector search failed: {str(e)}")
     
     def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
-        """Use LLM to select best dataset from search results with retry logic"""
+        """Use LLM to select best dataset from search results with enhanced analysis"""
         
         # Prepare dataset information for LLM
         dataset_options = []
         for i, result in enumerate(search_results):
             dataset_info = {
-                'rank': i + 1,
+                'option_id': chr(65 + i),  # A, B, C, D... instead of numbers
                 'table_name': result.get('table_name'),
-                'description': result.get('content', '')
+                'description': result.get('table_description', '')
             }
             dataset_options.append(dataset_info)
         
         user_question = state.get('current_question', state.get('original_question', ''))
+
+        selection_prompt = f"""
+                    You are a meticulous dataset router. Choose EXACTLY ONE dataset.
+
+                    USER QUESTION: "{user_question}"
+
+                    DATASETS (JSON array). Each dataset has:
+                    - name,description,metrics,attributes,columns,hints,time_grains
+
+                    DATA:
+                    {json.dumps(dataset_options, indent=2)}
+
+                    GOAL
+                    Map the user question to required columns using ONLY the dataset metadata and order of meta data is random. Evaluate BOTH datasets. Prefer a table that can satisfy ALL required columns and the requested time grain. If no table can fully satisfy, return the closest table by coverage.
+
+                    Follow this decision process strictly:
+
+                    1. **Match Attributes and Metrics First**
+                    - Check if the dataset contains the attributes and metrics mentioned or implied in the user question.
+                    - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue').
+
+                    2. **Check Time Granularity**
+                    - Ensure the dataset supports the required time grain (e.g., monthly, daily).
+
+                    3. **Evaluate Usefulness Tags**
+                    - If the dataset is marked as 'useful_for' the type of analysis requested, that increases its relevance.
+                    - If the dataset is marked as 'not_useful_for' the type of analysis requested, it should be excluded.
+
+                    4. **Select Only One Dataset**
+                    - Choose the single best dataset that satisfies the above criteria.
+
+                    RESPONSE FORMAT:
+                    The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+
+                    {{ "clear_selection": true, "selected_dataset": "<one of the dataset 'table_name' values>", "selection_reasoning": "One concise sentence referencing why the dataset is best match (e.g., therapy_class_name + month required; only claims has therapy_class_name and supports month/day)." }}
+
+                    """
+        
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                llm_response = self.db_client.call_claude_api_endpoint([
+                    {"role": "user", "content": selection_prompt}
+                ])
+                print('dataset detection',llm_response)
+                
+                selection_result = json.loads(llm_response)
+                
+                # Validate required fields
+                if not selection_result.get('selected_dataset'):
+                    raise ValueError("No selected_dataset in response")
+                
+                # Find the original metadata for the selected table
+                selected_table = selection_result['selected_dataset']
+                selected_metadata = next(
+                    (ds for ds in search_results if ds['table_name'] == selected_table),
+                    search_results[0] if search_results else {}
+                )
+                
+                print(f'✅ Selected table: {selected_table}')
+                
+                return {
+                    'dataset_followup_question': None,
+                    'selected_dataset': selected_table,
+                    'table_kg': selected_metadata.get('table_kg'),
+                    'requires_clarification': False,
+                    'selection_reasoning': selection_result.get('selection_reasoning', '')
+                }
+                    
+            except Exception as e:
+                retry_count += 1
+                print(f"❌ Dataset selection attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying dataset selection... ({retry_count}/{max_retries})")
+                    import time
+                    time.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All dataset selection retries failed: {str(e)}")
+                    return {
+                        'dataset_followup_question': None,
+                        'selected_dataset': None,
+                        'table_kg': None,
+                        'requires_clarification': False,
+                        'selection_reasoning': 'Dataset selection failed',
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}"
+                    }
+
+    def _fix_router_llm_call(self, state: AgentState) -> Dict:
+        """Use LLM to select best dataset from search results with retry logic and fetch table_kg"""
+        
+        user_clarification_answer = state.get('current_question', state.get('original_question', ''))
+        followup_question = state.get('dataset_followup_question', '')
+        available_datasets = state.get('selected_dataset', '')
+        question_history = state.get('user_question_history', '')
+        actual_question = question_history[-1] if question_history else None
         
         selection_prompt = f"""
-        Healthcare Finance Dataset Selection Task:
+        Healthcare Finance Dataset Selection Task: You need to identify the actual table based 
+        on the user clarification for the earlier follow up question.
         
-        User Question: "{user_question}"
-        
-        Available Datasets: {json.dumps(dataset_options, indent=2)}
-        
-        Analyze each dataset's suitability for answering the user's question based on the table name and description.
+        User actual Question: "{actual_question}"
+        Follow up question: {followup_question}
+
+        User answer: {user_clarification_answer}
+        Available Datasets: {available_datasets}
         
         Instructions:
-            - Read the user's question and the dataset descriptions and pick one dataset which matches users question.
-            - Do NOT interpret or infer the meaning of metrics, attributes, or business terms in the user's question.
-            - Do NOT reason about dates, timeframes, or business context unless explicitly mentioned in the dataset description.
-            - Only select a dataset if the description clearly contains terms from the user's question.
-            - If there is only one candidate table, select it **only if** its description contains relevant terms from the user's question.
-            - If multiple tables could be relevant, select the best match **only if** one clearly stands out.
-            - If no clear match exists, respond with a clarification question. Include the available tables and their descriptions using business-friendly language.
-
-        Response format (return EXACTLY this structure with no additional text):
+                - Interpret the actual question, follow up question and user clarification answer and pick one table from the available datasets and return
+                
+        RESPONSE FORMAT:
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
         {{
             "clear_selection": true/false,
-            "selected_dataset": "actual_table_name",
-            "selection_reasoning": "2-3 lines on why this dataset is best",
-            "requires_clarification": false/true,
-            "ambiguous_options": [
-                {{"table_name": "actual_table_name", "business_name": "Claims Data", "use_case": "for detailed transaction analysis"}},
-                {{"table_name": "actual_table_name", "business_name": "Member Data", "use_case": "for member demographics"}}
-            ],
-            "clarification_question": "Are you looking for detailed claim transactions or member enrollment information?"
+            "selected_dataset": "actual_table_name"
         }}
-        
-        IMPORTANT: 
-        - Generate business_name dynamically based on table description
-        - Make clarification_question specific to the user's query context
-        - Use functional language, not technical jargon
         """
         
-        # Retry logic - up to 2 attempts
-        max_retries = 2
-        for attempt in range(max_retries + 1):
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
             try:
-                if attempt == 0:
-                    # First attempt
-                    llm_response = self.db_client.call_claude_api([
-                        {"role": "user", "content": selection_prompt}
-                    ])
-                else:
-                    # Retry with correction instruction
-                    retry_prompt = f"""
-                    RETRY ATTEMPT {attempt}: The previous response had invalid JSON format.
-                    
-                    {selection_prompt}
-                    
-                    CRITICAL ERROR CORRECTION:
-                    - Your previous response could not be parsed as valid JSON
-                    - Return ONLY valid JSON format - no markdown, no code blocks, no extra text
-                    - Do not wrap response in ```json or ``` 
-                    - Start directly with {{ and end with }}
-                    - Double-check all quotes and brackets are properly closed
-                    """
-                    
-                    llm_response = self.db_client.call_claude_api([
-                        {"role": "user", "content": retry_prompt}
-                    ])
-                print('llm_response from dataset selection',llm_response)
+                llm_response = self.db_client.call_claude_api_endpoint([
+                    {"role": "user", "content": selection_prompt}
+                ])
+                
                 selection_result = json.loads(llm_response)
                 
                 # If we get here, JSON parsing succeeded
-                # Add metadata from search results
                 if selection_result.get('selected_dataset'):
-                    selected_table = selection_result['selected_dataset']
-                    print('selected table',selected_table)
-                    selected_metadata = next(
-                        (ds for ds in search_results if ds['table_name'] == selected_table),
-                        search_results[0] if search_results else {}
-                    )
-                
-                # Add all search results for reference
-                # selection_result['available_datasets'] = search_results
-                print('return router output',selection_result)
-                
-                return {
-                        'dataset_followup_question': selection_result.get('clarification_question'),
-                        'selected_dataset': selection_result.get('selected_dataset'),
-                        'table_kg': selected_metadata.get('table_kg'),
-                        'requires_clarification': selection_result.get('requires_clarification'),
-                        'selection_reasoning':selection_result.get('selection_reasoning')
-                    }
-                
-            except json.JSONDecodeError as e:
-                
-                if attempt == max_retries:
-                    # Final attempt failed, use fallback
-                    return  {
-                        'dataset_followup_question': 'Errored',
-                        'selected_dataset': 'Errored',
-                        'table_kg': 'Errored',
-                        'requires_clarification': 'Errored'
-                    }
+                    selected_table = selection_result.get('selected_dataset')
+                                    
+                    # Fetch table_kg from metadata table
+                    try:
+                        sql_query = f"""
+                        SELECT table_kg 
+                        FROM prd_optumrx_orxfdmprdsa.rag.metadata_tbl_level 
+                        WHERE table_name = '{selected_table}'
+                        """
+                                    
+                        # Execute SQL query
+                        sql_results = self.db_client.execute_sql(sql_query)
+                        
+                        table_kg = None
+                        if sql_results and len(sql_results) > 0:
+                            table_kg = sql_results[0].get('table_kg', None)
+                        else:
+                            print(f"⚠️ No table_kg found for table: {selected_table}")
+                        
+                        return {
+                            'dataset_followup_question': None,
+                            'selected_dataset': selected_table,
+                            'table_kg': table_kg,
+                            'requires_clarification': False
+                        }
+                        
+                    except Exception as sql_error:
+                        # Return with error for SQL failure
+                        return {
+                            'dataset_followup_question': None,
+                            'selected_dataset': None,
+                            'table_kg': None,
+                            'requires_clarification': False,
+                            'error': True,
+                            'error_message': f"SQL error while fetching table metadata: {str(sql_error)}"
+                        }
                 else:
-                    # Continue to next retry
-                    continue
-                    
+                    return {
+                        'dataset_followup_question': "Could not determine the appropriate dataset from your clarification.",
+                        'selected_dataset': None,
+                        'table_kg': None,
+                        'requires_clarification': True
+                    }
+                
             except Exception as e:
-                if attempt == max_retries:
-                    raise Exception(f"LLM dataset selection failed after {max_retries + 1} attempts: {str(e)}")
-                else:
+                retry_count += 1
+                print(f"❌ Dataset clarification attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying dataset clarification... ({retry_count}/{max_retries})")
+                    import time
+                    time.sleep(2 ** retry_count)
                     continue
-    
-    
-def _fix_router_llm_call(self, state: AgentState) -> Dict:
-    """Use LLM to select best dataset from search results with retry logic and fetch table_kg"""
-    
-    user_clarification_answer= state.get('current_question', state.get('original_question', ''))
-    followup_question = state.get('dataset_followup_question', '')
-    available_datasets = state.get('selected_dataset', '')
-    question_history=state.get('user_question_history', '')
-    actual_question = actual_question = questions_history[-1] if questions_history else None
-    selection_prompt = f"""
-    Healthcare Finance Dataset Selection Task: You need to identify the actual table based 
-    on the user clarification for the earlier follow up question.
-    
-    User actual Question: "{actual_question}"
-    Follow up question: {followup_question}
-
-    User answer: {user_clarification_answer}
-    Available Datasets: {available_datasets}
-    
-    Instructions:
-            - Interpret the actual question, follow up question and user clarification answer and pick one table from the available datasets and return
-            
-    Response format (return EXACTLY this structure with no additional text):
-    {{
-        "clear_selection": true/false,
-        "selected_dataset": "actual_table_name"
-    }}
-    """
-    
-    # Retry logic - up to 2 attempts
-    max_retries = 2
-    for attempt in range(max_retries + 1):
-        try:
-            if attempt == 0:
-                # First attempt
-                llm_response = self.db_client.call_claude_api([
-                    {"role": "user", "content": selection_prompt}
-                ])
-            else:
-                # Retry with correction instruction
-                retry_prompt = f"""
-                RETRY ATTEMPT {attempt}: The previous response had invalid JSON format.
-                
-                {selection_prompt}
-                
-                CRITICAL ERROR CORRECTION:
-                - Your previous response could not be parsed as valid JSON
-                - Return ONLY valid JSON format - no markdown, no code blocks, no extra text
-                - Do not wrap response in ```json or ``` 
-                - Start directly with {{ and end with }}
-                - Double-check all quotes and brackets are properly closed
-                """
-                
-                llm_response = self.db_client.call_claude_api([
-                    {"role": "user", "content": retry_prompt}
-                ])
-            
-            selection_result = json.loads(llm_response)
-            
-            # If we get here, JSON parsing succeeded
-            if selection_result.get('selected_dataset'):
-                selected_table = selection_result.get('selected_dataset')
-                                
-                # Fetch table_kg from metadata table
-                try:
-                    sql_query = f"""
-                    SELECT table_kg 
-                    FROM prd_optumrx_orxfdmprdsa.rag.metadata_tbl_level 
-                    WHERE table_name = '{selected_table}'
-                    """
-                                
-                    # Execute SQL query
-                    sql_results = self.db_client.execute_sql(sql_query)
-                    
-                    table_kg = None
-                    if sql_results and len(sql_results) > 0:
-                        table_kg = sql_results[0].get('table_kg', None)
-                    else:
-                        print(f"⚠️ No table_kg found for table: {selected_table}")
-                    
+                else:
+                    print(f"❌ All dataset clarification retries failed: {str(e)}")
                     return {
-                        'dataset_followup_question': None,
-                        'selected_dataset': selected_table,
-                        'table_kg': table_kg,
-                        'requires_clarification': False
+                        'dataset_followup_question': "Error processing your clarification. Please try again.",
+                        'selected_dataset': None,
+                        'table_kg': None,
+                        'requires_clarification': True,
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}"
                     }
-                    
-                except Exception as sql_error:
-                    # Return without table_kg if SQL fails
-                    return {
-                        'dataset_followup_question': None,
-                        'selected_dataset': 'Error',
-                        'table_kg': 'Error',
-                        'requires_clarification': False
-                    }
-            else:
-                return {
-                    'dataset_followup_question': "Could not determine the appropriate dataset from your clarification.",
-                    'selected_dataset': None,
-                    'table_kg': None,
-                    'requires_clarification': True
-                }
-            
-        except json.JSONDecodeError as e:            
-            if attempt == max_retries:
-                # Final attempt failed, use fallback
-                return {
-                    'dataset_followup_question': "Error processing your clarification. Please try again.",
-                    'selected_dataset': None,
-                    'table_kg': None,
-                    'requires_clarification': True
-                }
-            else:
-                # Continue to next retry
-                continue
-                
-        except Exception as e:
-            if attempt == max_retries:
-                return {
-                    'dataset_followup_question': "Error processing your clarification. Please try again.",
-                    'selected_dataset': None,
-                    'table_kg': None,
-                    'requires_clarification': True
-                }
-            else:
-                continue
     

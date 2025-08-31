@@ -1,85 +1,102 @@
 selection_prompt = f"""
-        You are a meticulous dataset router. Your ONLY job is to find datasets that have the required columns.
+You are a decisive dataset router. Follow this decision process strictly:
 
-        USER QUESTION: "{user_question}"
+USER QUESTION: "{user_question}"
 
-        AVAILABLE DATASETS:
-        {json.dumps(search_results[:5], indent=2)}
+AVAILABLE DATASETS:
+{json.dumps(search_results[:5], indent=2)}
 
-        DECISION PROCESS (IN STRICT ORDER):
+DECISION PROCESS:
+1. **Keyword-Based Primary Routing**
+   - If question contains "claim", "claims", "claim revenue", "claim data" → STRONGLY favor claim_transaction table
+   - If question contains "budget", "forecast", "actuals vs forecast", "planning" → STRONGLY favor actuals_vs_forecast table
+   - If question contains "ledger" → favor actuals_vs_forecast table
+   - IMPORTANT: "Claim revenue" means revenue FROM individual claim transactions, not ledger summaries
 
-        1. **IDENTIFY REQUIRED COLUMNS**
-        Extract from the user question:
-        - Required metrics (revenue, cost, volume, etc.)
-        - Required dimensions (drug, pharmacy, month, product_category, etc.)
-        - If user says "claim revenue" → needs revenue column (the word "claim" is a hint about source, not a column)
-        - If user says "drug analysis" → MUST have drug-related columns
+2. **Match Attributes and Metrics**
+   - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
+   - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
+   - Consider synonyms and related terms (e.g., 'scripts' relates to prescription volume)
 
-        2. **CHECK COLUMN AVAILABILITY (MOST IMPORTANT)**
-        For each dataset:
-        - Can it provide ALL required columns? If NO → Cannot use this dataset
-        - Can it provide MOST required columns? → Note coverage percentage
-        - Special rule: If a required dimension exists in ONLY one dataset → That dataset wins
+3. **Check Time Granularity**
+   - Ensure the dataset supports the required time grain (e.g., monthly, daily)
+   - claim_transaction supports daily granularity via submit_date
+   - actuals_vs_forecast supports monthly/quarterly/yearly via transaction_date
 
-        3. **APPLY SELECTION RULES**
-        
-        AUTOMATIC SELECTION (NO FOLLOW-UP):
-        - If only ONE dataset has ALL required columns → SELECT IT
-        - If one dataset has a UNIQUE required column (e.g., only claims has 'drug') → SELECT IT  
-        - If one dataset has >80% coverage and others have <50% → SELECT IT
-        
-        WHEN TO ASK FOLLOW-UP:
-        - Multiple datasets have ALL required columns (>90% coverage each)
-        - AND no unique columns differentiate them
-        - AND no clear keyword indicates preference
-        - Then ask: "Would you like data from [Dataset A description] or [Dataset B description]?"
+4. **Evaluate Purpose and Suitability**
+   - Match the question's analytical purpose with dataset purpose
+   - If dataset is marked as 'not_suitable_for' the type of analysis requested, exclude it ONLY if no keyword match from step 1
+   - If dataset is marked in 'query_patterns' or 'core_capabilities' for the analysis type, increase relevance
 
-        4. **TIME GRAIN CHECK**
-        - Verify selected dataset supports needed granularity
-        - Remember: daily data can aggregate to monthly, but monthly can't go to daily
+5. **Multi-Table Analysis Detection**
+   - Detect if query requires joining data across tables (e.g., claim amounts from different tables)
+   - Identify queries that benefit from complementary data perspectives (volumes + financials from different sources)
+   - Recognize queries needing separate analysis on related datasets (demographics + transactions)
 
-        5. **USEFULNESS TAGS (ONLY AS TIE-BREAKER)**
-        - Only consider these if multiple datasets have identical column coverage
-        - 'not_suitable_for' is a hint, not a disqualifier
-        
-        CRITICAL RULES:
-        - NEVER exclude a dataset if it's the ONLY one with required columns
-        - Column availability beats everything else
-        - "Claim revenue" needs revenue column from claims data (if claims has revenue)
-        - Don't overthink - if dataset has the columns, it can answer the question
+6. **Dataset Selection Strategy**
+   - Choose the single best dataset that satisfies the above criteria
+   - Select multiple datasets only when analysis inherently requires multiple tables
+   - When in doubt between tables and no clear keyword match, prefer the table with better attribute coverage
 
-        RESPONSE FORMAT:
-        {{
-            "final_actual_tables": ["actual_table_name"],
-            "functional_names": ["user-friendly name"],
-            "requires_clarification": false,
-            "clarification_question": null,
-            "candidate_actual_tables": [],
-            "selection_reasoning": "Required columns: [list]. Only [dataset] has all required columns including [unique column if applicable]."
-        }}
+WHEN TO ASK FOLLOW-UP:
 
-        EXAMPLES OF SELECTION LOGIC:
-        
-        "Top 10 drugs by revenue":
-        - Needs: drug column, revenue column
-        - Claims: has drug ✓, revenue ✓ 
-        - Ledger: has revenue ✓, NO drug ✗
-        - Result: Claims (only dataset with drug column)
-        
-        "Claim revenue for July 2025 by product category":
-        - Needs: revenue, product_category, month
-        - Claims: has all ✓
-        - Ledger: has all ✓  
-        - Keyword "claim" suggests claims dataset
-        - Result: Claims (keyword preference when both have columns)
-        
-        "Revenue by month":
-        - Needs: revenue, month
-        - Both have these columns
-        - No unique column, no clear keyword
-        - Result: Ask follow-up
-        """
+**Scenario 1: Keyword Ambiguity**
+- When both tables have the requested metrics AND user didn't specify distinguishing keywords
+- When the question could legitimately use either table based on available attributes
+- Examples: "revenue trends", "revenue analysis", "show revenue data", "pharmacy performance" without claim/forecast context
+- Ask: "Do you need claim-level transaction data or ledger-level financial summaries?"
 
+**Scenario 2: True Data Type Ambiguity** 
+- When question contains general business terms that both tables can satisfy
+- When no clear analytical context points to one table over another
+- Example: "revenue by product category" (both tables have revenue and product category)
+- Ask: "Which dataset: detailed claim transactions or aggregated financial ledger data?"
+
+**Scenario 3: Multi-Table Analysis Confirmation**
+- When query explicitly requires data from different table types (e.g., "claim details with billing reconciliation")
+- When query needs to join claim-level data with ledger-level data for comprehensive analysis
+- When query benefits from combining transactional data with financial planning data
+- Example: "Compare individual claim patterns with overall budget performance" → Claims + Ledger analysis
+
+DO NOT ASK FOLLOW-UP FOR THESE AMBIGUITIES (BE DECISIVE):
+- Time period vagueness (e.g., "show pharmacy sales July 2024" without claim/forecast keywords) → If no keywords, ask for clarification between claim vs ledger
+- Aggregation level uncertainty (e.g., "revenue data monthly" without context) → If no distinguishing keywords, ask for clarification  
+- Scope ambiguity with clear keywords (e.g., "claim trends" without LOB specified) → Use claims table, don't ask about table choice
+- Metric questions with clear dataset indicators (e.g., "GDR analysis", "therapy class performance") → Route to claims table directly
+
+EXAMPLES REQUIRING CLARIFICATION:
+- "What are the revenue trends?" → Both tables have revenue, no distinguishing keywords
+- "Show me pharmacy performance data" → Could be claim-level or ledger-level analysis
+- "Revenue analysis by product category" → Both tables support this, need clarification
+
+EXAMPLES NOT REQUIRING CLARIFICATION:
+- "What is the claim revenue for July 2025?" → claim_transaction (keyword: "claim")
+- "Show me budget vs actuals" → actuals_vs_forecast (keywords: "budget", "actuals") 
+- "What is the variance between actual costs and forecasted costs?" → actuals_vs_forecast (actuals vs forecast analysis)
+- "Generic dispensing ratio trends" → claim_transaction (GDR in core_capabilities)
+- "Revenue per script analysis" → claim_transaction (explicitly in core_capabilities)
+- "Forecast analysis for Q3" → actuals_vs_forecast (keyword: "forecast")
+- "Therapy class performance last month" → claim_transaction (therapy class only in claims)
+- "Client-level claim analysis" → claim_transaction (client analysis in query_patterns)
+
+RESPONSE FORMAT (valid JSON only, no markdown):
+{{
+    "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
+    "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
+    "requires_clarification": false,
+    "clarification_question": null,
+    "candidate_actual_tables": [],
+    "selection_reasoning": "Brief explanation referencing keyword match, attribute coverage, and why this dataset best serves the user's question"
+}}
+
+CRITICAL RULES:
+- When LLM decides on right dataset(s), ALWAYS set requires_clarification: false and clarification_question: null
+- Only set requires_clarification: true for the 2 specific scenarios mentioned above
+- Keep clarification_question short and direct when needed (max 15 words)
+- candidate_actual_tables should be populated only when requires_clarification: true
+- NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions
+- Trust keyword analysis over complex reasoning about aggregation levels
+"""
 
 
 

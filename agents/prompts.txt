@@ -1,4 +1,90 @@
- selection_prompt = f"""
+selection_prompt = f"""
+        You are a meticulous dataset router. Your ONLY job is to find datasets that have the required columns.
+
+        USER QUESTION: "{user_question}"
+
+        AVAILABLE DATASETS:
+        {json.dumps(search_results[:5], indent=2)}
+
+        DECISION PROCESS (IN STRICT ORDER):
+
+        1. **IDENTIFY REQUIRED COLUMNS**
+        Extract from the user question:
+        - Required metrics (revenue, cost, volume, etc.)
+        - Required dimensions (drug, pharmacy, month, product_category, etc.)
+        - If user says "claim revenue" → needs revenue column (the word "claim" is a hint about source, not a column)
+        - If user says "drug analysis" → MUST have drug-related columns
+
+        2. **CHECK COLUMN AVAILABILITY (MOST IMPORTANT)**
+        For each dataset:
+        - Can it provide ALL required columns? If NO → Cannot use this dataset
+        - Can it provide MOST required columns? → Note coverage percentage
+        - Special rule: If a required dimension exists in ONLY one dataset → That dataset wins
+
+        3. **APPLY SELECTION RULES**
+        
+        AUTOMATIC SELECTION (NO FOLLOW-UP):
+        - If only ONE dataset has ALL required columns → SELECT IT
+        - If one dataset has a UNIQUE required column (e.g., only claims has 'drug') → SELECT IT  
+        - If one dataset has >80% coverage and others have <50% → SELECT IT
+        
+        WHEN TO ASK FOLLOW-UP:
+        - Multiple datasets have ALL required columns (>90% coverage each)
+        - AND no unique columns differentiate them
+        - AND no clear keyword indicates preference
+        - Then ask: "Would you like data from [Dataset A description] or [Dataset B description]?"
+
+        4. **TIME GRAIN CHECK**
+        - Verify selected dataset supports needed granularity
+        - Remember: daily data can aggregate to monthly, but monthly can't go to daily
+
+        5. **USEFULNESS TAGS (ONLY AS TIE-BREAKER)**
+        - Only consider these if multiple datasets have identical column coverage
+        - 'not_suitable_for' is a hint, not a disqualifier
+        
+        CRITICAL RULES:
+        - NEVER exclude a dataset if it's the ONLY one with required columns
+        - Column availability beats everything else
+        - "Claim revenue" needs revenue column from claims data (if claims has revenue)
+        - Don't overthink - if dataset has the columns, it can answer the question
+
+        RESPONSE FORMAT:
+        {{
+            "final_actual_tables": ["actual_table_name"],
+            "functional_names": ["user-friendly name"],
+            "requires_clarification": false,
+            "clarification_question": null,
+            "candidate_actual_tables": [],
+            "selection_reasoning": "Required columns: [list]. Only [dataset] has all required columns including [unique column if applicable]."
+        }}
+
+        EXAMPLES OF SELECTION LOGIC:
+        
+        "Top 10 drugs by revenue":
+        - Needs: drug column, revenue column
+        - Claims: has drug ✓, revenue ✓ 
+        - Ledger: has revenue ✓, NO drug ✗
+        - Result: Claims (only dataset with drug column)
+        
+        "Claim revenue for July 2025 by product category":
+        - Needs: revenue, product_category, month
+        - Claims: has all ✓
+        - Ledger: has all ✓  
+        - Keyword "claim" suggests claims dataset
+        - Result: Claims (keyword preference when both have columns)
+        
+        "Revenue by month":
+        - Needs: revenue, month
+        - Both have these columns
+        - No unique column, no clear keyword
+        - Result: Ask follow-up
+        """
+
+
+
+
+
+selection_prompt = f"""
                     You are a meticulous dataset router. Choose EXACTLY ONE dataset.
 
                     USER QUESTION: "{user_question}"

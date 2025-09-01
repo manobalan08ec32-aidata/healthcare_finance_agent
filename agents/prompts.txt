@@ -1,3 +1,165 @@
+
+You are a dataset router. You MUST follow this EXACT 4-step process. Do NOT skip steps or make assumptions.
+
+        USER QUESTION: "For the PBM provide a rate volume variance by LOB from May 2025 to June 2025 for the product category PBM"
+
+        AVAILABLE DATASETS:
+        [
+  {
+    "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+    "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
+    "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, rate/volume analysis",
+    "key_measures": [
+      "revenue",
+      "expense",
+      "WAC",
+      "AWP",
+      "unadjusted scripts",
+      "adjusted scripts",
+      "30-day scripts",
+      "90-day scripts",
+      "revenue per script",
+      "volume",
+      "Generic dispensing ratio/GDR"
+    ],
+    "key_dimensions": [
+      "claim identifiers",
+      "claim status",
+      "client id/Client name/Client type",
+      "carrier/account/group/CAG",
+      "pharmacy name/NPI/Pharmacy type",
+      "drug name/ NDC Code",
+      "therapy class",
+      "GPI",
+      "line of business",
+      "brand vs generic",
+      "product category",
+      "state code",
+      "member date of birth",
+      "member sex",
+      "submit date",
+      "year",
+      "month",
+      "quarter"
+    ],
+    "query_patterns": [
+      "claim-level financial analysis",
+      "client-level analysis",
+      "drug and therapy class performance",
+      "manufacturer-level insights",
+      "revenue per script and GDR metrics",
+      "line-of-business tracking",
+      "rate analysis"
+    ],
+    "not_suitable_for": [
+      "budget planning",
+      "forecast generation",
+      "ledger-level summaries"
+    ],
+    "grain": "claim_transaction",
+    "temporal": "daily via submit_date"
+  },
+  {
+    "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+    "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for forecast analysis and planning at LOB level.",
+    "key_measures": [
+      "revenue",
+      "IOI",
+      "total membership",
+      "unadjusted scripts",
+      "adjusted scripts",
+      "30-day scripts",
+      "90-day scripts",
+      "amount or count",
+      "expense",
+      "volume"
+    ],
+    "key_dimensions": [
+      "ledger type",
+      "line of business",
+      "product category",
+      "product subcategory level 1",
+      "product subcategory level 2",
+      "transaction date",
+      "year",
+      "month",
+      "quarter"
+    ],
+    "query_patterns": [
+      "actuals vs forecast",
+      "budget comparison"
+    ],
+    "not_suitable_for": [
+      "claim-level analysis",
+      "daily granularity",
+      "client-specific analysis"
+    ],
+    "grain": "aggregated_metrics",
+    "temporal": "monthly/quarterly/yearly via transaction_date"
+  }
+]
+
+        MANDATORY 4-STEP PROCESS:
+
+        **STEP 1: Keyword Match (CHECK FIRST)**
+        For each dataset, scan the user question for these matches:
+        - Words that appear in table_name, purpose, core_capabilities, or query_patterns
+        - Look for: "claim", "rate", "therapy", "pharmacy", "member", "budget", "forecast", "ledger", "variance", etc.
+        - If EXACTLY ONE dataset has keyword matches → SELECT IT, set requires_clarification=false
+        - If MULTIPLE datasets have keyword matches OR NO keywords found → GO TO STEP 2
+        - You MUST document which keywords you found for each dataset
+
+        **STEP 2: Column Match (CHECK IF STEP 1 DIDN'T RESOLVE)**
+        - Extract ALL required columns from user question (LOB, product category, volume, rate, etc.)
+        - For each remaining dataset: count how many required columns exist in key_measures + key_dimensions
+        - If EXACTLY ONE dataset has ALL required columns → SELECT IT, set requires_clarification=false
+        - If MULTIPLE datasets have all required columns → GO TO STEP 3
+        - You MUST list the required columns you extracted
+
+        **STEP 3: Suitability Check (CHECK IF STEP 2 DIDN'T RESOLVE)**
+        - Check query_patterns: does user question match patterns in remaining datasets?
+        - Check not_suitable_for: eliminate datasets that exclude this analysis type
+        - If EXACTLY ONE dataset remains suitable → SELECT IT, set requires_clarification=false
+        - If MULTIPLE datasets remain suitable → GO TO STEP 4
+
+        **STEP 4: Ask Follow-Up (MANDATORY IF STEPS 1-3 DIDN'T RESOLVE)**
+        - Set requires_clarification=true
+        - Set clarification_question with specific options
+        - Set candidate_actual_tables with competing tables
+        - Set final_actual_tables=[]
+
+        RESPONSE FORMAT :
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
+        {
+            "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
+            "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
+            "requires_clarification": false if dataset found else true,
+            "clarification_question": null if dataset found else ask question,
+            "candidate_actual_tables": []  ,
+            "selection_reasoning": "Brief explanation of selection based on attribute/metric match"
+        }
+
+        CRITICAL RULES:
+        - candidate_actual_tables should be populated only when requires_clarification: true
+        - NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions
+        - You MUST execute all 4 steps in order until one resolves
+        -You MUST show your work for each step in selection_reasoning
+        -If steps 1-3 don't resolve to exactly ONE table, you MUST ask clarification (step 4)
+        - Do NOT make assumptions about "better" tables - follow the process
+
+
+router resposne {
+    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
+    "functional_names": ["Actuals vs Forecast Analysis"],
+    "requires_clarification": false,
+    "clarification_question": null,
+    "candidate_actual_tables": [],
+    "selection_reasoning": "STEP 1: Found keyword matches - 'variance' relates to forecast analysis patterns, 'volume' appears in key_measures, 'rate' relates to rate analysis capabilities, and 'PBM' matches product category context. STEP 2: Required columns extracted: line of business (LOB), product category, volume, rate, time period (May-June 2025). The actuals_vs_forecast_analysis table contains all required dimensions: 'line of business', 'product category', 'volume' in key_measures, and monthly temporal granularity via transaction_date. The claim_transaction table lacks the variance analysis capability needed for rate volume variance analysis. STEP 3: Query pattern 'rate volume variance' aligns with 'actuals vs forecast' and 'budget comparison' patterns in the actuals_vs_forecast_analysis table, while claim-level analysis is not suitable for variance analysis. Selected actuals_vs_forecast_analysis as it uniquely supports variance analysis at the LOB and product category level with the required temporal granularity."
+}
+
+
+
+
 selection_prompt = f"""
 You are a dataset router. You MUST follow this EXACT 4-step process. Do NOT skip steps or make assumptions.
 

@@ -1,25 +1,64 @@
-{
-            "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-            "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
-            "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, rate/volume analysis",
-            "key_measures": ["revenue", "expense", "WAC", "AWP", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "revenue per script", "volume", "Generic dispensing ratio/GDR"],
-            "key_dimensions": ["claim identifiers", "claim status", "client id/Client name/Client type", "carrier/account/group/CAG", "pharmacy name/NPI/Pharmacy type", "drug name/ NDC Code", "therapy class", "GPI", "line of business", "brand vs generic", "product category", "state code", "member date of birth", "member sex", "submit date", "year", "month", "quarter"],
-            "query_patterns": ["claim-level financial analysis", "client-level analysis", "drug and therapy class performance", "manufacturer-level insights", "revenue per script and GDR metrics", "line-of-business tracking", "daily and monthly trend analysis", "rate analysis", "pharmacy performance", "member usage analysis"],
-            "not_suitable_for": ["budget planning", "forecast generation", "ledger-level summaries"],
-            "grain": "claim_transaction",
-            "temporal": "daily via submit_date"
-        },
-        {
-            "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
-            "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for forecast analysis and planning at LOB level.",
-            "key_measures": ["revenue", "IOI", "total membership", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "amount or count", "expense", "volume"],
-            "key_dimensions": ["ledger type", "line of business", "product category", "product subcategory level 1", "product subcategory level 2", "transaction date", "year", "month", "quarter"],
-            "query_patterns": ["actuals vs forecast", "budget comparison"],
-            "not_suitable_for": ["claim-level analysis", "daily granularity", "client-specific analysis"],
-            "grain": "aggregated_metrics",
-            "temporal": "monthly/quarterly/yearly via transaction_date"
-        }
+selection_prompt = f"""
+You are a dataset router. You MUST follow this EXACT 4-step process. Do NOT skip steps or make assumptions.
 
+USER QUESTION: "{user_question}"
+
+AVAILABLE DATASETS:
+{json.dumps(search_results[:5], indent=2)}
+
+MANDATORY 4-STEP PROCESS:
+
+**STEP 1: Keyword Match (CHECK FIRST)**
+For each dataset, scan the user question for these matches:
+- Words that appear in table_name, purpose, core_capabilities, or query_patterns
+- Look for: "claim", "rate", "therapy", "pharmacy", "member", "budget", "forecast", "ledger", "variance", etc.
+- If EXACTLY ONE dataset has keyword matches → SELECT IT, set requires_clarification=false
+- If MULTIPLE datasets have keyword matches OR NO keywords found → GO TO STEP 2
+- You MUST document which keywords you found for each dataset
+
+**STEP 2: Column Match (CHECK IF STEP 1 DIDN'T RESOLVE)**
+- Extract ALL required columns from user question (LOB, product category, volume, rate, etc.)
+- For each remaining dataset: count how many required columns exist in key_measures + key_dimensions
+- If EXACTLY ONE dataset has ALL required columns → SELECT IT, set requires_clarification=false  
+- If MULTIPLE datasets have all required columns → GO TO STEP 3
+- You MUST list the required columns you extracted
+
+**STEP 3: Suitability Check (CHECK IF STEP 2 DIDN'T RESOLVE)**
+- Check query_patterns: does user question match patterns in remaining datasets?
+- Check not_suitable_for: eliminate datasets that exclude this analysis type
+- If EXACTLY ONE dataset remains suitable → SELECT IT, set requires_clarification=false
+- If MULTIPLE datasets remain suitable → GO TO STEP 4
+
+**STEP 4: Ask Follow-Up (MANDATORY IF STEPS 1-3 DIDN'T RESOLVE)**
+- Set requires_clarification=true
+- Set clarification_question with specific options
+- Set candidate_actual_tables with competing tables
+- Set final_actual_tables=[]
+
+RESPONSE FORMAT (JSON only):
+{{
+    "final_actual_tables": ["table_name"] or [],
+    "functional_names": ["friendly_name"] or [],
+    "requires_clarification": false or true,
+    "clarification_question": null or "question text",
+    "candidate_actual_tables": [] or ["table1", "table2"],
+    "selection_reasoning": "Step X resolved: [exact reason with evidence from dataset metadata]"
+}}
+
+CRITICAL RULES:
+1. You MUST execute all 4 steps in order until one resolves
+2. You MUST show your work for each step in selection_reasoning
+3. If steps 1-3 don't resolve to exactly ONE table, you MUST ask clarification (step 4)
+4. Do NOT make assumptions about "better" tables - follow the process
+5. Do NOT skip keyword matching in step 1
+
+Example reasoning format:
+"Step 1: Found keyword 'rate' in claims table core_capabilities but not in forecast table. Selected claims table."
+
+OR
+
+"Step 1: No unique keywords found. Step 2: Both tables have required columns LOB, product category, volume. Step 3: Both tables suitable. Step 4: Asking clarification."
+"""
 
 
 def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:

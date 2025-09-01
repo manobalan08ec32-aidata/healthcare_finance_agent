@@ -31,163 +31,230 @@ class LLMNavigationController:
             return self._analyze_user_input_unified(current_question, existing_domain_selection, total_retry_count, state)
     
     def _analyze_user_input_unified(self, current_question: str, existing_domain_selection: List[str], total_retry_count: int, state: AgentState) -> Dict[str, any]:
-    """LLM CALL 1: Unified analysis with system knowledge and clearer decision logic - FIXED FOR CLAUDE"""
-    
-    unified_prompt = f"""You are a healthcare finance analytics assistant specialized in pharmacy and healthcare performance data analysis.
+        
+        unified_prompt = f"""You are a healthcare finance analytics assistant specialized in pharmacy and healthcare performance data analysis.
 
-SYSTEM KNOWLEDGE - WHAT THIS CHATBOT IS BUILT FOR:
+        SYSTEM KNOWLEDGE - WHAT THIS CHATBOT IS BUILT FOR:
 
-**Primary Datasets:**
-1. **Ledger Dataset** - Analytics-ready dataset for comparing actual results, forecast scenarios (8+4, 2+10, 5+7), and budget plans (BUDGET, GAAP) across key pharmacy and healthcare performance metrics. Measures include prescription counts (total, adjusted, 30-day, 90-day), revenue, cost of goods sold (COGS) after reclassification, SG&A after reclassification, IOI, and total membership. Analysis can be segmented by line of business (Community & State, Employer & Individual, Medicare & Retirement, Optum, External), product category and sub-categories, state/region, and time periods.
+        ## Dataset 1: Actuals vs Forecast Analysis
+        **Attributes:** Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)  
+        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis
 
-2. **Pharmacy/PBM Claims Dataset** - Analytics-ready dataset for pharmacy benefit management and claims analysis with the same metric structure as Ledger Dataset, supporting variance analysis, mix shift tracking, and trend reporting.
+        ## Dataset 2: PBM & Pharmacy Claim Transaction
+        **Attributes:** Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status, Client Type, Pharmacy Type, Member Age group, State (Paid/Reversed/Rejected)  
+        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)
 
-**Supported Analysis Types:**
-- Variance analysis (actual vs forecast/budget)
-- Mix shift tracking by LOB or product category
-- Trend reporting across timeframes
-- Prescription volume analysis
-- Revenue and cost analysis
-- Membership analytics
+        **Supported Analysis Types:**
+        - Variance analysis (actual vs forecast/budget)
+        - Mix shift tracking by LOB or product category
+        - Trend reporting across timeframes
+        - Prescription volume analysis
+        - Revenue and cost analysis
+        - Membership analytics
 
-**Available Product Categories:**
-- Home Delivery (HDP) - Home delivery pharmacy services
-- Specialty (SP) - Specialty pharmacy services  
-- PBM - Pharmacy Benefit Management services
+        **Available Product Categories:**
+        - Home Delivery (HDP) - Home delivery pharmacy services
+        - Specialty (SP) - Specialty pharmacy services  
+        - PBM - Pharmacy Benefit Management services
 
-NOW ANALYZE THIS USER INPUT:
-User Input: "{current_question}"
-Existing Domain Context: {existing_domain_selection if existing_domain_selection else "None"}
+        NOW ANALYZE THIS USER INPUT:
+        User Input: "{current_question}"
+        Existing Domain Context: {existing_domain_selection if existing_domain_selection else "None"}
 
-=== TASK 1: CLASSIFY INPUT TYPE ===
+        === TASK 1: CLASSIFY INPUT TYPE ===
 
-Classify the user input into one of these categories:
+        Classify the user input into one of these categories:
 
-1. **GREETING** - Simple greetings, capability questions, general chat
-Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning"
+        1. **GREETING** - Simple greetings, capability questions, general chat
+        Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning"
 
-2. **DML/DDL** - Data modification requests (not supported)
-Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
+        2. **DML/DDL** - Data modification requests (not supported)
+        Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
 
-3. **BUSINESS_QUESTION** - Questions about data, analytics, healthcare finance
-Examples: "Show me revenue", "Prescription counts", "Cost analysis", "Performance metrics"
+        3. **BUSINESS_QUESTION** - Questions about data, analytics, healthcare finance
+        Examples: "Show me revenue", "Prescription counts", "Cost analysis", "Performance metrics"
 
-BUSINESS QUESTION VALIDATION RULES:
-✅ VALID: Healthcare/pharmacy related queries about metrics, trends, analysis
-✅ VALID: Vague but analytics-related: "show me data", "performance metrics"
-❌ INVALID: Completely unrelated topics: "weather", "sports", "personal advice"
+        BUSINESS QUESTION VALIDATION RULES:
+        ✅ VALID: Healthcare/pharmacy related queries about metrics, trends, analysis
+        ✅ VALID: Vague but analytics-related: "show me data", "performance metrics"
+        ❌ INVALID: Completely unrelated topics: "weather", "sports", "personal advice"
 
-=== TASK 2: EXTRACT DOMAIN CONTEXT ===
+        === TASK 2: EXTRACT DOMAIN CONTEXT ===
 
-For VALID business questions only, extract product category mentions:
+        For VALID business questions only, extract product category mentions:
 
-**Domain Detection Rules - CASE INSENSITIVE MATCHING:**
-- Look for exact text matches (case insensitive): "specialty", "home delivery", "pbm"
-- Look for abbreviations: "hdp", "sp" 
-- Look for specific phrases: "home delivery pharmacy", "specialty pharmacy", "pharmacy benefit management"
-- Multiple domains can be detected in one input
+        **Domain Detection Rules - CASE INSENSITIVE MATCHING:**
+        - Look for exact text matches (case insensitive): "specialty", "home delivery", "pbm"
+        - Look for abbreviations: "hdp", "sp" 
+        - Look for specific phrases: "home delivery pharmacy", "specialty pharmacy", "pharmacy benefit management"
+        - Multiple domains can be detected in one input
 
-**Exact Domain Mapping (IMPORTANT - Match these exactly):**
-- If input contains "home delivery" OR "hdp" (case insensitive) → include "Home Delivery" in domains
-- If input contains "specialty" OR "sp" (case insensitive) → include "Specialty" in domains  
-- If input contains "pbm" (case insensitive) → include "PBM" in domains
-- If input contains "all" OR "all categories" (case insensitive) → domains = ["Home Delivery", "Specialty", "PBM"]
+        **Exact Domain Mapping (IMPORTANT - Match these exactly):**
+        - If input contains "home delivery" OR "hdp" (case insensitive) → include "Home Delivery" in domains
+        - If input contains "specialty" OR "sp" (case insensitive) → include "Specialty" in domains  
+        - If input contains "pbm" (case insensitive) → include "PBM" in domains
+        - If input contains "all" OR "all categories" (case insensitive) → domains = ["Home Delivery", "Specialty", "PBM"]
 
-**Domain Found Logic:**
-- If ANY domain explicitly mentioned → domain_found = true, detected_domains = [list of found domains]
-- If NO domain mentioned but valid business question → domain_found = false, detected_domains = []
+        **Domain Found Logic:**
+        - If ANY domain explicitly mentioned → domain_found = true, detected_domains = [list of found domains]
+        - If NO domain mentioned but valid business question → domain_found = false, detected_domains = []
 
-**CRITICAL: PBM Detection Examples:**
-- "Show me PBM data" → domain_found = true, detected_domains = ["PBM"]
-- "PBM revenue" → domain_found = true, detected_domains = ["PBM"] 
-- "pbm costs" → domain_found = true, detected_domains = ["PBM"]
-- "What is PBM performance?" → domain_found = true, detected_domains = ["PBM"]
+        **CRITICAL: PBM Detection Examples:**
+        - "Show me PBM data" → domain_found = true, detected_domains = ["PBM"]
+        - "PBM revenue" → domain_found = true, detected_domains = ["PBM"] 
+        - "pbm costs" → domain_found = true, detected_domains = ["PBM"]
+        - "What is PBM performance?" → domain_found = true, detected_domains = ["PBM"]
 
-=== TASK 3: GENERATE RESPONSE MESSAGE ===
+        === TASK 3: GENERATE RESPONSE MESSAGE ===
 
-Based on input type:
+        Based on input type:
 
-- **GREETING**: Friendly welcome explaining your capabilities (2-3 lines)
-- **DML/DDL**: Polite refusal explaining you only analyze data (2-3 lines)
-- **VALID BUSINESS_QUESTION**: Empty string "" (will be processed further)
-- **INVALID BUSINESS_QUESTION**: Helpful redirect to your capabilities (2-3 lines)
+        - **GREETING** - Simple greetings, capability questions, general chat, or questions about what information/datasets are available.
+            -Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning", 
+            -"What information do you have about claims?", 
+            -"What data is available for claims?", 
+            -"Specifically within claims, what information you have?"
 
-=== EXAMPLES FOR CLAUDE ===
+        - **DML/DDL**: Polite refusal explaining you only analyze data (2-3 lines)
+        - **VALID BUSINESS_QUESTION**: Empty string "" (will be processed further)
+        - **INVALID BUSINESS_QUESTION**: Helpful redirect to your capabilities (2-3 lines)
 
-Input: "Hi" 
-→ input_type="greeting", valid=false, domain_found=false, domains=[], response="Hello! I'm your healthcare finance analytics assistant..."
+        === EXAMPLES FOR CLAUDE ===
 
-Input: "What can you do?"
-→ input_type="greeting", valid=false, domain_found=false, domains=[], response="I can help analyze pharmacy data..."
+        Input: "Hi" 
+        → input_type="greeting", valid=false, domain_found=false, domains=[], response="Hello! I'm your healthcare finance analytics assistant..."
 
-Input: "INSERT new data"
-→ input_type="dml_ddl", valid=false, domain_found=false, domains=[], response="I can only analyze data, not modify it..."
+        Input: "What can you do?"
+        → input_type="greeting", valid=false, domain_found=false, domains=[], response="I can help analyze pharmacy data..."
+        
+        Input: "Specifically within claims, what information you have"
+        → input_type="greeting", valid=false, domain_found=false, domains=[], response="Here is the information I have about claims: ..."
 
-Input: "Show me revenue"
-→ input_type="business_question", valid=true, domain_found=false, domains=[], response=""
+        Input: "INSERT new data"
+        → input_type="dml_ddl", valid=false, domain_found=false, domains=[], response="I can only analyze data, not modify it..."
 
-Input: "PBM revenue trends"
-→ input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
+        Input: "Show me revenue"
+        → input_type="business_question", valid=true, domain_found=false, domains=[], response=""
 
-Input: "Show me PBM data"
-→ input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
+        Input: "PBM revenue trends"
+        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
 
-Input: "pbm costs"
-→ input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
+        Input: "Show me PBM data"
+        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
 
-Input: "Specialty and HDP costs"
-→ input_type="business_question", valid=true, domain_found=true, domains=["Specialty", "Home Delivery"], response=""
+        Input: "pbm costs"
+        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
 
-Input: "Tell me about the weather"
-→ input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics..."
+        Input: "Specialty and HDP costs"
+        → input_type="business_question", valid=true, domain_found=true, domains=["Specialty", "Home Delivery"], response=""
 
-RESPONSE FORMAT - MUST BE VALID JSON:
-{{
-    "input_type": "greeting|dml_ddl|business_question",
-    "is_valid_business_question": true,
-    "domain_found": true,
-    "detected_domains": ["PBM"],
-    "response_message": ""
-}}
+        Input: "Tell me about the weather"
+        → input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics..."
 
-Important: Return ONLY valid JSON. No additional text, markdown, or formatting."""
-    
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            llm_response = self.db_client.call_sonnet_3_api([
-                {"role": "user", "content": unified_prompt}
-            ])
-            print("llm response -1",llm_response)
-            response_json = json.loads(llm_response)
-            input_type = response_json.get('input_type', 'business_question')
-            is_valid_business_question = response_json.get('is_valid_business_question', False)
-            domain_found = response_json.get('domain_found', False)
-            detected_domains = response_json.get('detected_domains', [])
-            response_message = response_json.get('response_message', '')
-            
-            total_retry_count += retry_count
-            
-            # Handle greeting or DML/DDL
-            if input_type in ['greeting', 'dml_ddl']:
-                return {
-                    'rewritten_question': current_question,
-                    'question_type': 'what',
-                    'next_agent': 'END',
-                    'next_agent_disp': 'Greeting response' if input_type == 'greeting' else 'DML/DDL not supported',
-                    'requires_domain_clarification': False,
-                    'domain_followup_question': None,
-                    'domain_selection': None,
-                    'greeting_response': response_message,
-                    'is_dml_ddl': input_type == 'dml_ddl',
-                    'llm_retry_count': total_retry_count,
-                    'pending_business_question': ''
-                }
-            
-            # Handle invalid business question
-            if input_type == 'business_question' and not is_valid_business_question:
+        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+        {{
+            "input_type": "greeting|dml_ddl|business_question",
+            "is_valid_business_question": true,
+            "domain_found": true,
+            "detected_domains": ["PBM"],
+            "response_message": ""
+        }}
+
+        Important: Return ONLY valid JSON. No additional text, markdown, or formatting."""
+        
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                llm_response = self.db_client.call_claude_api_endpoint([
+                    {"role": "user", "content": unified_prompt}
+                ])
+                print("llm response -1", llm_response)
+                response_json = json.loads(llm_response)
+                input_type = response_json.get('input_type', 'business_question')
+                is_valid_business_question = response_json.get('is_valid_business_question', False)
+                domain_found = response_json.get('domain_found', False)
+                detected_domains = response_json.get('detected_domains', [])
+                response_message = response_json.get('response_message', '')
+                
+                total_retry_count += retry_count
+                
+                # Handle greeting or DML/DDL
+                if input_type in ['greeting', 'dml_ddl']:
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': 'Greeting response' if input_type == 'greeting' else 'DML/DDL not supported',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': None,
+                        'greeting_response': response_message,
+                        'is_dml_ddl': input_type == 'dml_ddl',
+                        'llm_retry_count': total_retry_count,
+                        'pending_business_question': ''
+                    }
+                
+                # Handle invalid business question
+                if input_type == 'business_question' and not is_valid_business_question:
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': 'Invalid question - helpful redirect',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': None,
+                        'greeting_response': response_message,
+                        'is_dml_ddl': False,
+                        'llm_retry_count': total_retry_count,
+                        'pending_business_question': ''
+                    }
+                
+                # Handle valid business question
+                if input_type == 'business_question' and is_valid_business_question:
+                    
+                    # Determine final domain selection
+                    final_domain_selection = None
+                    needs_clarification = False
+                    
+                    if domain_found and detected_domains:
+                        # Domain found in question
+                        final_domain_selection = detected_domains
+                    elif existing_domain_selection:
+                        # Use existing domain
+                        final_domain_selection = existing_domain_selection
+                    else:
+                        # Need domain clarification
+                        needs_clarification = True
+                    
+                    if needs_clarification:
+                        # Store business question and ask for domain
+                        followup_question = """I understand you're asking about healthcare finance data. To provide the most accurate analysis, please specify which product category you're interested in:
+
+1. **Home Delivery (HDP)** - Home delivery pharmacy services
+2. **Specialty** - Specialty pharmacy services  
+3. **PBM** - Pharmacy Benefit Management services
+
+You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and Specialty), or 'ALL' for comprehensive analysis."""
+                        
+                        return {
+                            'rewritten_question': current_question,
+                            'question_type': 'what',
+                            'next_agent': 'END',
+                            'next_agent_disp': 'Waiting for domain selection',
+                            'requires_domain_clarification': True,
+                            'domain_followup_question': followup_question,
+                            'domain_selection': None,
+                            'llm_retry_count': total_retry_count,
+                            'pending_business_question': current_question  # STORE business question
+                        }
+                    else:
+                        # Process business question with domain - LLM CALL 2
+                        return self._rewrite_and_classify_question(current_question, final_domain_selection, total_retry_count, state)
+                
+                # Fallback - treat as invalid business question
                 return {
                     'rewritten_question': current_question,
                     'question_type': 'what',
@@ -196,98 +263,39 @@ Important: Return ONLY valid JSON. No additional text, markdown, or formatting."
                     'requires_domain_clarification': False,
                     'domain_followup_question': None,
                     'domain_selection': None,
-                    'greeting_response': response_message,
+                    'greeting_response': "I specialize in healthcare finance analytics. I can help you analyze prescription counts, revenue, costs, membership data, and performance metrics across Home Delivery, Specialty, and PBM product categories. What would you like to analyze?",
                     'is_dml_ddl': False,
                     'llm_retry_count': total_retry_count,
                     'pending_business_question': ''
                 }
-            
-            # Handle valid business question
-            if input_type == 'business_question' and is_valid_business_question:
-                
-                # Determine final domain selection
-                final_domain_selection = None
-                needs_clarification = False
-                
-                if domain_found and detected_domains:
-                    # Domain found in question
-                    final_domain_selection = detected_domains
-                elif existing_domain_selection:
-                    # Use existing domain
-                    final_domain_selection = existing_domain_selection
-                else:
-                    # Need domain clarification
-                    needs_clarification = True
-                
-                if needs_clarification:
-                    # Store business question and ask for domain
-                    followup_question = """I understand you're asking about healthcare finance data. To provide the most accurate analysis, please specify which product category you're interested in:
-
-1. **Home Delivery (HDP)** - Home delivery pharmacy services
-2. **Specialty** - Specialty pharmacy services  
-3. **PBM** - Pharmacy Benefit Management services
-
-You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and Specialty), or 'ALL' for comprehensive analysis."""
                     
+            except Exception as e:
+                retry_count += 1
+                print(f"❌ Unified analysis attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying unified analysis... ({retry_count}/{max_retries})")
+                    import time
+                    time.sleep(2 ** retry_count)
+                    continue
+                else:
+                    # REMOVE FALLBACK - Return error instead
+                    print(f"❌ All unified analysis retries failed: {str(e)}")
                     return {
                         'rewritten_question': current_question,
                         'question_type': 'what',
                         'next_agent': 'END',
-                        'next_agent_disp': 'Waiting for domain selection',
-                        'requires_domain_clarification': True,
-                        'domain_followup_question': followup_question,
+                        'next_agent_disp': 'Model serving endpoint failed',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
                         'domain_selection': None,
-                        'llm_retry_count': total_retry_count,
-                        'pending_business_question': current_question  # STORE business question
+                        'greeting_response': "Model serving endpoint failed. Please try again after some time.",
+                        'is_dml_ddl': False,
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts"
                     }
-                else:
-                    # Process business question with domain - LLM CALL 2
-                    return self._rewrite_and_classify_question(current_question, final_domain_selection, total_retry_count, state)
-            
-            # Fallback - treat as invalid business question
-            return {
-                'rewritten_question': current_question,
-                'question_type': 'what',
-                'next_agent': 'END',
-                'next_agent_disp': 'Invalid question - helpful redirect',
-                'requires_domain_clarification': False,
-                'domain_followup_question': None,
-                'domain_selection': None,
-                'greeting_response': "I specialize in healthcare finance analytics. I can help you analyze prescription counts, revenue, costs, membership data, and performance metrics across Home Delivery, Specialty, and PBM product categories. What would you like to analyze?",
-                'is_dml_ddl': False,
-                'llm_retry_count': total_retry_count,
-                'pending_business_question': ''
-            }
-                
-        except Exception as e:
-            retry_count += 1
-            print(f"❌ Unified analysis attempt {retry_count} failed: {str(e)}")
-            
-            if retry_count < max_retries:
-                print(f"🔄 Retrying unified analysis... ({retry_count}/{max_retries})")
-                import time
-                time.sleep(2 ** retry_count)
-                continue
-            else:
-                # REMOVE FALLBACK - Return error instead
-                print(f"❌ All unified analysis retries failed: {str(e)}")
-                return {
-                    'rewritten_question': current_question,
-                    'question_type': 'what',
-                    'next_agent': 'END',
-                    'next_agent_disp': 'Model serving endpoint failed',
-                    'requires_domain_clarification': False,
-                    'domain_followup_question': None,
-                    'domain_selection': None,
-                    'greeting_response': "Model serving endpoint failed. Please try again after some time.",
-                    'is_dml_ddl': False,
-                    'llm_retry_count': total_retry_count + retry_count,
-                    'pending_business_question': '',
-                    'error': True,
-                    'error_message': f"Model serving endpoint failed after {max_retries} attempts"
-                }
-
-
 
     def _handle_domain_clarification_response(self, domain_response: str, pending_business_question: str, existing_domain_selection: List[str], total_retry_count: int, state: AgentState) -> Dict[str, any]:
         """Handle domain clarification response using the same unified analysis"""
@@ -320,9 +328,9 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
             }
 
     def _analyze_domain_response_unified(self, domain_response: str, total_retry_count: int) -> Dict[str, any]:
-                """Analyze domain clarification response with smart error handling - FIXED FOR CLAUDE"""
+        """Analyze domain clarification response with smart error handling - FIXED FOR CLAUDE"""
                 
-                domain_parse_prompt = f"""Parse a user's domain selection response and provide intelligent feedback for invalid responses.
+        domain_parse_prompt = f"""Parse a user's domain selection response and provide intelligent feedback for invalid responses.
 
             User Response: "{domain_response}"
 
@@ -378,7 +386,7 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
             - "I don't know" → valid=false, domains=[], error_type="confused"
             - "What is revenue?" → valid=false, domains=[], error_type="new_question"
 
-            RESPONSE FORMAT - MUST BE VALID JSON:
+            The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
             {{
                 "valid_domain_selection": true,
                 "selected_domains": ["PBM"],
@@ -387,46 +395,45 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
             }}
 
             Important: Return ONLY valid JSON. No additional text, markdown, or formatting."""
-    
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            llm_response = self.db_client.call_sonnet_3_api([
-                {"role": "user", "content": domain_parse_prompt}
-            ])
-            print("response-2",llm_response)
-            response_json = json.loads(llm_response)
-            return {
-                'valid_domain_selection': response_json.get('valid_domain_selection', False),
-                'selected_domains': response_json.get('selected_domains', []),
-                'error_type': response_json.get('error_type'),
-                'smart_followup_message': response_json.get('smart_followup_message'),
-                'retry_count': retry_count
-            }
-                
-        except Exception as e:
-            retry_count += 1
-            print(f"❌ Domain response analysis attempt {retry_count} failed: {str(e)}")
-            
-            if self._is_retryable_error(e) and retry_count < max_retries:
-                print(f"🔄 Retrying domain response analysis... ({retry_count}/{max_retries})")
-                import time
-                time.sleep(2 ** retry_count)
-                continue
-            else:
-                # REMOVE FALLBACK - Return error instead
-                print(f"❌ All domain response analysis retries failed: {str(e)}")
+        
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                llm_response = self.db_client.call_claude_api_endpoint([
+                    {"role": "user", "content": domain_parse_prompt}
+                ])
+                response_json = json.loads(llm_response)
                 return {
-                    'valid_domain_selection': False,
-                    'selected_domains': [],
-                    'error_type': 'model_endpoint_failed',
-                    'smart_followup_message': "Model serving endpoint failed. Please try again after some time.",
-                    'retry_count': retry_count,
-                    'error': True,
-                    'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}"
+                    'valid_domain_selection': response_json.get('valid_domain_selection', False),
+                    'selected_domains': response_json.get('selected_domains', []),
+                    'error_type': response_json.get('error_type'),
+                    'smart_followup_message': response_json.get('smart_followup_message'),
+                    'retry_count': retry_count
                 }
+                    
+            except Exception as e:
+                retry_count += 1
+                print(f"❌ Domain response analysis attempt {retry_count} failed: {str(e)}")
+                
+                if self._is_retryable_error(e) and retry_count < max_retries:
+                    print(f"🔄 Retrying domain response analysis... ({retry_count}/{max_retries})")
+                    import time
+                    time.sleep(2 ** retry_count)
+                    continue
+                else:
+                    # REMOVE FALLBACK - Return error instead
+                    print(f"❌ All domain response analysis retries failed: {str(e)}")
+                    return {
+                        'valid_domain_selection': False,
+                        'selected_domains': [],
+                        'error_type': 'model_endpoint_failed',
+                        'smart_followup_message': "Model serving endpoint failed. Please try again after some time.",
+                        'retry_count': retry_count,
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}"
+                    }
                 
     def _rewrite_and_classify_question(self, business_question: str, domain_selection: List[str], total_retry_count: int, state: AgentState) -> Dict[str, any]:
         """LLM CALL 2: Rewrite question + classify type with smart context inheritance"""
@@ -527,7 +534,6 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
 
                 The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
 
-
                 {{
                 "context_type": "new_independent|true_followup|filter_refinement|metric_expansion",
                 "inherited_context": "specific context inherited from previous question or 'none' if independent",
@@ -538,14 +544,13 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
                 """
 
         max_retries = 3
-        retry_count = 0
+        retry_count = 0 
         
         while retry_count < max_retries:
             try:
-                llm_response = self.db_client.call_sonnet_3_api([
+                llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": rewrite_classify_prompt}
                 ])
-                print("response-3",llm_response)
                 response_json = json.loads(llm_response)
                 context_type = response_json.get('context_type', 'new_independent')
                 inherited_context = response_json.get('inherited_context', '')

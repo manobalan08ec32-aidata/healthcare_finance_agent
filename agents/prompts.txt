@@ -35,33 +35,37 @@ def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) 
         AVAILABLE DATASETS:
         {json.dumps(search_results, indent=2)}
 
-        DECISION PROCESS (Follow in exact order):
-
-**Step 1: Keyword Match**
-- "claim", "claims", "claim revenue", "claim data" → claim_transaction table
-- "budget", "forecast", "actuals vs forecast", "planning", "ledger" → actuals_vs_forecast table
-- If clear keyword match found → STOP, select that table
+        **Step 1: Keyword Match**
+- Look for specific keywords in the user question that directly indicate a dataset type
+- Match keywords to table names, purpose descriptions, or core_capabilities
+- Examples: "claim" → claim_transaction tables, "forecast/budget" → forecast tables, "member" → member tables
+- If ONE clear keyword match found → STOP, select that table
+- If multiple tables match same keywords → Continue to Step 2
 
 **Step 2: Column Match**  
 - Extract required columns/attributes from user question
-- Check which tables have ALL required columns in key_measures and key_dimensions
+- Check which tables have ALL required columns in key_measures and key_dimensions  
+- Score each table by percentage of required columns available
 - If only ONE table has all required columns → STOP, select that table
+- If multiple tables have all required columns → Continue to Step 3
 
 **Step 3: Suitability Check**
-- Check query_patterns - does user question match any patterns?
-- Check not_suitable_for - is user question type excluded?
-- If only ONE table is suitable → STOP, select that table
+- Check query_patterns - does user question type match any patterns in remaining tables?
+- Check not_suitable_for - eliminate tables that explicitly exclude this analysis type
+- Check purpose and core_capabilities for best alignment with user intent
+- If only ONE table remains suitable → STOP, select that table
+- If multiple tables remain suitable → Continue to Step 4
 
 **Step 4: Ask Follow-up Question**
 - If multiple tables still match after Steps 1-3 → ASK CLARIFICATION
 - If question needs multi-table analysis → ASK CLARIFICATION
 
 FOLLOW-UP SCENARIOS:
-1. **Ambiguity**: Multiple tables have same required columns and both are suitable
-   - Ask: "Which dataset: claim-level transactions or ledger-level financial data?"
+1. **Ambiguity**: Multiple tables have required columns and are suitable after all 3 steps
+   - Ask: "Multiple datasets match your requirements. Which type of analysis: [list top 2-3 dataset types]?"
 
-2. **Multi-table Analysis**: Query explicitly needs data from both tables  
-   - Ask: "This analysis requires multiple datasets. Proceed with both?"
+2. **Multi-table Analysis**: Query explicitly needs data from multiple different dataset types  
+   - Ask: "This analysis requires multiple datasets. Proceed with: [list dataset types]?"
         
         RESPONSE FORMAT :
         The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```

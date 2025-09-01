@@ -35,56 +35,33 @@ def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) 
         AVAILABLE DATASETS:
         {json.dumps(search_results, indent=2)}
 
-        DECISION PROCESS:
-        1. **Keyword-Based Primary Routing**
-        - If question contains "claim", "claims", "claim revenue", "claim data" → STRONGLY favor claim_transaction table
-        - If question contains "budget", "forecast", "actuals vs forecast", "planning" → STRONGLY favor actuals_vs_forecast table
-        - If question contains "ledger" → favor actuals_vs_forecast table
-        - IMPORTANT: "Claim revenue" means revenue FROM individual claim transactions, not ledger summaries
+        DECISION PROCESS (Follow in exact order):
 
-        2. **Match Attributes and Metrics**
-        - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
-        - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
-        - Consider synonyms and related terms (e.g., 'scripts' relates to prescription volume)
+**Step 1: Keyword Match**
+- "claim", "claims", "claim revenue", "claim data" → claim_transaction table
+- "budget", "forecast", "actuals vs forecast", "planning", "ledger" → actuals_vs_forecast table
+- If clear keyword match found → STOP, select that table
 
-        3. **Check Time Granularity**
-        - Ensure the dataset supports the required time grain (e.g., monthly, daily)
-        - claim_transaction supports daily granularity via submit_date
-        - actuals_vs_forecast supports monthly/quarterly/yearly via transaction_date
+**Step 2: Column Match**  
+- Extract required columns/attributes from user question
+- Check which tables have ALL required columns in key_measures and key_dimensions
+- If only ONE table has all required columns → STOP, select that table
 
-        4. **Evaluate Purpose and Suitability**
-        - Match the question's analytical purpose with dataset purpose
-        - If dataset is marked as 'not_suitable_for' the type of analysis requested, exclude it ONLY if no keyword match from step 1
-        - If dataset is marked in 'query_patterns' or 'core_capabilities' for the analysis type, increase relevance
+**Step 3: Suitability Check**
+- Check query_patterns - does user question match any patterns?
+- Check not_suitable_for - is user question type excluded?
+- If only ONE table is suitable → STOP, select that table
 
-        5. **Multi-Table Analysis Detection**
-        - Detect if query requires joining data across tables (e.g., claim amounts from different tables)
-        - Identify queries that benefit from complementary data perspectives (volumes + financials from different sources)
-        - Recognize queries needing separate analysis on related datasets (demographics + transactions)
+**Step 4: Ask Follow-up Question**
+- If multiple tables still match after Steps 1-3 → ASK CLARIFICATION
+- If question needs multi-table analysis → ASK CLARIFICATION
 
-        6. **Dataset Selection Strategy**
-        - Choose the single best dataset that satisfies the above criteria
-        - Select multiple datasets only when analysis inherently requires multiple tables
-        - When in doubt between tables and no clear keyword match, prefer the table with better attribute coverage
+FOLLOW-UP SCENARIOS:
+1. **Ambiguity**: Multiple tables have same required columns and both are suitable
+   - Ask: "Which dataset: claim-level transactions or ledger-level financial data?"
 
-        WHEN TO ASK FOLLOW-UP:
-
-        **Scenario 1: Keyword Ambiguity**
-        - When both tables have the requested metrics AND user didn't specify distinguishing keywords
-        - Examples: "revenue trends", "pharmacy performance" without claim/forecast context
-        - Ask: "Do you need claim-level transaction data or ledger-level financial summaries?"
-
-        **Scenario 2: Multi-Table Analysis Confirmation**
-        - When query explicitly requires data from different table types
-        - Example: "Compare individual claim patterns with overall budget performance"
-
-        DO NOT ASK FOLLOW-UP FOR THESE (BE DECISIVE):
-        - Time period vagueness with clear keywords (e.g., "claim trends" without LOB) → Use appropriate table based on keywords
-        - Metric questions with dataset indicators (e.g., "GDR analysis", "therapy class performance") → Route directly
-
-        KEY EXAMPLES:
-        CLARIFICATION NEEDED: "revenue trends", "pharmacy performance data"
-        NO CLARIFICATION: "claim revenue July 2025" → claims, "budget vs actuals" → forecast, "GDR trends" → claims
+2. **Multi-table Analysis**: Query explicitly needs data from both tables  
+   - Ask: "This analysis requires multiple datasets. Proceed with both?"
         
         RESPONSE FORMAT :
         The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
@@ -99,7 +76,6 @@ def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) 
         
         CRITICAL RULES:
         - When LLM decides on right dataset(s), ALWAYS set requires_clarification: false and clarification_question: null
-        - Only set requires_clarification: true for the 2 specific scenarios mentioned above
         - Keep clarification_question short and direct when needed (max 20 words)
         - candidate_actual_tables should be populated only when requires_clarification: true
         - NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions

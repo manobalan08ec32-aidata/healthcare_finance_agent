@@ -1,4 +1,24 @@
-
+{
+            "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+            "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
+            "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, rate/volume analysis",
+            "key_measures": ["revenue", "expense", "WAC", "AWP", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "revenue per script", "volume", "Generic dispensing ratio/GDR"],
+            "key_dimensions": ["claim identifiers", "claim status", "client id/Client name/Client type", "carrier/account/group/CAG", "pharmacy name/NPI/Pharmacy type", "drug name/ NDC Code", "therapy class", "GPI", "line of business", "brand vs generic", "product category", "state code", "member date of birth", "member sex", "submit date", "year", "month", "quarter"],
+            "query_patterns": ["claim-level financial analysis", "client-level analysis", "drug and therapy class performance", "manufacturer-level insights", "revenue per script and GDR metrics", "line-of-business tracking", "daily and monthly trend analysis", "rate analysis", "pharmacy performance", "member usage analysis"],
+            "not_suitable_for": ["budget planning", "forecast generation", "ledger-level summaries"],
+            "grain": "claim_transaction",
+            "temporal": "daily via submit_date"
+        },
+        {
+            "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+            "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for forecast analysis and planning at LOB level.",
+            "key_measures": ["revenue", "IOI", "total membership", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "amount or count", "expense", "volume"],
+            "key_dimensions": ["ledger type", "line of business", "product category", "product subcategory level 1", "product subcategory level 2", "transaction date", "year", "month", "quarter"],
+            "query_patterns": ["actuals vs forecast", "budget comparison"],
+            "not_suitable_for": ["claim-level analysis", "daily granularity", "client-specific analysis"],
+            "grain": "aggregated_metrics",
+            "temporal": "monthly/quarterly/yearly via transaction_date"
+        }
 
 
 

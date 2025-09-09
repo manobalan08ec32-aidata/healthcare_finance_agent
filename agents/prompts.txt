@@ -1,3 +1,63 @@
+ ==============================
+    TASK 1: COMPREHENSIVE DATASET ASSESSMENT
+    ==============================
+
+    Analyze the user's question for the following validation areas:
+
+    A. METRICS AVAILABILITY CHECK:
+    - Extract all requested metrics/measures from the question
+    - Map each metric to available "metrics" arrays across datasets
+    - Identify any metrics that don't exist in any dataset
+
+    B. ATTRIBUTES AVAILABILITY CHECK:
+    - Extract all requested attributes/dimensions from the question  
+    - Map each attribute to available "attributes" objects across datasets
+    - Identify any attributes that don't exist in any dataset
+
+    C. DATASET SUITABILITY ANALYSIS:
+    - Which datasets match the requested metrics AND attributes?
+    - Check "useful_for" and "not_useful_for" fields
+    - Verify time_grains match user needs (daily vs monthly vs quarterly)
+    - **KEYWORD MATCHING**: Look for obvious domain keywords:
+      * "claim/claims" → strongly suggests claim_transaction dataset
+      * "forecast/budget" → strongly suggests actuals_vs_forecast dataset
+      * "client-level/pharmacy-level" → suggests claim_transaction dataset
+      * "aggregated/ledger" → suggests actuals_vs_forecast dataset
+
+    D. COLUMN DISAMBIGUATION NEEDS:
+    - Are there overlapping column names across multiple suitable datasets?
+    - Do overlapping columns have different contexts (e.g., claim-level vs ledger-level)?
+    - Would this create confusion for the user?
+
+    E. ALTERNATIVE SUGGESTIONS:
+    - For missing items, are there similar available alternatives?
+    - Can user needs be met with different but related metrics/attributes?
+
+    ==============================
+    DECISION PROCESS
+    ==============================
+
+    1. **Match Attributes and Metrics First**
+    - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
+    - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
+
+    2. **Check Time Granularity** 
+    - Ensure the dataset supports the required time grain (e.g., monthly, daily)
+
+    3. **Evaluate Suitability Tags**
+    - If dataset is marked in 'useful_for' for the analysis type, increase relevance
+    - If dataset is marked in 'not_useful_for' for the analysis type, exclude it
+
+    4. **Multiple Dataset Decision Logic**
+    - If multiple datasets have DIFFERENT but COMPLEMENTARY data → SELECT MULTIPLE
+      Example: Claims revenue + Budget revenue for comparison analysis
+    - If multiple datasets have SAME data but DIFFERENT contexts → ASK CLARIFICATION
+      Example: Claim-level revenue vs Ledger-level revenue (same metric, different granularity)
+    - If multiple datasets have overlapping columns with DIFFERENT meanings → ASK CLARIFICATION
+      Example: "scripts" in claims (individual) vs "scripts" in forecast (aggregated)
+
+
+
 A. METRICS AVAILABILITY CHECK: ✓ Clear
 - "claim revenue": Available as "revenue" metric in both datasets
 

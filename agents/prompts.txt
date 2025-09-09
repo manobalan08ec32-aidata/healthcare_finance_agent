@@ -1,3 +1,45 @@
+==============================
+TASK 1: COMPREHENSIVE ASSESSMENT
+==============================
+
+A. TIME PERIOD CLARITY: ✓ Clear
+- Specific time periods mentioned: May 2025 to June 2025
+
+B. METRIC DEFINITIONS: ❌ Needs Clarification
+- "Rate volume variance" is not clearly defined - what specific formula should be used?
+- Unclear what baseline/comparison period for variance calculation
+
+C. BUSINESS CONTEXT: ✓ Clear
+- LOB (line of business) grouping is clear
+- Product category PBM filtering is specified
+
+D. FORMULA & CALCULATION REQUIREMENTS: ❌ Needs Clarification
+- "Rate volume variance" requires custom formula definition
+- Unclear if this is price variance, volume variance, or a combined metric
+
+E. METADATA MAPPING: ✓ Clear
+- Can map LOB to line_of_business column
+- Can map product category to product_category column
+- Time period maps to month/year columns
+
+**DECISION: REQUEST FOLLOW-UP** - Areas B and D need clarification
+
+<followup>
+I need clarification to generate accurate SQL:
+
+**Rate Volume Variance Formula**: What specific calculation method should I use for "rate volume variance"?
+- Available data: revenue_amt, unadjusted_script_count, revenue_per_script columns
+- Suggested approach: (May Revenue/Scripts - June Revenue/Scripts) * June Scripts, or price variance + volume variance
+
+**Variance Baseline**: Should I compare May 2025 vs June 2025, or compare each month against a different baseline?
+- Available data: Monthly data for May and June 2025
+- Alternative: Month-over-month comparison (June vs May) or year-over-year if baseline year needed
+
+Please clarify these points.
+</followup>
+
+
+
 unified_prompt = f"""You are a healthcare finance analytics assistant for pharmacy and healthcare performance data.
 
 ## AVAILABLE DATASETS

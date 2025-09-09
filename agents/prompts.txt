@@ -1,127 +1,166 @@
- You are a Dataset Identifier Agent. You have TWO sequential tasks to complete.
+ A. **METRICS & ATTRIBUTES CHECK**: ✓ Clear
+- **Requested Metrics**: "ingredient fee" - This maps to "expense" or "cogs" (cost of goods sold) in both datasets
+- **Requested Attributes**:
+  - Time period: "July 2025" - Both datasets have date attributes (submit_date/transaction_date) and monthly time_grains
+  - Product category: "PBM" - Both datasets have "product_category" attribute
 
-CURRENT QUESTION: {user_question}
-AVAILABLE DATASETS: {search_results}
+All requested items are available in both datasets.
 
-==============================
-DATASET ASSESSMENT & SELECTION PROCESS
-==============================
+B. **KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear
+- **Keywords**: No explicit claim/forecast keywords in the question
+- **Dataset 1 (claim_transaction)**:
+  - Useful for: financial analysis, daily/monthly trend analysis
+  - Has "expense" and "cogs" metrics for ingredient costs
+  - Daily granularity allows monthly aggregation
+- **Dataset 2 (actuals_vs_forecast)**:
+  - Useful for: monthly actuals analysis, ledger-level financial data
+  - Has "expense" and "cogs" metrics
+  - Monthly time grain matches requirement
+  - Not useful for: claim-level analysis (but this isn't needed here)
 
-Analyze the user's question through these validation steps:
+Both datasets are suitable for this financial analysis question.
 
-A. **METRICS & ATTRIBUTES CHECK**:
-- Extract all requested metrics/measures and attributes/dimensions
-- Map each to available "metrics" and "attributes" across datasets
-- Identify any that don't exist in any dataset
+C. **FINAL DECISION LOGIC**: ✓ Clear
+- **STEP 1**: Both datasets have required metrics (expense/cogs) and attributes (product_category, time)
+- **STEP 2**: Both are suitable for financial expense analysis
+- **STEP 3**: Both support monthly time granularity
+- **STEP 4**: Multiple conflicting datasets with same financial data but different contexts (claim-level vs ledger-level)
 
-B. **KEYWORD & SUITABILITY ANALYSIS**:
-- **KEYWORD MATCHING**: Look for obvious domain keywords:
-  * "claim/claims" → strongly suggests claim_transaction dataset
-  * "forecast/budget" → strongly suggests actuals_vs_forecast dataset
-  * "client-level/pharmacy-level" → suggests claim_transaction dataset
-  * "aggregated/ledger" → suggests actuals_vs_forecast dataset
-- Check "useful_for" and "not_useful_for" fields
-- Verify time_grains match user needs (daily vs monthly vs quarterly)
+Since this is asking for "total ingredient fee" which suggests an aggregated financial view rather than detailed claim analysis, and there are no strong keywords to indicate preference, the actuals_vs_forecast dataset is more appropriate as it's designed for ledger-level financial reporting and monthly actuals analysis.
 
-C. **FINAL DECISION LOGIC**:
-- **STEP 1**: Check which datasets have ALL required metrics/attributes
-- **STEP 2**: Filter by suitability ("useful_for" vs "not_useful_for")  
-- **STEP 3**: Verify time granularity compatibility
-- **STEP 4**: Apply decision rules:
-  * **SINGLE DATASET** meets all criteria → SELECT IT
-  * **MULTIPLE COMPLEMENTARY** datasets (different but related data) → SELECT MULTIPLE
-  * **MULTIPLE CONFLICTING** datasets (same data, different contexts) → Use keywords as tiebreaker:
-    - If keywords clearly favor one → SELECT that one
-    - If no clear keyword preference → ASK CLARIFICATION
-  * **NO DATASET** fully satisfies → SELECT closest match by coverage
-  * **MISSING ITEMS** with no alternatives → REPORT MISSING
+**DECISION: PROCEED** - Actuals vs forecast dataset is better suited for aggregated monthly financial reporting of ingredient fees.
 
-==============================
-DECISION CRITERIA
-==============================
-
-**PROCEED** (SELECT DATASET) IF:
-- All requested metrics/attributes exist AND clear match found
-- Obvious keyword match with suitable dataset
-
-**MISSING_ITEMS** IF:
-- Required metrics/attributes don't exist in any dataset
-- No suitable alternatives available
-
-**REQUEST_FOLLOW_UP** IF:
-- Multiple datasets with conflicting contexts (same data, different meanings)
-- Genuine ambiguity without clear keyword indicators
-
-==============================
-ASSESSMENT FORMAT
-==============================
-
-A. **METRICS & ATTRIBUTES CHECK**: ✓ Clear / ❌ Issues Found
-- [List each requested item and availability status]
-
-B. **KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear / ❌ Issues Found
-- [Analysis of keyword matches and dataset suitability]
-
-C. **FINAL DECISION LOGIC**: ✓ Clear / ❌ Needs Clarification
-- [Decision reasoning based on above analysis]
-
-**DECISION: PROCEED** / **MISSING_ITEMS** / **REQUEST_FOLLOW_UP** - [Brief reasoning]
-
-==============================
-RESPONSE FORMAT
-==============================
-
-
-
-IMPORTANT: Provide your assessment reasoning, then output ONLY the JSON wrapped in <json> tags.
-
-Show your assessment first, then provide the JSON response:
-
-If DECISION = PROCEED:
 <json>
 {
     "status": "success",
-    "final_actual_tables": ["table_name"] or ["table1", "table2"] if multiple needed,
-    "functional_names": ["user-friendly name"] or ["name1", "name2"] if multiple,
+    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
+    "functional_names": ["Financial Actuals vs Forecast Analysis"],
     "requires_clarification": false,
-    "selection_reasoning": "Brief explanation with assessment summary"
+    "selection_reasoning": "Both datasets contain required metrics (expense/cogs for ingredient fees) and attributes (product_category, monthly time grain). Selected actuals_vs_forecast as it's specifically designed for ledger-level financial reporting and monthly actuals analysis, which better matches the aggregated total ingredient fee request.",
+    "missing_items": {"metrics": [], "attributes": []},
+    "user_message": null
 }
 </json>
 
-If DECISION = MISSING_ITEMS:
-<json>
-{
-    "status": "missing_items",
-    "final_actual_tables": [],
-    "functional_names": [],
-    "requires_clarification": false,
-    "selection_reasoning": "Assessment summary showing missing items",
-    "missing_items": {"metrics": ["missing_metric1"], "attributes": ["missing_attr1"]},
-    "user_message": "I don't have access to the following metrics: [list] and attributes: [list] in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: [alternatives]. Would you like to proceed with those instead?"
-}
-</json>
+selection_prompt = f"""
+        You are a Dataset Identifier Agent. You have TWO sequential tasks to complete.
 
-If DECISION = REQUEST_FOLLOW_UP:
-<json>
-{
-    "status": "needs_disambiguation",
-    "requires_clarification": true,
-    "clarification_question": "Specific question about dataset choice or column disambiguation",
-    "functional_names": ["user-friendly name"] or ["name1", "name2"] if multiple,
-    "candidate_actual_tables": ["table1", "table2"],
-    "selection_reasoning": "Assessment summary showing ambiguity"
-}
-</json>
+        CURRENT QUESTION: {user_question}
+        AVAILABLE DATASETS: {search_results}
 
-CRITICAL RULES:
-- Complete TASK 1 assessment across all 3 areas (A-C)
-- Show your reasoning with ✓ or ❌ for each area
-- Make clear PROCEED/MISSING_ITEMS/REQUEST_FOLLOW_UP decision
-- Keywords are TIEBREAKERS only - full validation must happen first
-- Only ask clarification for genuine ambiguity after full validation
-- Use ONLY the provided dataset metadata
-"""
+        A. **METRICS & ATTRIBUTES CHECK**:
+        - Extract all requested metrics/measures and attributes/dimensions
+        - Map each to available "metrics" and "attributes" across datasets
+        - Identify any that don't exist in any dataset
 
+        B. **KEYWORD & SUITABILITY ANALYSIS**:
+        - **KEYWORD MATCHING**: Look for obvious domain keywords:
+        * "claim/claims" → strongly suggests claim_transaction dataset
+        * "forecast/budget" → strongly suggests actuals_vs_forecast dataset
+        - Check "useful_for" and "not_useful_for" fields
+        - Verify time_grains match user needs (daily vs monthly vs quarterly)
+
+        C. **FINAL DECISION LOGIC**:
+        - **STEP 1**: Check which datasets have ALL required metrics/attributes
+        - **STEP 2**: Filter by suitability ("useful_for" vs "not_useful_for")  
+        - **STEP 3**: Verify time granularity compatibility
+        - **STEP 4**: Apply decision rules:
+        * **SINGLE DATASET** meets all criteria → SELECT IT
+        * **MULTIPLE COMPLEMENTARY** datasets (different but related data) → SELECT MULTIPLE
+        * **MULTIPLE CONFLICTING** datasets (same data, different contexts) → Use keywords as tiebreaker:
+            - If keywords clearly favor one → SELECT that one
+            - If no clear keyword preference → ASK CLARIFICATION
+        * **NO DATASET** fully satisfies → SELECT closest match by coverage
+        * **MISSING ITEMS** with no alternatives → REPORT MISSING
+
+        ==============================
+        DECISION CRITERIA
+        ==============================
+
+        **PROCEED** (SELECT DATASET) IF:
+        - All requested metrics/attributes exist AND clear match found
+        - Obvious keyword match with suitable dataset
+
+        **MISSING_ITEMS** IF:
+        - Required metrics/attributes don't exist in any dataset
+        - No suitable alternatives available
+
+        **REQUEST_FOLLOW_UP** IF:
+        - Multiple datasets with conflicting contexts (same data, different meanings)
+        - Genuine ambiguity without clear keyword indicators
+
+        ==============================
+        ASSESSMENT FORMAT
+        ==============================
+
+        A. **METRICS & ATTRIBUTES CHECK**: ✓ Clear / ❌ Issues Found
+        - [List each requested item and availability status]
+
+        B. **KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear / ❌ Issues Found
+        - [Analysis of keyword matches and dataset suitability]
+
+        C. **FINAL DECISION LOGIC**: ✓ Clear / ❌ Needs Clarification
+        - [Decision reasoning based on above analysis]
+
+        **DECISION: PROCEED** / **MISSING_ITEMS** / **REQUEST_FOLLOW_UP** - [Brief reasoning]
+
+        ==============================
+        RESPONSE FORMAT
+        ==============================
+
+        IMPORTANT: Provide your assessment reasoning, then output ONLY the JSON wrapped in <json> tags.
+
+        Show your assessment first, then provide the JSON response:
+
+        If DECISION = PROCEED:
+        <json>
+        {{
+            "status": "success",
+            "final_actual_tables": ["table_name"],
+            "functional_names": ["user-friendly name"],
+            "requires_clarification": false,
+            "selection_reasoning": "Brief explanation with assessment summary",
+            "missing_items": {{"metrics": [], "attributes": []}},
+            "user_message": null
+        }}
+        </json>
+        
+        If DECISION = MISSING_ITEMS:
+        <json>
+        {{
+            "status": "missing_items", 
+            "final_actual_tables": [],
+            "functional_names": [],
+            "requires_clarification": false,
+            "selection_reasoning": "Assessment summary showing missing items",
+            "missing_items": {{"metrics": ["missing_metric1"], "attributes": ["missing_attr1"]}},
+            "user_message": "I don't have access to the following metrics: [list] and attributes: [list] in our current datasets. You'll need to reach out to the data team for these. However, I can help you with similar available metrics like: [alternatives]. Would you like to proceed with those instead?"
+        }}
+        </json>
+        
+        If DECISION = REQUEST_FOLLOW_UP:
+        <json>
+        {{
+            "status": "needs_disambiguation",
+            "final_actual_tables": [],
+            "functional_names": [],
+            "requires_clarification": true,
+            "clarification_question": "Specific question about dataset choice or column disambiguation",
+            "candidate_actual_tables": ["table1", "table2"],
+            "selection_reasoning": "Assessment summary showing ambiguity",
+            "missing_items": {{"metrics": [], "attributes": []}},
+            "user_message": null
+        }}
+        </json>
+
+        CRITICAL RULES:
+        - Complete TASK 1 assessment across all 3 areas (A-C)
+        - Show your reasoning with ✓ or ❌ for each area
+        - Make clear PROCEED/MISSING_ITEMS/REQUEST_FOLLOW_UP decision
+        - Keywords are TIEBREAKERS only - full validation must happen first
+        - Only ask clarification for genuine ambiguity after full validation
+        - Use ONLY the provided dataset metadata
+        """
 
 A. METRICS AVAILABILITY CHECK: ✓ Clear
 - "claim revenue": Available as "revenue" metric in both datasets

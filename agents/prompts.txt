@@ -1,3 +1,5 @@
+in PBM,For external which therapies had the top 10 and bottom 10 rate / volume variances by $ from May to June
+
 **A. METRICS & ATTRIBUTES CHECK**: ❌ Issues Found
 
 Requested items and availability:
@@ -50,6 +52,13 @@ Extracted JSON: {
     },
     "user_message": "I don't have access to the following metrics: variances by $ and attributes: therapies, external in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: rate, volume, and therapy_class_name. Would you like to proceed with those instead?"
 }
+
+  {"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","description":"Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.","useful_for":["claim-level financial analysis","client-level analysis","drug and therapy class performance","manufacturer-level insights","revenue per script and GDR metrics","line-of-business tracking","daily and monthly trend analysis","rate analysis"],"not_useful_for":["budget-level summaries","forecast comparisons","aggregated financial reporting without claim-level detail"],"metrics":["revenue","expense","cogs","wac","awp","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","revenue_per_script","gdr","volume","rate"],"attributes":{"claim_nbr":"string","submit_date":"date","client_id":"string","pharmacy_npi_no":"string","drug_name":"string","therapy_class_name":"string","drug_manufctr_nm":"string","line_of_business":"string","state_cd":"string","brand_vs_generic":"string","client_type":"string","gpi_no":"string","pharmacy_name":"string","pharmacy_type":"string","carrier_id":"string","member_date_of_birth":"date","member_sex":"string","product_category":"string"},"time_grains":["daily","monthly","quarterly","yearly"]},
+                {"table_name":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","description":"This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.","useful_for":["monthly actuals analysis","actuals vs forecast vs budget comparison","line-of-business level tracking"],"not_useful_for":["rate_analysis","claim-level analysis","daily granularity","client-level insights"],"metrics":["revenue","expense","cogs","sg&a","ioi","membership","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","volume","rate"],"attributes":{"ledger":"string","line_of_business":"string","transaction_date":"date","year":"integer","month":"integer","quarter":"integer","state_cd":"string","product_category":"string"},"time_grains":["monthly","quarterly","yearly"]}
+                 
+
+
+
 
 A. METRICS AVAILABILITY CHECK: ✓ Clear
 - "claim revenue": Available as "revenue" metric in both datasets

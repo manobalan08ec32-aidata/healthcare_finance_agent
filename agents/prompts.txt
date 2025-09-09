@@ -1,60 +1,39 @@
-in PBM,For external which therapies had the top 10 and bottom 10 rate / volume variances by $ from May to June
+A. **METRICS & ATTRIBUTES CHECK**:
+- Extract requested metrics/measures and attributes/dimensions
+- Apply smart mapping with these rules:
+  
+  **TIER 1 - Direct Matches**: Exact column names
+  **TIER 2 - Standard Healthcare Mapping**: 
+    * "therapies" → "therapy_class_name"
+    * "scripts" → "unadjusted_scripts/adjusted_scripts"  
+    * "drugs" → "drug_name"
+    * "clients" → "client_id/client_name"
+  
+  **TIER 3 - Mathematical Operations**: 
+    * "variance/variances" → calculated from existing metrics over time periods
+    * "growth/change" → period-over-period calculations
+    * "percentage/rate" → ratio calculations
+  
+  **TIER 4 - Skip Common Filter Values**: 
+    * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
+    * These appear to be filter values, not missing attributes
+  
+  **BLOCK - Creative Substitutions**:
+    * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
+    * Do NOT assume domain knowledge not in metadata
 
-**A. METRICS & ATTRIBUTES CHECK**: ❌ Issues Found
+- Only mark as missing if NO reasonable Tier 1-3 mapping exists
 
-Requested items and availability:
-- **"therapies"** → No exact match. Available: "therapy_class_name" (similar but not exact)
-- **"rate"** → ✓ Exact match available in claim_transaction dataset
-- **"volume"** → ✓ Exact match available in claim_transaction dataset
-- **"variances by $"** → No exact "variance" metric available in either dataset
-- **"external"** → No exact attribute match (unclear what this refers to)
-- **"product_category"** → ✓ Exact match available in both datasets
-- **Time period May 2025 to June 2025** → Both datasets support monthly granularity
-
-**B. KEYWORD & SUITABILITY ANALYSIS**: ❌ Issues Found
-
-- No clear domain keywords like "claim" or "forecast" in the question
-- "Rate/volume variances" suggests the claim_transaction dataset which is "useful_for" rate analysis
-- The actuals_vs_forecast dataset is "not_useful_for" rate_analysis
-- Monthly time grain is compatible with the request
-
-**C. FINAL DECISION LOGIC**: ❌ Needs Clarification
-
-- Missing exact matches for key requested items: "therapies", "variances by $", and "external"
-- While claim_transaction dataset seems more suitable for rate analysis, critical metrics are missing
-- Cannot proceed without exact matches for core requested metrics
-
-**DECISION: MISSING_ITEMS** - Core requested metrics "variances by $" and exact "therapies" attribute are not available, plus "external" is undefined
-
-<json>
-{
-    "status": "missing_items",
-    "final_actual_tables": [],
-    "functional_names": [],
-    "requires_clarification": false,
-    "selection_reasoning": "Missing exact matches for core requested metrics: 'variances by $' (no variance metric available), 'therapies' (only therapy_class_name available), and unclear 'external' attribute",
-    "missing_items": {
-        "metrics": ["variances by $"],
-        "attributes": ["therapies", "external"]
-    },
-    "user_message": "I don't have access to the following metrics: variances by $ and attributes: therapies, external in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: rate, volume, and therapy_class_name. Would you like to proceed with those instead?"
-}
-</json>
-Extracted JSON: {
-    "status": "missing_items",
-    "final_actual_tables": [],
-    "functional_names": [],
-    "requires_clarification": false,
-    "selection_reasoning": "Missing exact matches for core requested metrics: 'variances by $' (no variance metric available), 'therapies' (only therapy_class_name available), and unclear 'external' attribute",
-    "missing_items": {
-        "metrics": ["variances by $"],
-        "attributes": ["therapies", "external"]
-    },
-    "user_message": "I don't have access to the following metrics: variances by $ and attributes: therapies, external in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: rate, volume, and therapy_class_name. Would you like to proceed with those instead?"
-}
-
-  {"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","description":"Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.","useful_for":["claim-level financial analysis","client-level analysis","drug and therapy class performance","manufacturer-level insights","revenue per script and GDR metrics","line-of-business tracking","daily and monthly trend analysis","rate analysis"],"not_useful_for":["budget-level summaries","forecast comparisons","aggregated financial reporting without claim-level detail"],"metrics":["revenue","expense","cogs","wac","awp","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","revenue_per_script","gdr","volume","rate"],"attributes":{"claim_nbr":"string","submit_date":"date","client_id":"string","pharmacy_npi_no":"string","drug_name":"string","therapy_class_name":"string","drug_manufctr_nm":"string","line_of_business":"string","state_cd":"string","brand_vs_generic":"string","client_type":"string","gpi_no":"string","pharmacy_name":"string","pharmacy_type":"string","carrier_id":"string","member_date_of_birth":"date","member_sex":"string","product_category":"string"},"time_grains":["daily","monthly","quarterly","yearly"]},
-                {"table_name":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","description":"This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.","useful_for":["monthly actuals analysis","actuals vs forecast vs budget comparison","line-of-business level tracking"],"not_useful_for":["rate_analysis","claim-level analysis","daily granularity","client-level insights"],"metrics":["revenue","expense","cogs","sg&a","ioi","membership","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","volume","rate"],"attributes":{"ledger":"string","line_of_business":"string","transaction_date":"date","year":"integer","month":"integer","quarter":"integer","state_cd":"string","product_category":"string"},"time_grains":["monthly","quarterly","yearly"]}
+CRITICAL ANTI-HALLUCINATION RULES:
+- Use the TIER-based mapping system (Tiers 1-4) for validation
+- ALLOW standard healthcare business term mapping (Tier 2) and mathematical operations (Tier 3)
+- DO NOT map unrelated business terms (e.g., "ingredient fee" ≠ "expense")
+- Skip validation for common filter values (Tier 4) rather than marking as missing
+- When multiple suitable datasets exist without clear keyword preference, you MUST ask clarification
+- Do not choose based on subjective interpretation of what seems "better suited"
+- Stick to the decision rules after proper tier-based validation
+- If genuinely unsure about tier classification, lean toward asking clarification
+- Use ONLY the provided dataset metadata - no external domain knowledge beyond standard healthcare terminology
                  
 
 

@@ -1,120 +1,55 @@
-selection_prompt = f"""
-You are a Dataset Identifier Agent. You have TWO sequential tasks to complete.
+**A. METRICS & ATTRIBUTES CHECK**: ❌ Issues Found
 
-CURRENT QUESTION: {user_question}
-AVAILABLE DATASETS: {search_results}
+Requested items and availability:
+- **"therapies"** → No exact match. Available: "therapy_class_name" (similar but not exact)
+- **"rate"** → ✓ Exact match available in claim_transaction dataset
+- **"volume"** → ✓ Exact match available in claim_transaction dataset
+- **"variances by $"** → No exact "variance" metric available in either dataset
+- **"external"** → No exact attribute match (unclear what this refers to)
+- **"product_category"** → ✓ Exact match available in both datasets
+- **Time period May 2025 to June 2025** → Both datasets support monthly granularity
 
-A. **METRICS & ATTRIBUTES CHECK**:
-- Extract EXACT requested metrics/measures and attributes/dimensions from the question
-- Map each to EXACT available "metrics" and "attributes" across datasets (no interpretations or assumptions)
-- If no EXACT match exists, mark as missing (do not assume similar metrics are equivalent)
-- Only consider direct matches - "ingredient fee" ≠ "expense" unless explicitly stated
+**B. KEYWORD & SUITABILITY ANALYSIS**: ❌ Issues Found
 
-B. **KEYWORD & SUITABILITY ANALYSIS**:
-- **KEYWORD MATCHING**: Look for obvious domain keywords:
-  * "claim/claims" → strongly suggests claim_transaction dataset
-  * "forecast/budget" → strongly suggests actuals_vs_forecast dataset
-- Check "useful_for" and "not_useful_for" fields
-- Verify time_grains match user needs (daily vs monthly vs quarterly)
+- No clear domain keywords like "claim" or "forecast" in the question
+- "Rate/volume variances" suggests the claim_transaction dataset which is "useful_for" rate analysis
+- The actuals_vs_forecast dataset is "not_useful_for" rate_analysis
+- Monthly time grain is compatible with the request
 
-C. **FINAL DECISION LOGIC**:
-- **STEP 1**: Check which datasets have ALL required metrics/attributes (EXACT matches only)
-- **STEP 2**: Filter by suitability ("useful_for" vs "not_useful_for")  
-- **STEP 3**: Verify time granularity compatibility
-- **STEP 4**: Apply decision rules STRICTLY:
-  * **SINGLE DATASET** meets all criteria → SELECT IT
-  * **MULTIPLE COMPLEMENTARY** datasets (different but related data) → SELECT MULTIPLE
-  * **MULTIPLE CONFLICTING** datasets (same data, different contexts) → Use keywords as tiebreaker:
-    - If keywords clearly favor one → SELECT that one
-    - If no clear keyword preference → MUST ASK CLARIFICATION (mandatory - do not make subjective judgments)
-  * **NO DATASET** fully satisfies → SELECT closest match by coverage
-  * **MISSING ITEMS** with no alternatives → REPORT MISSING
+**C. FINAL DECISION LOGIC**: ❌ Needs Clarification
 
-==============================
-DECISION CRITERIA
-==============================
+- Missing exact matches for key requested items: "therapies", "variances by $", and "external"
+- While claim_transaction dataset seems more suitable for rate analysis, critical metrics are missing
+- Cannot proceed without exact matches for core requested metrics
 
-**PROCEED** (SELECT DATASET) IF:
-- All requested metrics/attributes have EXACT matches AND clear single choice
-- Clear keyword match resolves multiple suitable datasets
+**DECISION: MISSING_ITEMS** - Core requested metrics "variances by $" and exact "therapies" attribute are not available, plus "external" is undefined
 
-**MISSING_ITEMS** IF:
-- Required metrics/attributes don't have EXACT matches in any dataset
-- No suitable alternatives available
-
-**REQUEST_FOLLOW_UP** IF:
-- Multiple datasets with conflicting contexts AND no clear keyword preference
-- Any ambiguity exists after full validation
-
-==============================
-ASSESSMENT FORMAT
-==============================
-
-A. **METRICS & ATTRIBUTES CHECK**: ✓ Clear / ❌ Issues Found
-- [List each requested item and EXACT availability status - no assumptions]
-
-B. **KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear / ❌ Issues Found
-- [Analysis of keyword matches and dataset suitability]
-
-C. **FINAL DECISION LOGIC**: ✓ Clear / ❌ Needs Clarification
-- [Decision reasoning based STRICTLY on above analysis]
-
-**DECISION: PROCEED** / **MISSING_ITEMS** / **REQUEST_FOLLOW_UP** - [Brief reasoning]
-
-==============================
-RESPONSE FORMAT
-==============================
-
-IMPORTANT: Provide your assessment reasoning, then output ONLY the JSON wrapped in <json> tags.
-
-Show your assessment first, then provide the JSON response:
-
-If DECISION = PROCEED:
 <json>
-{{
-    "status": "success",
-    "final_actual_tables": ["table_name"] or ["table1", "table2"] if multiple needed,
-    "functional_names": ["user-friendly name"] or ["name1", "name2"] if multiple,
-    "requires_clarification": false,
-    "selection_reasoning": "Brief explanation with assessment summary"
-}}
-</json>
-
-If DECISION = MISSING_ITEMS:
-<json>
-{{
-    "status": "missing_items", 
+{
+    "status": "missing_items",
     "final_actual_tables": [],
     "functional_names": [],
     "requires_clarification": false,
-    "selection_reasoning": "Assessment summary showing missing items",
-    "missing_items": {{"metrics": ["missing_metric1"], "attributes": ["missing_attr1"]}},
-    "user_message": "I don't have access to the following metrics: [list] and attributes: [list] in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: [alternatives]. Would you like to proceed with those instead?"
-}}
+    "selection_reasoning": "Missing exact matches for core requested metrics: 'variances by $' (no variance metric available), 'therapies' (only therapy_class_name available), and unclear 'external' attribute",
+    "missing_items": {
+        "metrics": ["variances by $"],
+        "attributes": ["therapies", "external"]
+    },
+    "user_message": "I don't have access to the following metrics: variances by $ and attributes: therapies, external in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: rate, volume, and therapy_class_name. Would you like to proceed with those instead?"
+}
 </json>
-
-If DECISION = REQUEST_FOLLOW_UP:
-<json>
-{{
-    "status": "needs_disambiguation",
-    "requires_clarification": true,
-    "clarification_question": "I found multiple datasets that could work for your analysis. Which approach would you prefer: [specific options with context]?",
-    "functional_names": ["dataset1_name", "dataset2_name"],
-    "candidate_actual_tables": ["table1", "table2"],
-    "selection_reasoning": "Assessment summary showing why clarification is needed"
-}}
-</json>
-
-CRITICAL ANTI-HALLUCINATION RULES:
-- Do NOT make interpretive assumptions about what metrics "suggest" or "imply"
-- Do NOT map requested terms to similar but different available metrics
-- If no EXACT metric match exists, report as missing - do not substitute
-- When multiple suitable datasets exist without clear keyword preference, you MUST ask clarification
-- Do not choose based on subjective interpretation of what seems "better suited"
-- Stick strictly to the decision rules - no creative interpretations
-- If unsure about anything, lean toward asking clarification rather than guessing
-- Use ONLY the provided dataset metadata - no external knowledge
-"""
+Extracted JSON: {
+    "status": "missing_items",
+    "final_actual_tables": [],
+    "functional_names": [],
+    "requires_clarification": false,
+    "selection_reasoning": "Missing exact matches for core requested metrics: 'variances by $' (no variance metric available), 'therapies' (only therapy_class_name available), and unclear 'external' attribute",
+    "missing_items": {
+        "metrics": ["variances by $"],
+        "attributes": ["therapies", "external"]
+    },
+    "user_message": "I don't have access to the following metrics: variances by $ and attributes: therapies, external in our current datasets. You'll need to reach out to the FDM team for these. However, I can help you with similar available metrics like: rate, volume, and therapy_class_name. Would you like to proceed with those instead?"
+}
 
 A. METRICS AVAILABILITY CHECK: ✓ Clear
 - "claim revenue": Available as "revenue" metric in both datasets

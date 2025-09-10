@@ -1,39 +1,45 @@
-A. **METRICS & ATTRIBUTES CHECK**:
-- Extract requested metrics/measures and attributes/dimensions
-- Apply smart mapping with these rules:
-  
-  **TIER 1 - Direct Matches**: Exact column names
-  **TIER 2 - Standard Healthcare Mapping**: 
-    * "therapies" → "therapy_class_name"
-    * "scripts" → "unadjusted_scripts/adjusted_scripts"  
-    * "drugs" → "drug_name"
-    * "clients" → "client_id/client_name"
-  
-  **TIER 3 - Mathematical Operations**: 
-    * "variance/variances" → calculated from existing metrics over time periods
-    * "growth/change" → period-over-period calculations
-    * "percentage/rate" → ratio calculations
-  
-  **TIER 4 - Skip Common Filter Values**: 
-    * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
-    * These appear to be filter values, not missing attributes
-  
-  **BLOCK - Creative Substitutions**:
-    * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
-    * Do NOT assume domain knowledge not in metadata
+in PBM,what is ledger revenue for july 2025 and break it down at therapy class level
 
-- Only mark as missing if NO reasonable Tier 1-3 mapping exists
+## Assessment
 
-CRITICAL ANTI-HALLUCINATION RULES:
-- Use the TIER-based mapping system (Tiers 1-4) for validation
-- ALLOW standard healthcare business term mapping (Tier 2) and mathematical operations (Tier 3)
-- DO NOT map unrelated business terms (e.g., "ingredient fee" ≠ "expense")
-- Skip validation for common filter values (Tier 4) rather than marking as missing
-- When multiple suitable datasets exist without clear keyword preference, you MUST ask clarification
-- Do not choose based on subjective interpretation of what seems "better suited"
-- Stick to the decision rules after proper tier-based validation
-- If genuinely unsure about tier classification, lean toward asking clarification
-- Use ONLY the provided dataset metadata - no external domain knowledge beyond standard healthcare terminology
+**A. METRICS & ATTRIBUTES CHECK**: ✓ Clear
+- **Requested metrics**: "ledger revenue" → EXACT match: "revenue" ✓
+- **Requested attributes**:
+  - "therapy class level" → TIER 2 mapping: "therapy_class_name" ✓
+  - "product category PBM" → EXACT match: "product_category" ✓
+  - Time dimension: "July 2025" → monthly granularity needed ✓
+
+**B. KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear
+- **KEYWORD MATCHING**: "ledger revenue" strongly suggests the actuals_vs_forecast_analysis dataset which contains "ledger-level financial data"
+- **SUITABILITY**:
+  - actuals_vs_forecast_analysis: ✓ "useful_for: monthly actuals analysis" and contains ledger-level data
+  - claim_transaction_for_pharmacy_pbm: Has revenue but is claim-level, not ledger-level
+- **TIME GRANULARITY**: Both support monthly, but actuals_vs_forecast is specifically designed for ledger-level monthly analysis
+
+**C. FINAL DECISION LOGIC**: ✓ Clear
+- **STEP 1**: Both datasets have required metrics/attributes
+- **STEP 2**: actuals_vs_forecast_analysis is specifically useful for "monthly actuals analysis" and contains "ledger-level financial data"
+- **STEP 3**: Monthly granularity matches "July 2025" requirement
+- **STEP 4**: Clear keyword preference for "ledger revenue" points to actuals_vs_forecast dataset
+
+**DECISION: PROCEED** - Clear keyword match ("ledger revenue") with dataset designed for ledger-level monthly actuals analysis
+
+<json>
+{
+    "status": "success",
+    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
+    "functional_names": ["Actuals vs Forecast Analysis"],
+    "requires_clarification": false,
+    "selection_reasoning": "The query specifically asks for 'ledger revenue' which directly matches the actuals_vs_forecast_analysis dataset that contains 'ledger-level financial data' and is designed for 'monthly actuals analysis'. This dataset has the required revenue metric, therapy_class_name attribute (via standard healthcare mapping), product_category filter, and monthly time granularity for July 2025 analysis."
+}
+</json>
+Extracted JSON: {
+    "status": "success",
+    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
+    "functional_names": ["Actuals vs Forecast Analysis"],
+    "requires_clarification": false,
+    "selection_reasoning": "The query specifically asks for 'ledger revenue' which directly matches the actuals_vs_forecast_analysis dataset that contains 'ledger-level financial data' and is designed for 'monthly actuals analysis'. This dataset has the required revenue metric, therapy_class_name attribute (via standard healthcare mapping), product_category filter, and monthly time granularity for July 2025 analysis."
+}
                  
 
 

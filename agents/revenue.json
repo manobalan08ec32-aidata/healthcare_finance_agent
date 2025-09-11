@@ -1,0 +1,230 @@
+{
+    "revenue_investigation_config": {
+        "version": "1.0",
+        "investigation_type": "revenue_variance_analysis",
+        "description": "Complete revenue investigation pattern with embedded metadata and framework",
+        
+        "question_classification": {
+            "trigger_keywords": [
+                ["revenue", "drop|decrease|decline|fall"],
+                ["revenue", "increase|growth|rise|up"],
+                ["revenue", "vs|versus|compared", "previous|last|prior"],
+                ["why", "revenue"]
+            ],
+            "time_pattern_keywords": [
+                "month over month|mom|m-o-m",
+                "quarter over quarter|qoq|q-o-q", 
+                "year over year|yoy|y-o-y",
+                "vs previous|vs last|compared to"
+            ]
+        },
+
+        "investigation_framework": {
+            "query_sequence": ["revenue_variance_detection", "client_membership_analysis", "carrier_analysis"],
+            "max_queries": 3,
+            "synthesis_approach": "markdown_intelligence_report",
+            "expected_investigation_depth": "high"
+        },
+
+        "strategic_queries": {
+            "query_1_revenue_variance": {
+                "purpose": "Identify primary revenue variance areas by LOB and product",
+                "sequence_order": 1,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+                "table_metadata": {
+                    "description": "High-level monthly or quarterly revenue performance by LOB and product category",
+                    "columns": [
+                        {
+                            "name": "ledger",
+                            "description": "Ledger type for the record",
+                            "distinct_values": ["GAAP", "BUDGET", "8+4", "2+10", "5+7"]
+                        },
+                        {
+                            "name": "metric_type",
+                            "description": "Type of metric captured in amount_or_count",
+                            "sample_values": ["Revenues", "Adjusted Scripts", "Unadjusted Scripts", "COGS Post Reclass", "SG&A Post Reclass", "IOI", "Total Membership"]
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the revenue record",
+                            "sample_values": ["C&S", "E&I", "M&R", "Rev Reclass", "Optum", "External"]
+                        },
+                        {
+                            "name": "product_category",
+                            "description": "High-level product or service grouping",
+                            "sample_values": ["PBM", "Specialty", "HDP"]
+                        },
+                        {
+                            "name": "transaction_date",
+                            "description": "Transaction date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "quarter",
+                            "description": "Quarter (Q1–Q4) derived from transaction_date"
+                        },
+                        {
+                            "name": "amount_or_count",
+                            "description": "Value for the record (amount or count depending on metric_type)"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "required_filters": ["metric_type = 'Revenues'", "ledger = 'GAAP'"],
+                    "key_dimensions": ["line_of_business", "product_category"],
+                    "focus_metrics": ["amount_or_count"],
+                    "analysis_type": "period_comparison_with_variance",
+                    "variance_threshold": "$250K absolute OR 10% percentage"
+                },
+                "output_requirements": {
+                    "include_variance_calculation": true,
+                    "include_percentage_change": true,
+                    "order_by": "absolute_variance_impact_desc",
+                    "filter_significant_only": true
+                }
+            },
+
+            "query_2_client_membership": {
+                "purpose": "Analyze client portfolio and membership changes driving revenue variance",
+                "sequence_order": 2,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "client_name",
+                            "description": "Client name"
+                        },
+                        {
+                            "name": "client_id",
+                            "description": "Client identifier"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["line_of_business", "client_name"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "client_churn_and_acquisition_detection",
+                    "client_change_threshold": "$100K revenue impact",
+                    "depends_on_query": "query_1_revenue_variance"
+                },
+                "output_requirements": {
+                    "identify_client_status": ["Lost", "New", "Existing"],
+                    "calculate_client_variance": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "absolute_client_impact_desc"
+                }
+            },
+
+            "query_3_carrier_analysis": {
+                "purpose": "Identify carrier utilization changes affecting revenue",
+                "sequence_order": 3,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "carrier_id",
+                            "description": "Insurance carrier identifier"
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["carrier_id", "line_of_business"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "carrier_utilization_variance",
+                    "depends_on_query": "query_1_revenue_variance",
+                    "conditional_execution": "if_client_changes_insufficient_to_explain_variance"
+                },
+                "output_requirements": {
+                    "calculate_utilization_changes": true,
+                    "identify_significant_carrier_changes": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "carrier_impact_significance"
+                }
+            }
+        },
+
+        "intelligence_synthesis": {
+            "variance_thresholds": {
+                "significant_lob_variance": "$500K",
+                "significant_client_change": "$100K", 
+                "significant_membership_change": "5%",
+                "significant_carrier_change": "20% utilization change"
+            },
+            
+            "correlation_analysis": [
+                "revenue_vs_membership",
+                "revenue_vs_client_churn",
+                "revenue_vs_carrier_changes"
+            ],
+            
+            "tactical_direction_rules": {
+                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
+                "membership_driven_variance": "if_membership_changes_correlate_with_revenue", 
+                "operational_variance": "if_none_of_above_explain_variance_sufficiently"
+            }
+        },
+
+        "markdown_report_template": {
+            "sections": [
+                "Executive Summary",
+                "Detailed Findings",
+                "Tactical Investigation Plan"
+            ],
+            "required_elements": [
+                "total_variance_quantification",
+                "primary_driver_identification",
+                "client_portfolio_changes",
+                "membership_impact",
+                "carrier_analysis",
+                "tactical_focus_areas"
+            ],
+            "formatting_rules": {
+                "use_exact_data_values": true,
+                "quantify_all_impacts": true,
+                "be_specific_about_targets": true,
+                "keep_tactical_direction_actionable": true
+            }
+        },
+
+        "guardrails": {
+            "max_strategic_queries": 3,
+            "min_variance_for_investigation": "$250K",
+            "max_lobs_to_investigate": 3,
+            "query_timeout": 300,
+            "max_retries": 3
+        }
+    }
+}

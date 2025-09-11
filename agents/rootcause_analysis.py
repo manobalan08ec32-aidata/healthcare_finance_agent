@@ -376,7 +376,7 @@ class RootCauseAnalysisAgent:
         
         try:
             # Generate queries for this specific knowledge graph
-            llm_response = self.db_client.call_claude_api([
+            llm_response = self.db_client.call_claude_api_endpoint([
                 {"role": "user", "content": sql_generation_prompt}
             ])
             print('drill through response',llm_response)
@@ -394,32 +394,57 @@ class RootCauseAnalysisAgent:
     def _parse_xml_queries(self, xml_response: str) -> List[Dict]:
         """Parse XML response to extract multiple SQL queries"""
         import re
-        
+
         queries = []
-        
-        # Find all query blocks
-        query_blocks = re.findall(r'<query>(.*?)</query>', xml_response, re.DOTALL)
-        
-        for block in query_blocks:
-            try:
-                # Extract individual fields
-                query_id = re.search(r'<query_id>(.*?)</query_id>', block, re.DOTALL)
-                table = re.search(r'<table>(.*?)</table>', block, re.DOTALL)
-                purpose = re.search(r'<purpose>(.*?)</purpose>', block, re.DOTALL)
-                sql = re.search(r'<sql>(.*?)</sql>', block, re.DOTALL)
-                narrative = re.search(r'<narrative>(.*?)</narrative>', block, re.DOTALL)
-                
-                if query_id and table and purpose and sql and narrative:
-                    queries.append({
-                        "query_id": query_id.group(1).strip(),
-                        "table": table.group(1).strip(),
-                        "purpose": purpose.group(1).strip(),
-                        "sql": sql.group(1).strip().replace('`', ''),  # Remove backticks, keep formatting
-                        "narrative": narrative.group(1).strip()
-                    })
-            except Exception as e:
-                print(f"⚠️  Failed to parse query block: {str(e)}")
-                continue
+
+        try:
+            # Debug: Print the response to see what we're working with
+            print("XML Response length:", len(xml_response))
+            print("XML Response preview:", xml_response[:500] + "..." if len(xml_response) > 500 else xml_response)
+
+            # Find all query blocks
+            query_blocks = re.findall(r'<query>(.*?)</query>', xml_response, re.DOTALL)
+            print(f"Found {len(query_blocks)} query blocks")
+
+            for i, block in enumerate(query_blocks):
+                try:
+                    print(f"Processing block {i+1}")
+
+                    # Extract individual fields with more robust regex
+                    query_id = re.search(r'<query_id>\s*(.*?)\s*</query_id>', block, re.DOTALL)
+                    table = re.search(r'<table>\s*(.*?)\s*</table>', block, re.DOTALL)
+                    purpose = re.search(r'<purpose>\s*(.*?)\s*</purpose>', block, re.DOTALL)
+                    sql = re.search(r'<sql>\s*(.*?)\s*</sql>', block, re.DOTALL)
+                    narrative = re.search(r'<narrative>\s*(.*?)\s*</narrative>', block, re.DOTALL)
+
+                    if query_id and table and purpose and sql and narrative:
+                        query_dict = {
+                            "query_id": query_id.group(1).strip(),
+                            "table": table.group(1).strip(),
+                            "purpose": purpose.group(1).strip(),
+                            "sql": sql.group(1).strip().replace('`', ''),  # Remove backticks, keep formatting
+                            "narrative": narrative.group(1).strip()
+                        }
+                        queries.append(query_dict)
+                        print(f"✅ Successfully parsed query: {query_dict['query_id']}")
+                    else:
+                        print(f"❌ Missing fields in block {i+1}")
+                        print(f" query_id: {'✓' if query_id else '✗'}")
+                        print(f" table: {'✓' if table else '✗'}")
+                        print(f" purpose: {'✓' if purpose else '✗'}")
+                        print(f" sql: {'✓' if sql else '✗'}")
+                        print(f" narrative: {'✓' if narrative else '✗'}")
+
+                except Exception as e:
+                    print(f"⚠️ Failed to parse query block {i+1}: {str(e)}")
+                    continue
+
+        except Exception as e:
+            print(f"❌ Critical error in XML parsing: {str(e)}")
+            return []  # Return empty list instead of None
+
+        print(f"Final result: {len(queries)} queries parsed successfully")
+        return queries
     
 
 
@@ -483,7 +508,7 @@ class RootCauseAnalysisAgent:
         
         try:
             # Call LLM to select best match by ID
-            llm_response = self.db_client.call_claude_api([
+            llm_response = self.db_client.call_claude_api_endpoint([
                 {"role": "user", "content": selection_prompt}
             ])
             
@@ -800,7 +825,7 @@ class RootCauseAnalysisAgent:
         }
 
     def _fix_sql_with_llm(self, failed_sql: str, error_message: str, table_name: str, config: Dict) -> str:
-        """Use LLM to fix SQL based on error message with JSON response"""
+        """Use LLM to fix SQL based on error message with XML response"""
 
         fix_prompt = f"""
             You are an expert Databricks SQL developer. A SQL query has **FAILED** and needs to be **FIXED or REWRITTEN**.
@@ -819,44 +844,39 @@ class RootCauseAnalysisAgent:
             Table Configuration:
             {json.dumps(config, indent=2)}
 
-
             ============================== INSTRUCTIONS
             Identify the issue based on the error message and metadata.
             Fix the SQL syntax or rewrite the query if needed.
             Ensure the corrected query answers the original user question.
             Use only valid column names and Databricks-compatible SQL.
             ============================== RESPONSE FORMAT
-            Return ONLY valid JSON with no markdown, explanations, or extra text:
-            -Generate the SQL in single line and dont add '\n' for nrw line.
-            -The response MUST be valid JSON. Generate SQL as a single line without line breaks.Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ``
+            Return ONLY the fixed SQL query wrapped in XML tags. No other text, explanations, or formatting.
 
-            If the query is fixed: {{ "fixed_sql": "your corrected SQL query here" }}
+            <sql>
+            SELECT ...your fixed SQL here...
+            </sql>
 
+            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the <sql> tags. This makes the SQL readable and maintainable.
             """                   
-    
-        
+
         try:
-            llm_response = self.db_client.call_claude_api([
+            llm_response = self.db_client.call_claude_api_endpoint([
                 {"role": "user", "content": fix_prompt}
             ])
             
             print(f"🔍 Raw LLM fix response: {repr(llm_response)}")
             
-            # Clean the response to extract JSON
-            cleaned_response = self._clean_llm_fix_response(llm_response)
-            
-            # Parse the JSON response
-            fix_result = json.loads(cleaned_response)
-            
-            fixed_sql = fix_result.get('fixed_sql', '').strip()
-          
-            
-            return fixed_sql if fixed_sql else None
-            
-        except json.JSONDecodeError as e:
-            print(f"❌ LLM returned invalid JSON for SQL fix: {str(e)}")
-            print(f"🔍 Response was: {repr(llm_response) if 'llm_response' in locals() else 'No response'}")
-            return None
+            # Extract SQL from XML tags
+            import re
+            match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+            if match:
+                fixed_sql = match.group(1).strip()
+                fixed_sql = fixed_sql.replace('`', '')  # Remove backticks
+                return fixed_sql if fixed_sql else None
+            else:
+                print("❌ No SQL found in XML tags")
+                return None
+
         except Exception as e:
             print(f"❌ LLM SQL fix failed: {str(e)}")
             return None
@@ -1047,7 +1067,7 @@ class RootCauseAnalysisAgent:
             Only return the JSON object—no extra commentary, markdown, or code blocks.
             """
         try:
-            llm_response = self.db_client.call_claude_api([
+            llm_response = self.db_client.call_claude_api_endpoint([
                 {"role": "user", "content": insight_prompt}
             ])
             

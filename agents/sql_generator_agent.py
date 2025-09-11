@@ -28,32 +28,21 @@ class SQLGeneratorAgent:
                 # User has answered follow-up questions - generate SQL directly
                 print("  📋 Processing follow-up answers...")
                 sql_followup_question = state.get('sql_followup_question', '')
-                sql_followup_answer = state.get('sql_followup_answer', '')
-                sql_result = self._generate_sql_with_followup(context, sql_followup_question, sql_followup_answer)
+                sql_followup_answer = state.get('current_question', '')
+                sql_result = self._generate_sql_with_followup(context, sql_followup_question, sql_followup_answer,state)
                 
                 # Set is_sql_followup to False after generating SQL
                 state['is_sql_followup'] = False
             else:
                 # Initial question - assess and generate or ask for follow-up
                 print("  🔍 Initial assessment and SQL generation...")
-                sql_result = self._assess_and_generate_sql(context, state)
-            
+                sql_result = self._assess_and_generate_sql(context, state)            
             # 3. Handle follow-up questions if needed
             if sql_result.get('needs_followup'):
                 return {
                     'success': True,
                     'needs_followup': True,
-                    'sql_followup_question': sql_result['followup_questions'],
-                    'reasoning': sql_result.get('reasoning', 'Need clarification for accurate SQL generation')
-                }
-            
-            # 4. Handle metadata missing or other errors
-            if 'metadata_missing_info' in sql_result:
-                return {
-                    'success': False,
-                    'metadata_missing_info': sql_result.get('metadata_missing_info'),
-                    'available_alternatives': sql_result.get('available_alternatives'),
-                    'suggestion': sql_result.get('suggestion')
+                    'sql_followup_question': sql_result['sql_followup_questions']
                 }
             
             if not sql_result['success']:
@@ -62,45 +51,185 @@ class SQLGeneratorAgent:
                     'error': sql_result['error']
                 }
             
-            # 5. Execute with retry logic
-            print(f"  ⚡ Executing SQL with retry logic...")
-            execution_result = self._execute_sql_with_retry(sql_result['sql_query'], context)
-            if not execution_result['success']:
-                return {
-                    'success': False,
-                    'error': execution_result['error'],
-                    'failed_sql': sql_result['sql_query'],
-                    'execution_attempts': execution_result['attempts']
-                }
+            # 4. Check if we have multiple SQL queries
+            if sql_result.get('multiple_sql', False):
+                print(f"  ⚡ Executing {len(sql_result['sql_queries'])} SQL queries in parallel...")
+                return self._execute_multiple_sql_queries(sql_result, context)
+            else:
+                print(f"  ⚡ Executing single SQL query...")
+                return self._execute_single_sql_query(sql_result, context, is_sql_followup)
             
-            # 6. Synthesize results into narrative
-            print(f"  📖 Synthesizing results...")
-            narrative_result = self._synthesize_results(
-                execution_result['data'], 
-                context['current_question'],
-                execution_result['final_sql']
-            )
-            
-            if not narrative_result['success']:
-                return {
-                    'success': False,
-                    'error': narrative_result['error']
-                }
-
-            return {
-                'success': True,
-                'sql_query': execution_result['final_sql'],
-                'query_results': execution_result['data'],
-                'narrative_response': narrative_result['narrative'],
-                'execution_attempts': execution_result['attempts'],
-                'row_count': len(execution_result['data']) if execution_result['data'] else 0,
-                'used_followup': bool(is_sql_followup)  # Track if follow-up was used
-            }
-        
         except Exception as e:
             return {
                 'success': False,
                 'error': f"SQL Generation failed: {str(e)}",
+                'execution_attempts': 0
+            }
+
+    def _execute_single_sql_query(self, sql_result: Dict, context: Dict, is_sql_followup: bool) -> Dict[str, Any]:
+        """Execute single SQL query and synthesize results"""
+        
+        # Execute with retry logic
+        execution_result = self._execute_sql_with_retry(sql_result['sql_query'], context)
+        if not execution_result['success']:
+            return {
+                'success': False,
+                'error': execution_result['error'],
+                'failed_sql': sql_result['sql_query'],
+                'execution_attempts': execution_result['attempts']
+            }
+        
+        # Synthesize results into narrative
+        print(f"  📖 Synthesizing results...")
+        narrative_result = self._synthesize_results(
+            execution_result['data'], 
+            context['current_question'],
+            execution_result['final_sql']
+        )
+        
+        if not narrative_result['success']:
+            return {
+                'success': False,
+                'error': narrative_result['error']
+            }
+
+        return {
+            'success': True,
+            'multiple_results': False,
+            'sql_query': execution_result['final_sql'],
+            'query_results': execution_result['data'],
+            'narrative_response': narrative_result['narrative'],
+            'execution_attempts': execution_result['attempts'],
+            'row_count': len(execution_result['data']) if execution_result['data'] else 0,
+            'used_followup': bool(is_sql_followup)
+        }
+
+    def _execute_multiple_sql_queries(self, sql_result: Dict, context: Dict) -> Dict[str, Any]:
+        """Execute multiple SQL queries in parallel and synthesize results"""
+        
+        import concurrent.futures
+        import threading
+        
+        sql_queries = sql_result['sql_queries']
+        query_titles = sql_result.get('query_titles', [])
+        
+        # Ensure we have titles for all queries
+        while len(query_titles) < len(sql_queries):
+            query_titles.append(f"Query {len(query_titles) + 1}")
+        
+        def execute_single_query(query_data):
+            """Execute a single query with its title"""
+            sql_query, title, index = query_data
+            
+            print(f"    Executing {title} (Query {index + 1})...")
+            
+            # Execute SQL with retry logic
+            execution_result = self._execute_sql_with_retry(sql_query, context)
+            
+            return {
+                'index': index,
+                'title': title,
+                'sql_query': sql_query,
+                'execution_result': execution_result
+            }
+        
+        def synthesize_single_result(result_data):
+            """Synthesize results for a single query"""
+            index = result_data['index']
+            title = result_data['title']
+            execution_result = result_data['execution_result']
+            
+            if not execution_result['success']:
+                return {
+                    'index': index,
+                    'title': title,
+                    'success': False,
+                    'error': execution_result['error']
+                }
+            
+            print(f"    Synthesizing results for {title}...")
+            
+            # Synthesize results
+            narrative_result = self._synthesize_results(
+                execution_result['data'],
+                context['current_question'],
+                execution_result['final_sql']
+            )
+            
+            return {
+                'index': index,
+                'title': title,
+                'success': True,
+                'sql_query': execution_result['final_sql'],
+                'data': execution_result['data'],
+                'narrative': narrative_result.get('narrative', '') if narrative_result['success'] else 'Failed to generate narrative',
+                'execution_attempts': execution_result['attempts'],
+                'row_count': len(execution_result['data']) if execution_result['data'] else 0
+            }
+        
+        try:
+            # Step 1: Execute all SQL queries in parallel
+            query_data = [(sql_queries[i], query_titles[i], i) for i in range(len(sql_queries))]
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                execution_results = list(executor.map(execute_single_query, query_data))
+            
+            # Check if any executions failed
+            failed_executions = [r for r in execution_results if not r['execution_result']['success']]
+            if failed_executions:
+                failed_query = failed_executions[0]
+                return {
+                    'success': False,
+                    'error': f"Failed to execute {failed_query['title']}: {failed_query['execution_result']['error']}",
+                    'failed_sql': failed_query['sql_query']
+                }
+            
+            # Step 2: Synthesize all results in parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                synthesis_results = list(executor.map(synthesize_single_result, execution_results))
+            
+            # Check if any synthesis failed
+            failed_synthesis = [r for r in synthesis_results if not r['success']]
+            if failed_synthesis:
+                print(f"⚠️ Some narrative synthesis failed, but continuing with available results")
+            
+            # Sort results by original index to maintain order
+            synthesis_results.sort(key=lambda x: x['index'])
+            
+            # Prepare final results
+            query_results = []
+            for result in synthesis_results:
+                if result['success']:
+                    query_results.append({
+                        'title': result['title'],
+                        'sql_query': result['sql_query'],
+                        'data': result['data'],
+                        'narrative': result['narrative'],
+                        'execution_attempts': result['execution_attempts'],
+                        'row_count': result['row_count']
+                    })
+                else:
+                    query_results.append({
+                        'title': result['title'],
+                        'sql_query': '',
+                        'data': [],
+                        'narrative': f"Failed to execute: {result['error']}",
+                        'execution_attempts': 0,
+                        'row_count': 0
+                    })
+            
+            return {
+                'success': True,
+                'multiple_results': True,
+                'query_results': query_results,
+                'total_queries': len(query_results),
+                'successful_queries': len([r for r in synthesis_results if r['success']])
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"Parallel execution failed: {str(e)}",
                 'execution_attempts': 0
             }
 
@@ -110,80 +239,123 @@ class SQLGeneratorAgent:
         recent_history = questions_history[-4:]
         dataset_metadata = state.get('dataset_metadata', {})
         dataset_name = state.get('selected_dataset')
-        current_question = state.get('current_question', state.get('original_question', ''))
-
+        current_question = state.get('rewritten_question')
         return {
             'recent_history': recent_history,
             'dataset_metadata': dataset_metadata,
             'dataset_name': dataset_name,
             'current_question': current_question
         }
-    
     def _assess_and_generate_sql(self, context: Dict, state: Dict) -> Dict[str, Any]:
         """Initial assessment: Generate SQL if clear, or ask follow-up questions if unclear"""
         
         current_question = context.get('current_question', '')
         recent_history = context.get('recent_history', [])
         dataset_metadata = context.get('dataset_metadata', '')
-
+        join_clause = state.get('join_clause', '')  
+        
+        # Check if we have multiple tables
+        selected_datasets = state.get('selected_dataset', [])
+        has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
+        
         assessment_prompt = f"""
             You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 
             CURRENT QUESTION: {current_question}
             RECENT HISTORY: {recent_history}
             AVAILABLE METADATA: {dataset_metadata}
+            MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+            JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
 
             ==============================
             TASK 1: COMPREHENSIVE ASSESSMENT
             ==============================
-            
+
             Analyze the user's question for the following clarity issues:
 
             A. TIME PERIOD CLARITY:
             - Is the time reference specific? ("Q3 2024" vs "last quarter")
             - If relative time mentioned, is baseline clear? ("compared to what?")
-            
+
             B. METRIC DEFINITIONS:
             - Are business metrics clearly defined? ("cost" - total cost? per member cost? unit cost?)
             - Are calculation methods obvious? ("performance" - what specific measure?)
             - Are formulas needed that aren't standard? (custom ratios, complex calculations)
-            
+
             C. BUSINESS CONTEXT:
             - Are filtering criteria clear? ("top products" - by what measure?)
             - Are grouping dimensions obvious? ("by region" - state level? territory level?)
             - Are comparison baselines specified? ("variance" - vs what baseline?)
-            
+
             D. FORMULA & CALCULATION REQUIREMENTS:
             - Does the question require custom formulas not in standard SQL functions?
             - Are there healthcare-specific calculations needed? (PMPM, utilization rates, etc.)
             - Do complex business rules need clarification? (exclusions, special logic)
-            
+
             E. METADATA MAPPING:
             - Can all user terms be confidently mapped to available columns?
             - Are there ambiguous references that could match multiple columns?
             - Are there business terms mentioned that don't clearly exist in metadata?
 
+            F. MULTI-TABLE AND SINGLE-TABLE COMPLEX QUERY ANALYSIS:
+            - **PRIMARY ANALYSIS**: Does the question require data from multiple tables OR complex analysis that benefits from multiple perspectives?
+            - **JOIN FEASIBILITY**: Can multi-table analysis be performed with a JOIN operation (if join clause exists)?
+            - **COMPLEMENTARY REQUIREMENT**: Does it require separate analyses for better user understanding?
+            - **COMPLEXITY ASSESSMENT**: Would splitting into multiple queries provide clearer insights?
+
+            **SCENARIOS REQUIRING MULTIPLE QUERIES**:
+            
+            MULTI-TABLE PATTERNS:
+            - "Ledger revenue + breakdown by drug" → financial table + claim table
+            - "Budget metrics + client breakdown" → forecast table + transaction table
+            
+            SINGLE-TABLE COMPLEX PATTERNS:
+            - "Membership trends AND top drugs by revenue" → trend query + ranking query
+            - "Summary metrics AND detailed breakdown" → summary query + detail query
+            - "Current performance AND comparative analysis" → performance query + comparison query
+
+            **DECISION CRITERIA**:
+            - Multiple distinct analytical purposes in one question
+            - Different aggregation levels (summary + detail)
+            - Combines trends with rankings or comparisons
+            - Question contains "AND" connecting different analysis types
+            - Would result in overly complex single query
+            
+            **MULTI-QUERY DECISION LOGIC**:
+            1. **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables with join
+            2. **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+            3. **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Complex question with multiple analytical dimensions
+            4. **SINGLE QUERY**: Simple, focused questions with one analytical dimension
             ==============================
             TASK 1 DECISION CRITERIA
             ==============================
-            
+
             PROCEED TO TASK 2 (Generate SQL) IF:
-            - All 5 areas (A-E) are sufficiently clear
+            - All areas (A-F) are sufficiently clear
             - You can map user request to available columns with 95% confidence
             - Standard SQL functions can handle all requested calculations
             - No ambiguous business logic or custom formulas needed
-            
+            - Multi-table strategy is clear (join vs separate queries)
+
             REQUEST FOLLOW-UP IF:
-            - ANY of areas A-E have significant ambiguity
+            - ANY of areas A-F have significant ambiguity
             - Custom formulas/calculations need clarification
             - Business logic requires domain expertise
             - Metadata mapping is uncertain
+            - Multi-table approach is unclear
 
-            ==============================
-            TASK 2: HIGH-QUALITY SQL GENERATION
-            ==============================
-            
+            ==============================================
+            TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
+            ==============================================
+
             (Only execute if Task 1 assessment says "PROCEED")
+
+            **MULTI-TABLE DECISION LOGIC:**
+            1. **SINGLE QUERY WITH JOIN**: If question requires related data from multiple tables AND join clause exists
+            2. **MULTIPLE SEPARATE QUERIES**: If question requires complementary analysis from different tables OR no join exists
+            3. **SINGLE TABLE**: If question can be answered from one table
+
+            **SQL GENERATION RULES:**
 
             1. MEANINGFUL COLUMN NAMES
             - Use user-friendly, business-relevant column names that align with the user's question.
@@ -216,73 +388,109 @@ class SQLGeneratorAgent:
             - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
             - When the question specifies only a month, use the current year (2025) for calculations.
 
-            5. ATTRIBUTE-ONLY QUERIES
+            5. MULTI-TABLE JOIN SYNTAX (when applicable):
+            - Use the provided join clause exactly as specified
+            - Ensure all selected columns are properly qualified with table aliases
+            - Include all necessary tables in the FROM/JOIN clauses
+
+            6. ATTRIBUTE-ONLY QUERIES
             - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
 
-            6. STRING FILTERING - CASE INSENSITIVE
+            7. STRING FILTERING - CASE INSENSITIVE
             - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
             - Example: WHERE UPPER(product_category) = UPPER('Specialty')
 
-            7. TOP/BOTTOM QUERIES WITH TOTALS
-            - When the user asks for "top 10", "bottom 10", "highest", "lowest", also include the overall total/count for context.
-            - Show both the individual top/bottom records AND the grand total across all records.
+            8. TOP/BOTTOM QUERIES WITH TOTALS
+            - When the user asks for "top 10", "bottom 10", "highest", "lowest", also include the overall total for context.
             - Include ranking position information
             - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
 
-            8. HEALTHCARE FINANCE BEST PRACTICES
+            9. HEALTHCARE FINANCE BEST PRACTICES
             - Always include time dimensions (month, quarter, year) when relevant to the user's question.
             - Use business-friendly dimensions (e.g., therapeutic_class, service_type, age_group, state).
 
-            9. DATABRICKS SQL COMPATIBILITY
+            10. DATABRICKS SQL COMPATIBILITY
             - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
             - Use date functions: date_trunc(), year(), month(), quarter()
             - Use CASE WHEN for conditional logic
             - Use CTEs (WITH clauses) for complex logic
 
-            10. FORMATTING
-            - Show whole numbers for metrics and round percentages to two decimal places.
+            11. FORMATTING
+            - Show whole numbers for metrics and round percentages to four decimal places.
             - Use the ORDER BY clause only for date columns and use descending order.
-
 
             ==============================
             OUTPUT FORMATS
             ==============================
-
-            If TASK 1 says PROCEED → Execute TASK 2:
             IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
             return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+
+            **FOR SINGLE SQL QUERY:**
+            If TASK 1 says PROCEED → Execute TASK 2:
             <sql>
             [Your complete SQL query here]
             </sql>
 
+            **FOR MULTIPLE SQL QUERIES:**
+            If TASK 1 says PROCEED and requires multiple queries:
+            <multiple_sql>
+            <query1_title>
+            [Brief descriptive title for first query - max 8 words]
+            </query1_title>
+            <query1>
+            [First SQL query here]
+            </query1>
+            <query2_title>
+            [Brief descriptive title for second query - max 8 words]
+            </query2_title>
+            <query2>
+            [Second SQL query here]
+            </query2>
+            </multiple_sql>
+
             If TASK 1 says REQUEST FOLLOW-UP, return ONLY the followup wrapped in XML tags. No other text, explanations, or formatting
+
+            ==============================
+            DETERMINISTIC FOLLOW-UP RULES
+            ==============================
+
+            STEP 1: Identify which specific areas from your 5-area assessment (A-E) were marked as "❌ Needs Clarification"
+
+            STEP 2: Generate questions ONLY for the unclear areas identified in Step 1
+
+            FOR ANY FOLLOW-UP SITUATION:
             <followup>
-            To generate the most accurate SQL query for your request, I need clarification on a few points:
+            I need clarification to generate accurate SQL:
 
-            1. **Time Period**: When you mention "last quarter," do you mean Q4 2024 or Q3 2024? Should I include data through December 31st?
+            **[Specific issue from unclear area]**: [Direct question in one sentence]
+            - Available data: [specific column names from metadata]
+            - Suggested approach: [concrete calculation option]
 
-            2. **Cost Calculation**: For "cost per member," should this be:
-            - Total medical costs divided by member count?
-            - Include pharmacy costs or medical only?
-            - Use average monthly membership or end-of-period membership?
+            **[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
+            - Available data: [relevant columns]
+            - Alternative: [another option]
 
-            3. **Product Grouping**: When you say "specialty products," should I include:
-            - Only products marked as "Specialty" in our system?
-            - High-cost drugs above a certain threshold?
-            - Specific therapeutic categories?
-
-            Once you provide these details, I'll generate the precise SQL query you need.
+            Please clarify these points.
             </followup>
+
+            FOLLOW-UP CONSTRAINTS:
+            - Ask questions ONLY for areas marked as "❌ Needs Clarification" in your assessment
+            - If only 1 area unclear → ask only 1 question
+            - If 2+ areas unclear → maximum 2 questions for most critical areas
+            - Never ask about areas already marked as "✓ Clear"
+            - Each main question gets exactly 2 sub-bullets: one for available data, one for suggestion
+            - Use actual column names from metadata
+            - Keep all bullets short and actionable
 
             ==============================
             EXECUTION INSTRUCTION
             ==============================
-            
+
             1. Complete TASK 1 assessment across all 5 areas
             2. Make clear PROCEED/FOLLOW-UP decision
             3. If PROCEED: Execute TASK 2 with full SQL generation
-            4. If FOLLOW-UP: Ask consolidated questions covering ALL unclear areas
-            
+            4. If FOLLOW-UP: Ask questions covering ONLY the unclear areas from your assessment
+
             You only get ONE opportunity for follow-up, so be thorough in your assessment.
             """
 
@@ -296,7 +504,35 @@ class SQLGeneratorAgent:
                 # Extract SQL or follow-up questions
                 import re
                 
-                # Check for SQL first
+                # Check for multiple SQL queries first
+                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+                if multiple_sql_match:
+                    multiple_content = multiple_sql_match.group(1).strip()
+                    
+                    # Extract individual queries with titles
+                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+                    if query_matches:
+                        sql_queries = []
+                        query_titles = []
+                        for i, (query_num, title, query) in enumerate(query_matches):
+                            cleaned_query = query.strip().replace('`', '')
+                            cleaned_title = title.strip()
+                            if cleaned_query and cleaned_title:
+                                sql_queries.append(cleaned_query)
+                                query_titles.append(cleaned_title)
+                        
+                        if sql_queries:
+                            return {
+                                'success': True,
+                                'multiple_sql': True,
+                                'sql_queries': sql_queries,
+                                'query_titles': query_titles,  # Add this line
+                                'query_count': len(sql_queries)
+                            }
+                    
+                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
+                
+                # Check for single SQL query
                 sql_match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
                 if sql_match:
                     sql_query = sql_match.group(1).strip()
@@ -307,6 +543,7 @@ class SQLGeneratorAgent:
                     
                     return {
                         'success': True,
+                        'multiple_sql': False,
                         'sql_query': sql_query
                     }
                 
@@ -324,9 +561,8 @@ class SQLGeneratorAgent:
                     return {
                         'success': True,
                         'needs_followup': True,
-                        'followup_questions': followup_text,
-                        'reasoning': 'Clarification needed for accurate SQL generation'
-                    }
+                        'sql_followup_questions': followup_text
+                        }
                 
                 # Neither SQL nor follow-up found
                 raise ValueError("No SQL or follow-up questions found in response")
@@ -342,19 +578,22 @@ class SQLGeneratorAgent:
             'success': False,
             'error': f"SQL assessment failed after {self.max_retries} attempts due to Model errors"
         }
-
-    # Note: _format_followup_qa() method removed as it's no longer needed with direct state variables
     
-    def _generate_sql_with_followup(self, context: Dict, sql_followup_question: str, sql_followup_answer: str) -> Dict[str, Any]:
-        """Generate SQL using original question + follow-up Q&A"""
+    
+    def _generate_sql_with_followup(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
+        """Generate SQL using original question + follow-up Q&A with multiple SQL support"""
         
         current_question = context.get('current_question', '')
-        recent_history = context.get('recent_history', [])
         dataset_metadata = context.get('dataset_metadata', '')
+        join_clause = state.get('join_clause', '')  # Get join clause from state
+        
+        # Check if we have multiple tables
+        selected_datasets = state.get('selected_dataset', [])
+        has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
 
         followup_sql_prompt = f"""
             You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
-
+            Your task is to generate a **high-quality Databricks SQL query** based on the user's question
             ==============================
             CONTEXT: FOLLOW-UP CLARIFICATION PROCESS
             ==============================
@@ -364,8 +603,9 @@ class SQLGeneratorAgent:
             PHASE 2 NOW: Generate the final SQL query using the original question PLUS the clarifications provided.
 
             ORIGINAL USER QUESTION: {current_question}
-            RECENT HISTORY: {recent_history}
-            AVAILABLE METADATA: {dataset_metadata}
+            **AVAILABLE METADATA**: {dataset_metadata}
+            MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+            JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
 
             ==============================
             FOLLOW-UP CLARIFICATION RECEIVED
@@ -376,6 +616,36 @@ class SQLGeneratorAgent:
             USER'S CLARIFICATION: {sql_followup_answer}
 
             ==============================
+            MULTI-TABLE AND COMPLEX QUERY ANALYSIS
+            ==============================
+            
+            Before generating SQL, assess if this requires multiple queries for better user understanding:
+
+            **SCENARIOS REQUIRING MULTIPLE QUERIES**:
+            
+            MULTI-TABLE PATTERNS:
+            - "Ledger revenue + breakdown by drug" → financial table + claim table
+            - "Budget metrics + client breakdown" → forecast table + transaction table
+            
+            SINGLE-TABLE COMPLEX PATTERNS:
+            - "Membership trends AND top drugs by revenue" → trend query + ranking query
+            - "Summary metrics AND detailed breakdown" → summary query + detail query
+            - "Current performance AND comparative analysis" → performance query + comparison query
+
+            **DECISION CRITERIA**:
+            - Multiple distinct analytical purposes in one question
+            - Different aggregation levels (summary + detail)
+            - Combines trends with rankings or comparisons
+            - Question contains "AND" connecting different analysis types
+            - Would result in overly complex single query
+            
+            **MULTI-QUERY DECISION LOGIC**:
+            1. **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables with join
+            2. **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+            3. **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Complex question with multiple analytical dimensions
+            4. **SINGLE QUERY**: Simple, focused questions with one analytical dimension
+
+            ==============================
             FINAL SQL GENERATION TASK
             ==============================
             
@@ -383,7 +653,8 @@ class SQLGeneratorAgent:
             1. The ORIGINAL user question as the primary requirement
             2. The USER'S CLARIFICATION to resolve any ambiguities
             3. Available metadata for column mapping
-            4. All SQL generation best practices below
+            4. Multi-table strategy assessment (single vs multiple queries)
+            5. All SQL generation best practices below
 
             IMPORTANT: No more questions allowed - this is the definitive SQL generation using all available information.
 
@@ -421,31 +692,35 @@ class SQLGeneratorAgent:
             - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
             - When the question specifies only a month, use the current year (2025) for calculations.
 
-            5. ATTRIBUTE-ONLY QUERIES
+            5. MULTI-TABLE JOIN SYNTAX (when applicable):
+            - Use the provided join clause exactly as specified
+            - Ensure all selected columns are properly qualified with table aliases
+            - Include all necessary tables in the FROM/JOIN clauses
+
+            6. ATTRIBUTE-ONLY QUERIES
             - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
 
-            6. STRING FILTERING - CASE INSENSITIVE
+            7. STRING FILTERING - CASE INSENSITIVE
             - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
             - Example: WHERE UPPER(product_category) = UPPER('Specialty')
 
-            7. TOP/BOTTOM QUERIES WITH TOTALS
-            - When the user asks for "top 10", "bottom 10", "highest", "lowest", also include the overall total/count for context.
-            - Show both the individual top/bottom records AND the grand total across all records.
+            8. TOP/BOTTOM QUERIES WITH TOTALS
+            - When the user asks for "top 10", "bottom 10", "highest", "lowest", also include the overall total for context.
             - Include ranking position information
             - Let the LLM decide the best SQL structure to achieve this (CTE, subquery, etc.).
 
-            8. HEALTHCARE FINANCE BEST PRACTICES
+            9. HEALTHCARE FINANCE BEST PRACTICES
             - Always include time dimensions (month, quarter, year) when relevant to the user's question.
             - Use business-friendly dimensions (e.g., therapeutic_class, service_type, age_group, state).
 
-            9. DATABRICKS SQL COMPATIBILITY
+            10. DATABRICKS SQL COMPATIBILITY
             - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
             - Use date functions: date_trunc(), year(), month(), quarter()
             - Use CASE WHEN for conditional logic
             - Use CTEs (WITH clauses) for complex logic
 
-            10. FORMATTING
-            - Show whole numbers for metrics and round percentages to two decimal places.
+            11. FORMATTING
+            - Show whole numbers for metrics and round percentages to four decimal places.
             - Use the ORDER BY clause only for date columns and use descending order.
 
             ==============================
@@ -459,27 +734,76 @@ class SQLGeneratorAgent:
             - Maintain all original SQL quality standards while incorporating clarifications
 
             ==============================
-            RESPONSE FORMAT
+            OUTPUT FORMATS
             ==============================
-            
-            Return ONLY the final SQL query wrapped in XML tags:
+            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+            return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
 
+            **FOR SINGLE SQL QUERY:**
             <sql>
             [Your complete SQL query incorporating both original question and clarifications]
             </sql>
+
+            **FOR MULTIPLE SQL QUERIES:**
+            If analysis requires multiple queries for better understanding:
+            <multiple_sql>
+            <query1_title>
+            [Brief descriptive title for first query - max 8 words]
+            </query1_title>
+            <query1>
+            [First SQL query here]
+            </query1>
+            <query2_title>
+            [Brief descriptive title for second query - max 8 words]
+            </query2_title>
+            <query2>
+            [Second SQL query here]
+            </query2>
+            </multiple_sql>
 
             Generate the definitive SQL query now.
             """
 
         for attempt in range(self.max_retries):
             try:
+                print('followup_sql_prompt',followup_sql_prompt)
                 llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": followup_sql_prompt}
                 ])
                 print('sql generation with followup', llm_response)
                 
-                # Extract SQL from XML tags
+                # Extract SQL or multiple SQL from XML tags
                 import re
+                
+                # Check for multiple SQL queries first
+                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+                if multiple_sql_match:
+                    multiple_content = multiple_sql_match.group(1).strip()
+                    
+                    # Extract individual queries with titles
+                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+                    if query_matches:
+                        sql_queries = []
+                        query_titles = []
+                        for i, (query_num, title, query) in enumerate(query_matches):
+                            cleaned_query = query.strip().replace('`', '')
+                            cleaned_title = title.strip()
+                            if cleaned_query and cleaned_title:
+                                sql_queries.append(cleaned_query)
+                                query_titles.append(cleaned_title)
+                        
+                        if sql_queries:
+                            return {
+                                'success': True,
+                                'multiple_sql': True,
+                                'sql_queries': sql_queries,
+                                'query_titles': query_titles,
+                                'query_count': len(sql_queries)
+                            }
+                    
+                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
+                
+                # Check for single SQL query
                 match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
                 if match:
                     sql_query = match.group(1).strip()
@@ -490,6 +814,7 @@ class SQLGeneratorAgent:
                     
                     return {
                         'success': True,
+                        'multiple_sql': False,
                         'sql_query': sql_query
                     }
                 else:
@@ -840,8 +1165,8 @@ class SQLGeneratorAgent:
         - Contains date/time data: {has_date_columns}
         - Contains numeric data: {has_numeric_columns}
 
-        Query Output:
-        {json.dumps(sql_data, indent=2, default=str)}
+        **Query Output**:
+        {sql_data}
 
         CRITICAL INSTRUCTIONS:
 
@@ -855,49 +1180,26 @@ class SQLGeneratorAgent:
         Goal: Turn SQL result tables into crisp, bullet-only insights for finance leaders.
         Audience: FP&A and operations leaders; expect variance, drivers/suppressors, concentration, and trend callouts.
         
-        ========================
-        CORE COMPUTATIONS (done silently, not shown in output)
-        ========================
-        - Totals & change: per period_key compute delta, pct_change (baseline=0 or missing → pct=null).
-        - Concentration: latest period top-N share; items to ~80% (Pareto).
-        - Drivers/Suppressors: rank by absolute delta (prefer attribution; else infer from top/bottom changes).
-        - Trend shape: compare last 2—3 periods' growth rates; detect accelerations, slowdowns, reversals.
-        - Scope clarity: always state subset context (e.g., "within Client X").
-        
-        ========================
-        NARRATIVE RULES
-        ========================
-
-        - Bullet points only inside "insight_text".
-        - No recommendations or actions—insights only.
-        - Use absolute dates from data; avoid "this month".
-        - Auto-scale numbers:
-        - ≥1B → currency x.xB
-        - ≥1M → currency x.xM
-        - ≥1K → currency x.xK
-        - else → raw with thousands separators
-        - Percentages: 1 decimal place.
-        - Keep unit consistent in a section.
-        - Each bullet ≤ 22 words; lead with result, then cause.
+        RULES:
+        - If ≤1 record: respond "Not enough data to create comprehensive narrative analysis."
+        - Bullets only, ≤22 words each, new lines between bullets
+        - Use exact names from data, no modifications
+        - Auto-scale: ≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK
+        - Percentages: 1 decimal place
         - Use ONLY the exact names, values, and terms that appear in the SQL results
         - Do NOT invent, rename, or modify any names from the data
         - Do NOT create generic categories or simplified labels
-        - Keep all therapeutic classes, product categories, and other names exactly as they appear in the results
-        
-        ========================
-        OUTPUT SECTIONS TO COVER IN BULLETS
-        ========================
-        1. Executive summary (1-2 bullets): direction, magnitude, key drivers/suppressors, scope.
-        2. Drivers (2-3 bullets): top contributors (↑) and suppressors (↓) with delta and share of total.
-        3. Trend insights (2—3 bullets): MoM/DoD/QoQ/YoY changes, accelerations/slowdowns, reversals.
-        
+
+        SECTIONS (3-6 bullets total):
+        1. Executive summary (1-2 bullets): direction, magnitude, scope
+        2. Key drivers/suppressors (2-3 bullets): top contributors with deltas
+        3. Trends (1-2 bullets): period-over-period changes
 
         RESPONSE FORMAT:
         The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
 
-        {{
-        "narrative_response": "your factual narrative analysis here OR 'Not enough data to create comprehensive narrative analysis.'"
-        }}
+        {{"narrative_response": "• First bullet\\n• Second bullet\\n• Third bullet"}}
+        
         """
 
         for attempt in range(self.max_retries):

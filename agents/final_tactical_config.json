@@ -1,0 +1,275 @@
+{
+    "tactical_planner_config": {
+        "version": "1.0",
+        "description": "Tactical investigation planner with guided discovery and comprehensive exploration",
+        
+        "investigation_philosophy": {
+            "primary_approach": "guided_discovery_with_open_exploration",
+            "constraint_level": "provide_guidance_not_restrictions",
+            "discovery_mandate": "explore_all_available_dimensions_for_unexpected_patterns",
+            "coverage_requirement": "systematic_exploration_of_all_table_attributes"
+        },
+
+        "investigation_framework": {
+            "three_layer_strategy": {
+                "layer_1_guided_investigation": {
+                    "percentage": "40%",
+                    "purpose": "Execute business intelligence patterns and validate strategic findings",
+                    "approach": "pattern_driven_analysis"
+                },
+                "layer_2_systematic_exploration": {
+                    "percentage": "40%", 
+                    "purpose": "Systematically analyze ALL table dimensions for hidden correlations",
+                    "approach": "comprehensive_dimensional_analysis"
+                },
+                "layer_3_anomaly_discovery": {
+                    "percentage": "20%",
+                    "purpose": "Investigate outliers and generate novel hypotheses",
+                    "approach": "data_driven_anomaly_investigation"
+                }
+            },
+            "user_approval_required": true,
+            "max_investigations": 8,
+            "output_format": "comprehensive_tactical_findings_report"
+        },
+
+        "business_intelligence_guidance": {
+            "revenue_correlation_patterns": {
+                "membership_revenue_dynamics": {
+                    "description": "When membership changes, investigate revenue efficiency and member mix quality",
+                    "correlation_hypothesis": "Membership decline often correlates with revenue per script changes due to member value mix shifts",
+                    "investigation_chain": [
+                        "revenue_per_script_efficiency_analysis",
+                        "member_value_segmentation_analysis", 
+                        "high_value_member_retention_patterns"
+                    ],
+                    "hidden_gem_indicators": [
+                        "revenue_per_script_increases_despite_membership_decline",
+                        "high_revenue_therapy_classes_retain_members_better",
+                        "certain_demographics_show_different_departure_patterns",
+                        "member_utilization_intensity_changes_before_departure"
+                    ]
+                },
+                
+                "drug_mix_revenue_dynamics": {
+                    "description": "Revenue changes often hide in therapy and drug mix evolution patterns",
+                    "correlation_hypothesis": "Revenue shifts may be driven by migration between high-revenue specialty drugs and low-revenue generic drugs",
+                    "investigation_chain": [
+                        "high_revenue_drug_volume_trend_analysis",
+                        "therapy_class_revenue_concentration_analysis",
+                        "brand_to_generic_migration_financial_impact"
+                    ],
+                    "hidden_gem_indicators": [
+                        "high_revenue_drugs_losing_market_share_to_competitors",
+                        "therapy_class_cannibalization_within_portfolio",
+                        "client_specific_drug_preference_evolution",
+                        "manufacturer_consolidation_affecting_therapy_access"
+                    ]
+                },
+                
+                "client_utilization_behavior_dynamics": {
+                    "description": "Client revenue changes may reflect evolving utilization behaviors rather than simple client loss",
+                    "correlation_hypothesis": "Existing clients often show changing utilization patterns as early warning indicators before departure",
+                    "investigation_chain": [
+                        "client_utilization_intensity_evolution",
+                        "client_therapy_loyalty_and_switching_patterns",
+                        "client_early_warning_behavioral_indicators"
+                    ],
+                    "hidden_gem_indicators": [
+                        "gradual_utilization_decline_preceding_client_departure",
+                        "therapy_class_switching_within_existing_clients",
+                        "seasonal_utilization_pattern_shifts_indicating_client_stress",
+                        "sub_account_group_departure_patterns_within_clients"
+                    ]
+                },
+
+                "operational_efficiency_dynamics": {
+                    "description": "Operational changes create ripple effects across multiple business dimensions",
+                    "correlation_hypothesis": "Pharmacy network changes and carrier policies drive utilization and revenue efficiency patterns",
+                    "investigation_chain": [
+                        "internal_external_pharmacy_revenue_efficiency_comparison",
+                        "pharmacy_therapy_specialization_effectiveness",
+                        "carrier_induced_pharmacy_network_utilization_changes"
+                    ],
+                    "hidden_gem_indicators": [
+                        "internal_pharmacies_showing_different_revenue_patterns_by_therapy",
+                        "certain_therapy_classes_performing_better_in_specific_pharmacy_types",
+                        "geographic_pharmacy_density_affecting_member_utilization_loyalty",
+                        "carrier_policy_changes_driving_pharmacy_preference_shifts"
+                    ]
+                },
+
+                "market_dynamics_patterns": {
+                    "description": "Market forces create complex interactions across client, geographic, and therapy dimensions",
+                    "correlation_hypothesis": "Carrier policy changes, regulatory shifts, and competitive dynamics create multi-dimensional business impacts",
+                    "investigation_chain": [
+                        "carrier_therapy_class_policy_preference_analysis",
+                        "geographic_market_competitive_dynamics",
+                        "regulatory_or_seasonal_pattern_business_impacts"
+                    ],
+                    "hidden_gem_indicators": [
+                        "carriers_driving_specific_therapy_class_adoption_patterns",
+                        "geographic_carrier_dominance_affecting_local_utilization_patterns",
+                        "competitive_therapy_substitution_affecting_revenue_mix",
+                        "regulatory_changes_creating_geographic_utilization_disparities"
+                    ]
+                }
+            },
+
+            "exploration_beyond_patterns": {
+                "instruction": "These business patterns are starting points, not limitations. Explore ALL table dimensions for unexpected correlations and novel insights",
+                "discovery_mandate": "Generate investigations beyond predefined patterns if data suggests novel insights or anomalies",
+                "comprehensive_coverage_requirement": "Ensure every table dimension is explored for potential business insights"
+            }
+        },
+
+        "comprehensive_table_exploration": {
+            "all_available_dimensions": [
+                "client_name", "account_id", "group_id", "carrier_id",
+                "therapy_class_name", "drug_name", "DRUG_MANUFCTR_NM", "brand_vs_generic_ind",
+                "member_date_of_birth", "member_sex", "state_cd",
+                "pharmacy_name", "phrmacy_type", "submit_date", "quarter",
+                "revenue_amt", "unadjusted_script_count", "product_category", "line_of_business"
+            ],
+            
+            "systematic_exploration_instructions": {
+                "dimensional_correlation_analysis": "Systematically explore correlations across ALL dimensions, not just those mentioned in business patterns",
+                "cross_dimensional_pattern_discovery": "Generate correlation matrices and cross-tabulations to discover unexpected relationships",
+                "outlier_and_anomaly_investigation": "Identify and investigate outliers in any dimension that might reveal business insights",
+                "temporal_pattern_analysis": "Explore time-based patterns across all dimensions for seasonal, cyclical, or trend insights"
+            },
+            
+            "discovery_examples": [
+                "group_id sub-patterns within client departures revealing account consolidation trends",
+                "manufacturer concentration effects not captured in therapy class analysis",
+                "individual pharmacy performance anomalies suggesting operational optimization opportunities",
+                "member age and gender combinations showing unexpected therapy utilization patterns",
+                "carrier and state combinations revealing regional payer strategy impacts",
+                "temporal patterns beyond standard seasonality suggesting market disruption indicators"
+            ]
+        },
+
+        "investigation_methodology": {
+            "user_question_driven_parameters": {
+                "time_period_extraction": {
+                    "description": "Extract time periods and comparison baselines directly from user question context",
+                    "parameters": {
+                        "analysis_period": "derived_from_user_question",
+                        "comparison_baseline": "derived_from_user_question",
+                        "trend_analysis_window": "contextual_based_on_question_scope",
+                        "seasonal_adjustment": "based_on_user_question_timeframe"
+                    }
+                },
+                "scope_extraction": {
+                    "description": "Extract investigation scope and focus areas from user question and strategic findings",
+                    "parameters": {
+                        "geographic_scope": "derived_from_question_context",
+                        "business_segment_scope": "extracted_from_user_focus",
+                        "demographic_scope": "inferred_from_question_intent",
+                        "client_scope": "identified_from_strategic_findings"
+                    }
+                }
+            },
+            
+            "correlation_discovery_approach": {
+                "multi_dimensional_analysis": {
+                    "description": "Analyze findings across multiple dimensions simultaneously to discover hidden correlations",
+                    "methodology": "cross_dimensional_pattern_recognition_with_statistical_significance",
+                    "execution_strategy": "generate_comprehensive_correlation_matrices"
+                },
+                "temporal_pattern_analysis": {
+                    "description": "Analyze time-series patterns to identify leading and lagging indicators",
+                    "methodology": "sequential_time_period_correlation_analysis", 
+                    "execution_strategy": "multi_period_trend_and_seasonality_analysis"
+                },
+                "cohort_behavior_analysis": {
+                    "description": "Segment analysis to identify different behavior patterns within categories",
+                    "methodology": "behavioral_cohort_segmentation_and_comparative_analysis",
+                    "execution_strategy": "comparative_cohort_performance_and_evolution_analysis"
+                },
+                "anomaly_detection_analysis": {
+                    "description": "Identify and investigate statistical and business anomalies for insight discovery",
+                    "methodology": "statistical_outlier_detection_with_business_context_interpretation",
+                    "execution_strategy": "systematic_anomaly_investigation_across_all_dimensions"
+                }
+            }
+        },
+
+        "llm_autonomy_instructions": {
+            "exploration_mandate": "You have full authority to investigate any dimension or correlation that might yield business insights, regardless of predefined patterns",
+            "pattern_transcendence": "Business patterns are guides, not constraints. Explore beyond them when data suggests additional value or unexpected insights",
+            "comprehensive_coverage": "Ensure no table dimension is unexplored if it might contribute to understanding the business variance or opportunity",
+            "novel_discovery_emphasis": "Prioritize discovering insights not obvious from predefined patterns. Look for unexpected correlations and business anomalies",
+            "statistical_rigor": "Apply appropriate statistical analysis to validate correlation significance and avoid false pattern recognition",
+            "business_context_integration": "Always interpret statistical findings within healthcare finance business context for actionable insights"
+        },
+
+        "investigation_execution": {
+            "query_generation_approach": "llm_generated_sql_based_on_investigation_requirements",
+            "max_queries_per_investigation_category": 2,
+            "cross_validation_queries": "generated_as_needed_for_consistency_verification",
+            "query_timeout": 300,
+            "findings_synthesis_approach": "comprehensive_business_intelligence_report"
+        },
+
+        "user_approval_workflow": {
+            "investigation_menu_format": {
+                "show_recommended_investigations": true,
+                "include_strategic_rationale": true,
+                "show_available_metrics_and_dimensions": true,
+                "include_exploration_scope": true,
+                "allow_custom_investigation_selection": true
+            },
+            "approval_options": {
+                "approve_all_recommended": "Execute all recommended investigations across three layers",
+                "select_by_layer": "Choose specific investigation layers (guided, systematic, anomaly)",
+                "select_specific_categories": "Choose specific investigation categories to execute",
+                "modify_investigation_scope": "Modify investigation parameters or add custom investigations"
+            }
+        },
+
+        "output_format": {
+            "tactical_findings_report": {
+                "sections": [
+                    "Investigation Summary and Approach",
+                    "Business Intelligence Pattern Findings", 
+                    "Systematic Exploration Discoveries",
+                    "Anomaly Investigation Results",
+                    "Cross-Validation and Consistency Analysis",
+                    "Hidden Gems and Novel Insights",
+                    "Recommendations and Next Steps"
+                ],
+                "include_sql_queries": true,
+                "include_statistical_significance": true,
+                "include_confidence_levels": true,
+                "include_business_impact_quantification": true
+            }
+        },
+
+        "claims_drivers_table_metadata": {
+            "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+            "description": "Operational revenue drivers from pharmacy claims - comprehensive source for multi-dimensional correlation discovery",
+            "correlation_rich_columns": [
+                {"name": "client_name", "type": "string", "correlation_potential": "client_behavior_patterns_and_portfolio_evolution"},
+                {"name": "account_id", "type": "string", "correlation_potential": "account_level_consolidation_and_utilization_patterns"},
+                {"name": "group_id", "type": "string", "correlation_potential": "sub_account_group_behavior_and_departure_patterns"},
+                {"name": "carrier_id", "type": "string", "correlation_potential": "payer_behavior_influence_and_policy_impact_patterns"},
+                {"name": "revenue_amt", "type": "numeric", "correlation_potential": "financial_efficiency_and_pricing_patterns"},
+                {"name": "unadjusted_script_count", "type": "numeric", "correlation_potential": "utilization_intensity_and_volume_patterns"},
+                {"name": "therapy_class_name", "type": "string", "correlation_potential": "therapy_mix_evolution_and_clinical_preference_patterns"},
+                {"name": "drug_name", "type": "string", "correlation_potential": "specific_drug_adoption_and_competitive_substitution_patterns"},
+                {"name": "DRUG_MANUFCTR_NM", "type": "string", "correlation_potential": "manufacturer_market_dynamics_and_supply_chain_patterns"},
+                {"name": "brand_vs_generic_ind", "type": "string", "correlation_potential": "drug_preference_shift_and_cost_optimization_patterns"},
+                {"name": "member_date_of_birth", "type": "date", "correlation_potential": "demographic_utilization_and_age_cohort_patterns"},
+                {"name": "member_sex", "type": "string", "correlation_potential": "gender_therapy_preference_and_utilization_patterns"},
+                {"name": "state_cd", "type": "string", "correlation_potential": "geographic_market_dynamics_and_regulatory_impact_patterns"},
+                {"name": "pharmacy_name", "type": "string", "correlation_potential": "individual_pharmacy_performance_and_network_optimization_patterns"},
+                {"name": "phrmacy_type", "type": "string", "correlation_potential": "pharmacy_network_efficiency_and_operational_strategy_patterns"},
+                {"name": "submit_date", "type": "date", "correlation_potential": "temporal_trend_seasonality_and_market_timing_patterns"},
+                {"name": "quarter", "type": "string", "correlation_potential": "quarterly_business_cycle_and_planning_patterns"},
+                {"name": "product_category", "type": "string", "correlation_potential": "product_portfolio_performance_and_strategic_focus_patterns"},
+                {"name": "line_of_business", "type": "string", "correlation_potential": "business_segment_performance_and_strategic_alignment_patterns"}
+            ]
+        }
+    }
+}

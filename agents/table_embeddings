@@ -1,93 +1,128 @@
-CREATE TABLE unified_semantic_index (
-    -- Primary Key
-    entry_id STRING PRIMARY KEY,  -- unique identifier
+# hypothesis_catalog.yaml - Comprehensive investigation patterns
+investigation_patterns:
+  revenue_change:
+    mandatory_checks:
+      - name: overall_magnitude
+        description: "Assess overall revenue change magnitude and timing"
+        dataset: ledger_overview
+        group_set: "by line of business"
+        priority: 1
+        
+      - name: volume_price_decomposition
+        description: "Split revenue into volume and price components"
+        dataset: claims_drivers
+        metrics: ["revenue_amt", "unadjusted_script_count"]
+        calculation: "revenue_per_script"
+        priority: 2
+        
+      - name: temporal_pattern
+        description: "Check for seasonal or cyclical patterns"
+        dataset: ledger_overview
+        time_analysis: true
+        priority: 3
     
-    -- Entry Classification
-    entry_type STRING,  -- 'table' | 'column_cluster' | 'relationship'
-    
-    -- Content for Embedding
-    embedding_content STRING,  -- Text optimized for vector search
-    embedding_vector ARRAY<FLOAT>,  -- Generated from embedding_content
-    
-    -- Context for LLM
-    llm_context STRING,  -- JSON string for LLM interpretation
-    
-    -- Metadata for Filtering
-    table_names ARRAY<STRING>,  -- Can be multiple for relationships
-    domain STRING,  -- 'claims' | 'financial' | 'pharmacy'
-    has_measures BOOLEAN,  -- true if contains metrics
-    has_dimensions BOOLEAN,  -- true if contains attributes
-    temporal_grain STRING,  -- 'daily' | 'monthly' | 'quarterly'
-    
-    -- Tracking
-    usage_count INT DEFAULT 0,
-    last_used TIMESTAMP,
-    created_date TIMESTAMP,
-    updated_date TIMESTAMP
-)
+    investigation_factors:
+      client_factors:
+        - name: client_churn
+          description: "Check for lost clients"
+          dataset: claims_drivers
+          group_set: "by client"
+          analysis_type: "retention"
+          priority: 1
+          
+        - name: client_additions
+          description: "Check for new client additions"
+          dataset: claims_drivers
+          group_set: "by client"
+          analysis_type: "new_business"
+          priority: 2
+          
+      member_factors:
+        - name: membership_changes
+          description: "Analyze member count changes"
+          dataset: claims_drivers
+          metrics: ["member_count", "eligibility_status"]
+          analysis_type: "cohort"
+          priority: 1
+          
+        - name: member_demographics
+          description: "Check age group shifts"
+          dataset: claims_drivers
+          group_set: "by age group"
+          priority: 2
+          
+      carrier_factors:
+        - name: carrier_changes
+          description: "Analyze carrier additions or drops"
+          dataset: claims_drivers
+          group_set: "by carrier"
+          analysis_type: "retention"
+          priority: 1
+          
+      product_factors:
+        - name: brand_generic_mix
+          description: "Analyze brand vs generic shifts"
+          dataset: claims_drivers
+          group_set: "by brand vs generic and drug combination"
+          priority: 1
+          
+        - name: therapy_class_mix
+          description: "Check therapy class changes"
+          dataset: claims_drivers
+          group_set: "by therapy drug"
+          priority: 2
+          
+      operational_factors:
+        - name: pharmacy_network
+          description: "Analyze pharmacy performance"
+          dataset: claims_drivers
+          group_set: "by pharmacy"
+          priority: 1
+          
+        - name: claim_processing
+          description: "Check claim status patterns"
+          dataset: claims_drivers
+          metrics: ["claim_status_code", "rejection_rate"]
+          priority: 2
 
-prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm claim-level transactions pharmacy pbm drug medication prescription 
-revenue expense WAC AWP script counts unadjusted adjusted 30-day 90-day revenue per script GDR generic dispense rate 
-claim number claim sequence claim status code paid reversed P X net activity
-client id client name carrier id account id group id client hierarchy employer insurance
-pharmacy name pharmacy npi provider dispensing national provider identifier
-drug name therapy class name GLP-1 receptor agonists SGLT-2 inhibitors oncology anti-obesity
-brand vs generic indicator brand generic gpi generic product identifier drug classification
-line of business LOB E&I FI E&I ASO C&S PDP MAPD E&I UMR External employer individual community state medicare prescription drug plan
-line of business description fully insured administrative services only united medical resources
-product category PBM home delivery HDP specialty SP
-submit date year month quarter daily temporal YoY quarter-over-quarter trending
-pharmacy performance client utilization drug spend therapy class analysis generic adoption
-carrier account group sub-client analysis insurance plan administration
-joins with actuals_vs_forecast_analysis year month quarter line_of_business product_category
-claim-level detail daily grain individual transactions payment status utilization financial
+  script_volume_change:
+    mandatory_checks:
+      - name: overall_script_trend
+        description: "Overall script volume trend"
+        dataset: claims_drivers
+        metrics: ["unadjusted_script_count"]
+        priority: 1
+        
+      - name: scripts_per_member
+        description: "Scripts per member analysis"
+        dataset: claims_drivers
+        calculation: "scripts_per_member"
+        priority: 2
+        
+    investigation_factors:
+      # Similar structure for script-specific investigations
+      
+  membership_change:
+    mandatory_checks:
+      - name: overall_membership
+        description: "Total membership trend"
+        dataset: ledger_overview
+        metrics: ["Total Membership"]
+        priority: 1
+        
+    investigation_factors:
+      # Membership-specific factors
 
-rd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis ledger-level financials actuals forecast budget 
-ledger type GAAP actuals 8+4 forecast 2+10 forecast 5+7 forecast budget variance analysis forecast cycles
-metric type unadjusted scripts adjusted scripts 30 day scripts 90 day scripts revenues COGS post reclass SG&A post reclass IOI total membership
-amount or count values aggregation grouping metric type required
-line of business LOB C&S E&I M&R Medicare Retirement External Optum Rev Reclass community state employer individual
-product category PBM home delivery HDP specialty SP other products community pharmacies workers comp RVOH
-product sub category lvl 1 level one subcategory home delivery specialty core PBM other products community pharmacies RVOH hospice workers comp
-product sub category lvl 2 level two subcategory divvyDOSE retail other GPO optum store infusion unknown workers comp healthline healthgrades core HDP CP core mfr discount hospice RVOH corp core specialty prior auth distribution frontier pharmscript retail prevention CPS solutions nuvaila admin fees optum perks
-transaction date year month quarter temporal monthly quarterly yearly trending
-variance tracking performance monitoring financial planning actuals vs forecast vs budget comparison
-aggregated summary ledger rollups metric grouping LOB analysis product category mix
-joins with claim_transaction_for_pharmacy_pbm year month quarter line_of_business product_category
-monthly quarterly yearly grain aggregated metrics financial summaries
-
-{
-  "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-  "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
-  "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, claim status tracking",
-  "key_measures": ["revenue", "expense", "WAC", "AWP", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "revenue per script"],
-  "key_dimensions": ["claim identifiers", "claim status", "client id/name", "carrier", "account", "group", "pharmacy name/NPI", "drug name", "therapy class", "GPI", "line of business", "brand vs generic", "product category", "submit date", "year", "month", "quarter"],
-  "joins_with": {
-    "actuals_vs_forecast_analysis": {
-      "join_columns": ["year", "month", "quarter", "line_of_business", "product_category"],
-      "purpose": "compare actuals to forecast/budget"
-    }
-  },
-  "query_patterns": ["drug spend analysis", "pharmacy performance", "client utilization", "therapy class trending", "GLP-1 utilization", "generic adoption rates", "claim status analysis", "carrier/account analysis"],
-  "not_suitable_for": ["budget planning", "forecast generation", "ledger-level summaries"],
-  "grain": "claim_transaction",
-  "temporal": "daily via submit_date"
-}
-
-{
-  "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
-  "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for variance analysis and planning at LOB and product category levels.",
-  "core_capabilities": "actuals vs forecast comparison, budget variance analysis, line-of-business trending, product category performance, financial metrics rollup, forecast cycle analysis (8+4, 2+10, 5+7), metric type analysis",
-  "key_measures": ["revenue", "COGS post reclass", "SG&A post reclass", "IOI", "total membership", "unadjusted scripts", "adjusted scripts", "30-day scripts", "90-day scripts", "amount or count"],
-  "key_dimensions": ["ledger type", "metric type", "line of business", "product category", "product subcategory level 1", "product subcategory level 2", "transaction date", "year", "month", "quarter"],
-  "joins_with": {
-    "claim_transaction_for_pharmacy_pbm": {
-      "join_columns": ["year", "month", "quarter", "line_of_business", "product_category"],
-      "purpose": "drill down to claim-level detail"
-    }
-  },
-  "query_patterns": ["variance analysis", "actuals vs forecast", "budget comparison", "LOB performance", "financial trending", "metric type analysis", "product subcategory analysis"],
-  "not_suitable_for": ["claim-level analysis", "drug-level detail", "pharmacy metrics", "daily granularity", "client-specific analysis"],
-  "grain": "aggregated_metrics",
-  "temporal": "monthly/quarterly/yearly via transaction_date"
-}
+investigation_rules:
+  max_total_iterations: 7
+  min_iterations: 3
+  variance_threshold: 70
+  confidence_threshold: 0.8
+  stop_conditions:
+    - variance_explained: 80
+    - no_progress_iterations: 2
+    - confidence_reached: 0.9
+  iteration_limits:
+    per_hypothesis: 2
+    per_dimension: 3
+    mandatory_completion_required: true

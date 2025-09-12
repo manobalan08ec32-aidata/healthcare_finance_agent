@@ -1,3 +1,415 @@
+def create_strategic_sql_generation_prompt(current_question: str, investigation_config: Dict, query_key: str) -> str:
+    """
+    Generate generic strategic SQL generation prompt that works with any JSON configuration
+    """
+    
+    # Extract the main config key (revenue_investigation_config, expense_investigation_config, etc.)
+    config_key = list(investigation_config.keys())[0]
+    config = investigation_config[config_key]
+    
+    # Get the specific query configuration
+    query_config = config['strategic_queries'][query_key]
+    
+    # Extract domain-specific prompts
+    domain_prompts = config.get('domain_specific_prompts', {})
+    analysis_guidance = config.get('analysis_type_guidance', {})
+    
+    prompt = f"""
+You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
+
+USER QUESTION: {current_question}
+INVESTIGATION TYPE: {config.get('investigation_type', 'financial_analysis')}
+
+==============================
+DOMAIN BUSINESS INTELLIGENCE
+==============================
+
+BUSINESS CONTEXT: {domain_prompts.get('business_intelligence_context', 'Financial analysis context')}
+
+VARIANCE INTERPRETATION: {domain_prompts.get('variance_interpretation_logic', 'Standard variance analysis')}
+
+INVESTIGATION PRIORITY: {domain_prompts.get('investigation_priorities', 'Sequential investigation approach')}
+
+BUSINESS SEASONALITY: {domain_prompts.get('business_seasonality', 'Consider business cycles')}
+
+CORRELATION PATTERNS: {domain_prompts.get('strategic_correlation_patterns', 'Standard correlation analysis')}
+
+==============================
+QUERY-SPECIFIC CONFIGURATION
+==============================
+
+QUERY PURPOSE: {query_config['purpose']}
+SEQUENCE ORDER: {query_config['sequence_order']}
+TABLE NAME: {query_config['table_name']}
+
+TABLE METADATA:
+{json.dumps(query_config['table_metadata'], indent=2)}
+
+ANALYSIS REQUIREMENTS:
+{json.dumps(query_config['analysis_requirements'], indent=2)}
+
+OUTPUT REQUIREMENTS:
+{json.dumps(query_config['output_requirements'], indent=2)}
+
+==============================
+LLM STRATEGIC INSTRUCTIONS
+==============================
+
+STRATEGIC FOCUS: {query_config['llm_instructions']['strategic_focus']}
+
+BUSINESS CONTEXT: {query_config['llm_instructions']['business_context']}
+
+SQL GENERATION GUIDANCE: {query_config['llm_instructions']['sql_generation_guidance']}
+
+RESULT INTERPRETATION: {query_config['llm_instructions']['result_interpretation']}
+
+CROSS-QUERY VALIDATION: {query_config['llm_instructions'].get('cross_query_validation', 'Validate findings with other analysis')}
+
+SUCCESS CRITERIA: {query_config['llm_instructions']['success_criteria']}
+
+ANALYSIS TYPE GUIDANCE: {analysis_guidance.get(query_config['analysis_requirements']['analysis_type'], 'Standard analysis approach')}
+
+==============================
+DATABRICKS SQL GENERATION RULES
+==============================
+
+1. MEANINGFUL COLUMN NAMES
+- Use business-relevant column names that align with the query purpose
+- Include period identifiers in variance calculations (current_period, prior_period, variance)
+- Use domain-appropriate terminology from business context
+
+2. COMPLETE TRANSPARENCY - SHOW ALL COMPONENTS
+- MANDATORY: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in SELECT output
+- If calculating variance, include: current_period_value, prior_period_value, absolute_variance, percentage_variance
+- If filtering by dimensions, include those dimensions in SELECT
+- Example: SELECT line_of_business, current_revenue, prior_revenue, (current_revenue - prior_revenue) AS revenue_variance
+
+3. HEALTHCARE DATA HANDLING
+- Use UPPER() for all text filtering: WHERE UPPER(column) = UPPER('value')
+- Handle NULL values appropriately: COALESCE(amount, 0)
+- Use proper date handling: WHERE transaction_date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
+
+4. VARIANCE ANALYSIS CALCULATIONS
+- Include both absolute and percentage variance calculations
+- Apply significance filtering based on variance thresholds from configuration
+- Calculate statistical measures for significance assessment
+
+5. BUSINESS CONTEXT APPLICATION
+- Extract time periods from user question context
+- Apply all required_filters from analysis_requirements
+- Focus on key_dimensions and focus_metrics specified
+- Consider depends_on_query relationships for focus areas
+
+6. DATABRICKS SQL OPTIMIZATION
+- Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+- Use date functions: date_trunc(), year(), month(), quarter()
+- Use CTEs (WITH clauses) for complex period comparisons
+- Use CASE WHEN for conditional logic
+
+7. OUTPUT FORMATTING
+- Show whole numbers for financial metrics
+- Round percentages to two decimal places
+- Order by significance as specified in output_requirements
+- Include ranking where appropriate
+
+==============================
+SQL REASONING REQUIREMENT
+==============================
+
+You must provide your reasoning for SQL construction in the following format:
+
+REASONING:
+1. **Time Period Extraction**: [Explain how you extracted comparison periods from user question]
+2. **Business Logic Application**: [Explain how you applied domain business context]
+3. **Configuration Implementation**: [Explain how you implemented analysis_requirements and output_requirements]
+4. **Strategic Focus Maintenance**: [Explain how you maintained strategic-level focus per LLM instructions]
+5. **Cross-Query Considerations**: [Explain any dependencies or validation considerations]
+
+==============================
+RESPONSE FORMAT
+==============================
+
+<reasoning>
+[Provide detailed reasoning following the 5-point structure above]
+</reasoning>
+
+<sql>
+[Your complete Databricks SQL query implementing all requirements]
+</sql>
+
+CRITICAL SUCCESS REQUIREMENTS:
+1. Use exact table name and column names from table_metadata
+2. Apply ALL required_filters from analysis_requirements
+3. Focus on key_dimensions and focus_metrics specified
+4. Implement analysis_type using domain guidance
+5. Follow output_requirements for calculations and ordering
+6. Maintain strategic-level focus appropriate for the investigation sequence
+7. Extract user question context for time periods and scope
+8. Apply domain business intelligence for interpretation
+9. Provide clear reasoning for all SQL construction decisions
+10. Generate high-quality, executable Databricks SQL
+
+Generate the strategic SQL query with reasoning now.
+"""
+    
+    return prompt
+
+
+
+{
+    "revenue_investigation_config": {
+        "version": "1.0",
+        "investigation_type": "revenue_variance_analysis",
+        "description": "Complete revenue investigation pattern with embedded metadata and framework",
+        
+        "question_classification": {
+            "trigger_keywords": [
+                ["revenue", "drop|decrease|decline|fall"],
+                ["revenue", "increase|growth|rise|up"],
+                ["revenue", "vs|versus|compared", "previous|last|prior"],
+                ["why", "revenue"]
+            ],
+            "time_pattern_keywords": [
+                "month over month|mom|m-o-m",
+                "quarter over quarter|qoq|q-o-q", 
+                "year over year|yoy|y-o-y",
+                "vs previous|vs last|compared to"
+            ]
+        },
+
+        "investigation_framework": {
+            "query_sequence": ["revenue_variance_detection", "client_membership_analysis", "carrier_analysis"],
+            "max_queries": 3,
+            "synthesis_approach": "markdown_intelligence_report",
+            "expected_investigation_depth": "high"
+        },
+
+        "strategic_queries": {
+            "query_1_revenue_variance": {
+                "purpose": "Identify primary revenue variance areas by LOB and product",
+                "sequence_order": 1,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+                "table_metadata": {
+                    "description": "High-level monthly or quarterly revenue performance by LOB and product category",
+                    "columns": [
+                        {
+                            "name": "ledger",
+                            "description": "Ledger type for the record",
+                            "distinct_values": ["GAAP", "BUDGET", "8+4", "2+10", "5+7"]
+                        },
+                        {
+                            "name": "metric_type",
+                            "description": "Type of metric captured in amount_or_count",
+                            "sample_values": ["Revenues", "Adjusted Scripts", "Unadjusted Scripts", "COGS Post Reclass", "SG&A Post Reclass", "IOI", "Total Membership"]
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the revenue record",
+                            "sample_values": ["C&S", "E&I", "M&R", "Rev Reclass", "Optum", "External"]
+                        },
+                        {
+                            "name": "product_category",
+                            "description": "High-level product or service grouping",
+                            "sample_values": ["PBM", "Specialty", "HDP"]
+                        },
+                        {
+                            "name": "transaction_date",
+                            "description": "Transaction date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "quarter",
+                            "description": "Quarter (Q1–Q4) derived from transaction_date"
+                        },
+                        {
+                            "name": "amount_or_count",
+                            "description": "Value for the record (amount or count depending on metric_type)"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "required_filters": ["metric_type = 'Revenues'", "ledger = 'GAAP'"],
+                    "key_dimensions": ["line_of_business", "product_category"],
+                    "focus_metrics": ["amount_or_count"],
+                    "analysis_type": "period_comparison_with_variance",
+                    "variance_threshold": "$250K absolute OR 10% percentage"
+                },
+                "output_requirements": {
+                    "include_variance_calculation": true,
+                    "include_percentage_change": true,
+                    "order_by": "absolute_variance_impact_desc",
+                    "filter_significant_only": true
+                },
+                "llm_instructions": {
+                    "strategic_focus": "You are conducting HIGH-LEVEL revenue variance detection. Focus on business segment performance patterns, not operational details. This query establishes which LOBs and product categories drive overall variance.",
+                    "business_context": "PBM revenue typically varies due to client portfolio changes, membership shifts, or product mix evolution. Identify which business segments show significant variance patterns that warrant deeper investigation.",
+                    "sql_generation_guidance": "Generate period-over-period comparison focusing on line_of_business and product_category. Include current period revenue, comparison period revenue, absolute variance, and percentage variance. Filter for significance based on variance_threshold.",
+                    "result_interpretation": "Look for LOBs with variance >$250K or >10%. These become focus areas for subsequent queries. Note any unusual patterns that break expected business correlations.",
+                    "success_criteria": "Successfully identify 1-3 LOBs or product categories that explain majority of overall revenue variance with quantified impact."
+                }
+            },
+
+            "query_2_client_membership": {
+                "purpose": "Analyze client portfolio and membership changes driving revenue variance",
+                "sequence_order": 2,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "client_name",
+                            "description": "Client name"
+                        },
+                        {
+                            "name": "client_id",
+                            "description": "Client identifier"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["line_of_business", "client_name"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "client_churn_and_acquisition_detection",
+                    "client_change_threshold": "$100K revenue impact",
+                    "depends_on_query": "query_1_revenue_variance"
+                },
+                "output_requirements": {
+                    "identify_client_status": ["Lost", "New", "Existing"],
+                    "calculate_client_variance": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "absolute_client_impact_desc"
+                },
+                "llm_instructions": {
+                    "strategic_focus": "Analyze client portfolio changes that drive the revenue variance identified in Query 1. Focus on significant client departures, acquisitions, and behavior changes within affected LOBs.",
+                    "business_context": "Client churn is typically the primary driver of PBM revenue variance. Client departures directly reduce revenue, while new client acquisitions may show ramp-up patterns. Focus on clients with >$100K impact in LOBs identified from Query 1.",
+                    "sql_generation_guidance": "Compare client revenue between periods in the significant LOBs from Query 1. Identify: (1) Lost clients (zero current revenue), (2) New clients (zero prior revenue), (3) Existing clients with significant changes. Calculate client-level variance and aggregate impact.",
+                    "result_interpretation": "Quantify how much of Query 1 variance is explained by client portfolio changes. Look for patterns: multiple client losses in same LOB, new client ramp-up rates, existing client behavior shifts.",
+                    "cross_query_validation": "Client changes should correlate with LOB variance patterns from Query 1. If major client churn occurred, expect corresponding LOB revenue decline.",
+                    "success_criteria": "Identify specific clients driving significant portion of revenue variance with quantified impact. Validate correlation with Query 1 LOB findings."
+                }
+            },
+
+            "query_3_carrier_analysis": {
+                "purpose": "Identify carrier utilization changes affecting revenue",
+                "sequence_order": 3,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "carrier_id",
+                            "description": "Insurance carrier identifier"
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["carrier_id", "line_of_business"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "carrier_utilization_variance",
+                    "depends_on_query": "query_1_revenue_variance",
+                    "conditional_execution": "if_client_changes_insufficient_to_explain_variance"
+                },
+                "output_requirements": {
+                    "calculate_utilization_changes": true,
+                    "identify_significant_carrier_changes": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "carrier_impact_significance"
+                },
+                "llm_instructions": {
+                    "strategic_focus": "Analyze carrier behavior and utilization pattern changes that contribute to revenue variance in LOBs identified from Query 1. Focus on operational shifts that influence revenue beyond client portfolio changes.",
+                    "business_context": "Carrier policy changes, network modifications, and utilization management shifts can significantly impact PBM revenue. Look for carriers with changed utilization patterns, especially in LOBs with unexplained variance from Queries 1-2.",
+                    "sql_generation_guidance": "Compare carrier utilization (revenue and script volume) between periods in significant LOBs from Query 1. Calculate carrier-level variance and utilization rate changes. Focus on carriers showing >20% utilization changes.",
+                    "result_interpretation": "Identify carriers with significant behavior changes that correlate with LOB variance patterns. Look for: policy changes affecting utilization, network changes impacting volume, seasonal pattern disruptions.",
+                    "cross_query_validation": "Carrier changes should help explain any remaining variance not accounted for by client portfolio changes from Query 2. Look for operational drivers behind client behavior changes.",
+                    "success_criteria": "Complete the strategic picture by identifying operational factors (carrier behavior) that, combined with client changes, explain the majority of revenue variance identified in Query 1."
+                }
+            }
+        },
+
+        "intelligence_synthesis": {
+            "variance_thresholds": {
+                "significant_lob_variance": "$500K",
+                "significant_client_change": "$100K", 
+                "significant_membership_change": "5%",
+                "significant_carrier_change": "20% utilization change"
+            },
+            
+            "correlation_analysis": [
+                "revenue_vs_membership",
+                "revenue_vs_client_churn",
+                "revenue_vs_carrier_changes"
+            ],
+            
+            "tactical_direction_rules": {
+                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
+                "membership_driven_variance": "if_membership_changes_correlate_with_revenue", 
+                "operational_variance": "if_none_of_above_explain_variance_sufficiently"
+            },
+            
+            "llm_synthesis_instructions": {
+                "strategic_intelligence_approach": "Synthesize findings from all 3 strategic queries into comprehensive revenue variance explanation. Connect LOB-level variance (Query 1) with client portfolio changes (Query 2) and operational factors (Query 3) into cohesive strategic narrative.",
+                "business_correlation_validation": "Validate expected business correlations: Client departures should correlate with LOB revenue decline. Carrier changes should align with client behavior shifts. Identify any broken correlations that suggest deeper issues.",
+                "variance_explanation_completeness": "Quantify how much of total revenue variance is explained by identified factors. If <70% explained, flag need for tactical investigation into additional operational factors.",
+                "tactical_direction_formulation": "Based on primary variance drivers identified, formulate clear tactical investigation priorities: (1) Client-focused if churn explains >60%, (2) Operational-focused if carrier/utilization factors dominate, (3) Mixed approach if multiple factors contribute significantly.",
+                "strategic_insight_generation": "Generate actionable strategic insights: client retention opportunities, operational efficiency improvements, market positioning implications based on variance patterns discovered.",
+                "markdown_report_structure": "Create executive-ready intelligence report with: Executive Summary (total variance + primary driver), Detailed Findings (3-query synthesis), Strategic Implications (business impact), Tactical Investigation Plan (next steps with priorities)"
+            }
+        },
+
+        "domain_specific_prompts": {
+            "business_intelligence_context": "You are analyzing pharmacy benefits management (PBM) revenue where variance typically stems from three strategic drivers: (1) Client portfolio changes - client departures/acquisitions directly impact revenue, (2) Membership dynamics - enrollment changes affect utilization volume, (3) Operational shifts - carrier policy changes and network utilization patterns. Focus on HIGH-LEVEL strategic patterns, not operational details.",
+            
+            "variance_interpretation_logic": "Revenue variance significance: >$250K absolute OR >10% percentage indicates strategic investigation priority. Client changes >$100K warrant deep analysis. Membership changes >5% typically correlate with revenue shifts. Cross-validate findings: client churn should align with membership decline and LOB performance patterns.",
+            
+            "investigation_priorities": "SEQUENCE: Start with LOB-level revenue variance to identify affected business segments → Analyze client portfolio changes in affected LOBs → Validate with operational drivers (carriers, utilization). Each query should narrow focus based on previous findings.",
+            
+            "business_seasonality": "Consider PBM patterns: Q1 (plan year changes, new client onboarding), Q4 (deductible exhaustion increases utilization), mid-year (formulary updates affect therapy mix). Adjust variance expectations accordingly.",
+            
+            "strategic_correlation_patterns": "Expected relationships: Client departures → membership decline → LOB revenue impact. Carrier policy changes → utilization shifts → revenue per script changes. Look for broken correlations as they indicate deeper issues requiring tactical investigation."
+        },
+
+        "analysis_type_guidance": {
+            "period_comparison_with_variance": "Calculate both absolute ($) and percentage (%) variance. Include current period, comparison period, and variance in output. Focus on business segments exceeding significance thresholds.",
+            
+            "client_churn_and_acquisition_detection": "Identify clients with zero current period revenue (churn), zero prior period revenue (acquisition), and significant revenue changes (behavior shifts). Quantify impact and focus on LOBs identified in query 1.",
+            
+            "carrier_utilization_variance": "Analyze carrier behavior changes affecting revenue. Focus on carriers serving LOBs with significant variance from query 1. Look for utilization pattern shifts that explain client or membership changes."
+        }
+    }
+}
+
+
 {
     "revenue_investigation_config": {
         "version": "1.0",

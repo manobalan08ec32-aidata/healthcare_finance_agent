@@ -1,156 +1,138 @@
 def create_strategic_sql_generation_prompt(current_question: str, investigation_config: Dict, query_key: str) -> str:
-    """
-    Generate generic strategic SQL generation prompt that works with any JSON configuration
-    """
-    
-    # Extract the main config key (revenue_investigation_config, expense_investigation_config, etc.)
-    config_key = list(investigation_config.keys())[0]
-    config = investigation_config[config_key]
-    
-    # Get the specific query configuration
-    query_config = config['strategic_queries'][query_key]
-    
-    # Extract domain-specific prompts
-    domain_prompts = config.get('domain_specific_prompts', {})
-    analysis_guidance = config.get('analysis_type_guidance', {})
     
     prompt = f"""
 You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
 
 USER QUESTION: {current_question}
-INVESTIGATION TYPE: {config.get('investigation_type', 'financial_analysis')}
+
+INVESTIGATION CONFIGURATION:
+{json.dumps(investigation_config, indent=2)}
+
+CURRENT QUERY: {query_key}
 
 ==============================
-DOMAIN BUSINESS INTELLIGENCE
+CONFIGURATION INTERPRETATION INSTRUCTIONS
 ==============================
 
-BUSINESS CONTEXT: {domain_prompts.get('business_intelligence_context', 'Financial analysis context')}
-
-VARIANCE INTERPRETATION: {domain_prompts.get('variance_interpretation_logic', 'Standard variance analysis')}
-
-INVESTIGATION PRIORITY: {domain_prompts.get('investigation_priorities', 'Sequential investigation approach')}
-
-BUSINESS SEASONALITY: {domain_prompts.get('business_seasonality', 'Consider business cycles')}
-
-CORRELATION PATTERNS: {domain_prompts.get('strategic_correlation_patterns', 'Standard correlation analysis')}
+1. Extract the investigation_type and domain_specific_prompts for business intelligence context
+2. Locate the specified query in strategic_queries section and read its complete configuration
+3. Apply the query-specific llm_instructions for strategic focus and SQL guidance
+4. Use analysis_requirements (required_filters, key_dimensions, focus_metrics, analysis_type)
+5. Follow output_requirements (calculations, ordering, filtering specifications)
+6. Consider analysis_type_guidance for domain-specific implementation approaches
+7. Apply variance_thresholds from intelligence_synthesis for significance filtering
 
 ==============================
-QUERY-SPECIFIC CONFIGURATION
-==============================
-
-QUERY PURPOSE: {query_config['purpose']}
-SEQUENCE ORDER: {query_config['sequence_order']}
-TABLE NAME: {query_config['table_name']}
-
-TABLE METADATA:
-{json.dumps(query_config['table_metadata'], indent=2)}
-
-ANALYSIS REQUIREMENTS:
-{json.dumps(query_config['analysis_requirements'], indent=2)}
-
-OUTPUT REQUIREMENTS:
-{json.dumps(query_config['output_requirements'], indent=2)}
-
-==============================
-LLM STRATEGIC INSTRUCTIONS
-==============================
-
-STRATEGIC FOCUS: {query_config['llm_instructions']['strategic_focus']}
-
-BUSINESS CONTEXT: {query_config['llm_instructions']['business_context']}
-
-SQL GENERATION GUIDANCE: {query_config['llm_instructions']['sql_generation_guidance']}
-
-RESULT INTERPRETATION: {query_config['llm_instructions']['result_interpretation']}
-
-CROSS-QUERY VALIDATION: {query_config['llm_instructions'].get('cross_query_validation', 'Validate findings with other analysis')}
-
-SUCCESS CRITERIA: {query_config['llm_instructions']['success_criteria']}
-
-ANALYSIS TYPE GUIDANCE: {analysis_guidance.get(query_config['analysis_requirements']['analysis_type'], 'Standard analysis approach')}
-
-==============================
-DATABRICKS SQL GENERATION RULES
+DATABRICKS SQL GENERATION REQUIREMENTS
 ==============================
 
 1. MEANINGFUL COLUMN NAMES
-- Use business-relevant column names that align with the query purpose
-- Include period identifiers in variance calculations (current_period, prior_period, variance)
-- Use domain-appropriate terminology from business context
+- Use business-relevant column names that align with the query purpose and domain context
+- Include period identifiers in variance calculations (current_period, prior_period, variance_amount, variance_pct)
+- Use domain-appropriate terminology from the configuration business context
 
 2. COMPLETE TRANSPARENCY - SHOW ALL COMPONENTS
 - MANDATORY: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in SELECT output
 - If calculating variance, include: current_period_value, prior_period_value, absolute_variance, percentage_variance
-- If filtering by dimensions, include those dimensions in SELECT
-- Example: SELECT line_of_business, current_revenue, prior_revenue, (current_revenue - prior_revenue) AS revenue_variance
+- If filtering by any dimension, include that dimension in SELECT for verification
+- If grouping by business dimensions, include all grouping dimensions in output
+- Example: SELECT line_of_business, product_category, current_revenue, prior_revenue, revenue_variance, variance_pct
 
-3. HEALTHCARE DATA HANDLING
-- Use UPPER() for all text filtering: WHERE UPPER(column) = UPPER('value')
-- Handle NULL values appropriately: COALESCE(amount, 0)
+3. DATA QUALITY AND FILTERING
+- Use UPPER() for all text filtering: WHERE UPPER(column_name) = UPPER('filter_value')
+- Handle NULL values appropriately: COALESCE(amount_or_count, 0)
+- Apply ALL required_filters from analysis_requirements exactly as specified
 - Use proper date handling: WHERE transaction_date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
 
 4. VARIANCE ANALYSIS CALCULATIONS
-- Include both absolute and percentage variance calculations
-- Apply significance filtering based on variance thresholds from configuration
-- Calculate statistical measures for significance assessment
+- Calculate both absolute ($) and percentage (%) variance for all metrics
+- Include current period, comparison period, and variance calculations
+- Apply significance filtering based on variance_thresholds from configuration
+- Use statistical measures where appropriate (COUNT, AVG, STDDEV if relevant)
 
 5. BUSINESS CONTEXT APPLICATION
-- Extract time periods from user question context
-- Apply all required_filters from analysis_requirements
-- Focus on key_dimensions and focus_metrics specified
-- Consider depends_on_query relationships for focus areas
+- Extract time periods from user question context (Q3 vs Q2, month over month, etc.)
+- Apply domain seasonality considerations from domain_specific_prompts
+- Focus on key_dimensions and focus_metrics as specified in analysis_requirements
+- Consider depends_on_query relationships for focus area determination
 
-6. DATABRICKS SQL OPTIMIZATION
-- Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Use date functions: date_trunc(), year(), month(), quarter()
-- Use CTEs (WITH clauses) for complex period comparisons
-- Use CASE WHEN for conditional logic
+6. STRATEGIC FOCUS MAINTENANCE
+- Maintain HIGH-LEVEL perspective appropriate for strategic investigation
+- Focus on business segment and portfolio-level patterns as guided by llm_instructions
+- Avoid operational details - maintain strategic scope per configuration guidance
+- Each query should support the investigation_framework sequence
 
-7. OUTPUT FORMATTING
-- Show whole numbers for financial metrics
-- Round percentages to two decimal places
+7. CROSS-QUERY INTELLIGENCE
+- Consider previous query findings if depends_on_query is specified
+- Build upon investigation sequence as defined in query_sequence
+- Prepare results to inform subsequent strategic queries
+- Validate expected correlation patterns from domain_specific_prompts
+
+8. DATABRICKS SQL OPTIMIZATION
+- Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN, COALESCE
+- Use date functions: date_trunc(), year(), month(), quarter(), DATEDIFF
+- Use CTEs (WITH clauses) for complex period comparisons and multi-step calculations
+- Use CASE WHEN for conditional logic and status categorization
+- Use window functions for ranking and analytical calculations where appropriate
+
+9. OUTPUT FORMATTING AND ORDERING
+- Show whole numbers for financial metrics (no decimals for dollar amounts)
+- Round percentages to two decimal places: ROUND(percentage, 2)
 - Order by significance as specified in output_requirements
-- Include ranking where appropriate
+- Include ranking information where appropriate (ROW_NUMBER, RANK functions)
+- Filter for significance based on variance thresholds
+
+10. HEALTHCARE FINANCE BEST PRACTICES
+- Always include time dimensions (transaction_date, quarter) when relevant
+- Use business-friendly dimensions from configuration (line_of_business, product_category)
+- Apply industry-specific filters (ledger = 'GAAP', metric_type = 'Revenues')
+- Consider business cycles and patterns from domain_specific_prompts
+
+11. ANALYTICAL DEPTH REQUIREMENTS
+- Generate analysis appropriate for the expected_investigation_depth from configuration
+- Balance comprehensiveness with strategic focus level
+- Ensure query complexity matches the investigation_framework requirements
+- Support the overall synthesis_approach defined in configuration
 
 ==============================
-SQL REASONING REQUIREMENT
+REASONING REQUIREMENT
 ==============================
 
-You must provide your reasoning for SQL construction in the following format:
-
-REASONING:
-1. **Time Period Extraction**: [Explain how you extracted comparison periods from user question]
-2. **Business Logic Application**: [Explain how you applied domain business context]
-3. **Configuration Implementation**: [Explain how you implemented analysis_requirements and output_requirements]
-4. **Strategic Focus Maintenance**: [Explain how you maintained strategic-level focus per LLM instructions]
-5. **Cross-Query Considerations**: [Explain any dependencies or validation considerations]
+Provide detailed reasoning covering these aspects:
+1. **Time Period Extraction**: How you extracted and applied comparison periods from user question
+2. **Configuration Implementation**: How you interpreted and applied the JSON configuration elements
+3. **Business Logic Application**: How you applied domain-specific business intelligence
+4. **Strategic Focus Alignment**: How you maintained appropriate strategic-level perspective
+5. **SQL Construction Decisions**: Key decisions in query structure, filters, calculations, and ordering
 
 ==============================
 RESPONSE FORMAT
 ==============================
 
 <reasoning>
-[Provide detailed reasoning following the 5-point structure above]
+[Provide comprehensive reasoning following the 5-point structure above, explaining your interpretation of the configuration and approach to SQL construction]
 </reasoning>
 
 <sql>
-[Your complete Databricks SQL query implementing all requirements]
+[Complete, executable Databricks SQL query implementing all configuration requirements and business intelligence guidance]
 </sql>
 
 CRITICAL SUCCESS REQUIREMENTS:
-1. Use exact table name and column names from table_metadata
+1. Use exact table_name and column names from table_metadata in the configuration
 2. Apply ALL required_filters from analysis_requirements
-3. Focus on key_dimensions and focus_metrics specified
-4. Implement analysis_type using domain guidance
-5. Follow output_requirements for calculations and ordering
-6. Maintain strategic-level focus appropriate for the investigation sequence
-7. Extract user question context for time periods and scope
-8. Apply domain business intelligence for interpretation
-9. Provide clear reasoning for all SQL construction decisions
-10. Generate high-quality, executable Databricks SQL
+3. Focus on specified key_dimensions and focus_metrics
+4. Implement the analysis_type using appropriate domain guidance
+5. Follow output_requirements for calculations, filtering, and ordering
+6. Maintain strategic-level focus per llm_instructions
+7. Extract and apply user question context for time periods and scope
+8. Generate high-quality, executable Databricks SQL with proper business context
+9. Provide clear, comprehensive reasoning for all construction decisions
+10. Support the overall investigation sequence and strategic intelligence objectives
 
-Generate the strategic SQL query with reasoning now.
+Generate the strategic SQL query with detailed reasoning now.
 """
+    
+    return prompt
     
     return prompt
 

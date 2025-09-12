@@ -1,1069 +1,270 @@
-{"analysis_config":{"version":3,"description":"Revenue analysis playbook with two independent datasets: Ledger Overview and Claims Drivers. Each dataset includes columns, date, metrics, group sets, sample questions, and LLM instructions (recipes + parameters only).","datasets":[{"id":"ledger_overview","name":"Revenue - Financial Ledger Overview","table":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","description":"High-level monthly or quarterly revenue performance by LOB and product category.","columns":[{"name":"ledger","description":"Ledger type for the record.","distinct_values":["GAAP","BUDGET","8+4","2+10","5+7"]},{"name":"metric_type","description":"Type of metric captured in amount_or_count.","sample_values":["Revenues","Adjusted Scripts","Unadjusted Scripts","COGS Post Reclass","SG&A Post Reclass","IOI","Total Membership"]},{"name":"line_of_business","description":"Business segment for the revenue record.","sample_values":["C&S","E&I","M&R","Rev Reclass","Optum","External"]},{"name":"product_category","description":"High-level product or service grouping.","sample_values":["PBM","Specialty","HDP"]},{"name":"product_sub_category_lvl_1","description":"First-level product subcategory."},{"name":"product_sub_category_lvl_2","description":"Second-level product subcategory."},{"name":"transaction_date","description":"Transaction date (yyyy-MM-dd)."},{"name":"quarter","description":"Quarter (Q1–Q4) derived from transaction_date."},{"name":"amount_or_count","description":"Value for the record (amount or count depending on metric_type)."}],"date":{"column":"transaction_date","format":"yyyy-MM-dd","default_grain":"month"},"metrics":["amount_or_count"],"group_set":{"by line of business":{"columns_used":["line_of_business"],"query_hint":["All"]},"by product category":{"columns_used":["product_sub_category_lvl_1","product_sub_category_lvl_2"],"query_hint":["top_10","bottom_10"]}},"sample_questions":["Show GAAP Revenues trend by line_of_business for the last 6 months.","Show me the top_10 product_sub_category_lvl_1,product_sub_category_lvl_2 driving the revenue","Compare GAAP vs BUDGET Revenues by line_of_business for the latest quarter and compute variance %"],"llm_instructions":{"parameters":{"recent_months":3,"baseline_months":3,"lookback_window_months":12,"min_revenue_threshold":100000,"min_percent_change_abs":0.05,"seasonality_control":"prefer month-level YoY when comparing current month to last year; else use rolling mean","date_alignment_policy":"use like-for-like windows when periods are incomplete (e.g., MTD vs prior MTD; QTD vs prior QTD)"},"comparison_modes":{"supported":["single_period","MoM","QoQ","YoY_month","YoY_quarter"],"selection_rules":["If the user specifies a single month like July 2025, run single_period at month grain.","If the user says current month vs last month, run MoM at month grain (MTD vs prior MTD if current month incomplete).","If the user says current quarter vs last quarter, run QoQ at quarter grain (QTD vs prior QTD if current quarter incomplete).","If the user says this month vs same month last year, run YoY_month with same calendar month.","If the user says this quarter vs same quarter last year, run YoY_quarter with same quarter."],"time_grain_rules":["Default to dataset.date.default_grain unless user explicitly asks for quarter or a specific month/quarter.","For quarter-level comparisons, use the dataset quarter column if available; else derive from date column."]},"ranking_policy":{"respect_query_hint":true,"single_period":{"metric":"amount_or_count","top_behavior":"Sort DESC by metric and limit N when query_hint includes top_N.","bottom_behavior":"Sort ASC by metric and limit N when query_hint includes bottom_N.","all_behavior":"Return all groups (subject to row limits) sorted DESC by metric unless user specifies otherwise."},"comparative":{"change_metrics":["pct_change","abs_change"],"top_behavior":"Sort DESC by pct_change (then abs_change) and limit N.","bottom_behavior":"Sort ASC by pct_change (then abs_change) and limit N.","baseline_filters":["Exclude chronic low performers by enforcing baseline_avg >= min_revenue_threshold."]}},"growth":{"recipe":["Aggregate SUM(amount_or_count) by the chosen group from group_set.","Resolve comparison mode per comparison_modes and construct RECENT vs BASELINE windows.","Compute recent_avg and baseline_avg over those windows.","Compute abs_change = recent_avg - baseline_avg; pct_change = abs_change / baseline_avg (guard divide-by-zero).","Apply baseline filter: baseline_avg >= min_revenue_threshold.","Apply ranking_policy according to query_hint (top/bottom/All).","Return the ranked list with recent_avg, baseline_avg, abs_change, pct_change and the time windows used."]},"decline":{"recipe":["Goal: identify segments that were strong but recently deteriorated (not persistent underperformers).","Aggregate SUM(amount_or_count) by the chosen group.","Construct RECENT vs BASELINE windows as per comparison_modes.","Compute recent_avg, baseline_avg, abs_change, pct_change.","Require baseline_avg >= min_revenue_threshold to avoid chronic laggards.","Flag as decline when pct_change <= -min_percent_change_abs.","Optionally compute moving-average trend: recent 3-month MA < prior 3-month MA to reinforce recent decline.","Apply ranking_policy bottom behavior (most negative pct_change first), respecting query_hint."]}}},{"id":"claims_drivers","name":"Revenue Drivers - Claims Detail","table":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","description":"Operational revenue drivers from pharmacy claims.","columns":[{"name":"product_category","description":"Product/service channel for the claim."},{"name":"claim_status_code","description":"Claim processing status."},{"name":"line_of_business","description":"Business segment for the claim."},{"name":"carrier_id","description":"Insurance carrier identifier."},{"name":"account_id","description":"Employer/organization account identifier."},{"name":"group_id","description":"Group or subgroup under the account."},{"name":"quarter","description":"Quarter (Q1–Q4) derived from submit_date."},{"name":"submit_date","description":"Claim submission date (yyyy-MM-dd)."},{"name":"pharmacy_name","description":"Dispensing pharmacy/provider name."},{"name":"unadjusted_script_count","description":"Actual script count for each claim."},{"name":"mbr_dt_of_brth","description":"member date of birth. can be used for age level split up analysis"},{"name":"revenue_amt","description":"Revenue amount for the claim."},{"name":"drug_name","description":"Dispensed drug name."},{"name":"therapy_class_name","description":"Therapeutic class of the drug."},{"name":"brand_vs_generic_ind","description":"Brand or Generic indicator."},{"name":"DRUG_MANUFCTR_NM","description":"Drug manufacturer."},{"name":"state_cd","description":"Two-letter state code for claim/pharmacy location."},{"name":"client_id","description":"Client identifier."},{"name":"client_name","description":"Client name."}],"date":{"column":"submit_date","format":"yyyy-MM-dd","default_grain":"daily"},"metrics":["revenue_amt"],"group_set":{"by brand vs generic and drug combination":{"columns_used":["brand_vs_generic_ind","drug_name"],"query_hint":["top_10","bottom_10"]},"by therapy drug":{"columns_used":["therapy_class_name","drug_name"],"query_hint":["top_10","bottom_10"]},"by pharmacy":{"columns_used":["pharmacy_name"],"query_hint":["top_10","bottom_10"]},"by client":{"columns_used":["client_id","client_name"],"query_hint":["top_10","bottom_10"]},"by manufacturer":{"columns_used":["DRUG_MANUFCTR_NM"],"query_hint":["top_10","bottom_10"]},"by state":{"columns_used":["state_cd","drug_name"],"query_hint":["top_10","bottom_10"]},"by age group":{"columns_used":["mbr_dt_of_brth (YYYY-MM-DD)","drug_name"],"query_hint":["Age_split_up"]},"by revenue per script":{"columns_used":["unadjusted_script_count/revenue_amt"],"query_hint":["Daily,Monthly"]}},"sample_questions":["What is the revenue,script count and script per revenue analysis for particular month","Top 10 therapy class,drugs driving revenue.","Which age group people consuming the particular product which driving revenue","Compare Brand vs Generic revenue mix this month and show contribution % and rev_per_script.","Identify top 10 pharmacies by revenue in TX last quarter.","Which clients contributed the most revenue_amt in Q2? Provide top 10."],"llm_instructions":{"parameters":{"recent_months":3,"baseline_months":3,"lookback_window_months":12,"min_revenue_threshold":100000,"min_scripts_threshold":100,"min_percent_change_abs":0.05,"evaluate_rev_per_script":true,"seasonality_control":"prefer month-level YoY for current month vs same month last year; else use rolling mean","date_alignment_policy":"use like-for-like windows when periods are incomplete (MTD vs prior MTD; QTD vs prior QTD)"},"comparison_modes":{"supported":["single_period","Daily","MoM","QoQ","YoY_month","YoY_quarter"],"selection_rules":["Single explicit month (e.g., July 2025) → single_period at month grain.","Current month vs last month → MoM at month grain (MTD vs prior MTD if current month incomplete).","Current quarter vs last quarter → QoQ at quarter grain (QTD vs prior QTD if current quarter incomplete).","This month vs same month last year → YoY_month.","This quarter vs same quarter last year → YoY_quarter."],"time_grain_rules":["Default to dataset.date.default_grain unless user specifies otherwise.","Use the quarter column when quarter comparisons are requested; else derive quarter from date."]},"ranking_policy":{"respect_query_hint":true,"single_period":{"metric":"revenue_amt","top_behavior":"Sort DESC by metric and limit N when query_hint includes top_N.","bottom_behavior":"Sort ASC by metric and limit N when query_hint includes bottom_N.","all_behavior":"Return all groups (subject to row limits) sorted DESC by metric unless user specifies otherwise."},"comparative":{"change_metrics":["pct_change","abs_change","delta_rev_per_script"],"top_behavior":"Sort DESC by pct_change (then abs_change) and limit N.","bottom_behavior":"Sort ASC by pct_change (then abs_change) and limit N.","baseline_filters":["Exclude chronic low performers: baseline_avg >= min_revenue_threshold and baseline_scripts >= min_scripts_threshold when available."]}},"growth":{"recipe":["Aggregate SUM(revenue_amt) and SUM(unadjusted_script_count) by the chosen group.","Resolve comparison mode per comparison_modes and build RECENT vs BASELINE windows.","Compute recent_avg and baseline_avg for revenue (and scripts if evaluating rev_per_script).","Compute abs_change and pct_change; if evaluate_rev_per_script=true, compute delta_rev_per_script = recent_avg/recent_scripts - baseline_avg/baseline_scripts.","Apply baseline filters: baseline_avg >= min_revenue_threshold and, when relevant, baseline_scripts >= min_scripts_threshold.","Apply ranking_policy in line with query_hint (top/bottom/All).","Return ranked groups with recent_avg, baseline_avg, abs_change, pct_change and delta_rev_per_script (if applicable)."]},"decline":{"recipe":["Objective: find entities that were previously strong but have recently declined.","Aggregate SUM(revenue_amt) and SUM(unadjusted_script_count) by group.","Construct RECENT vs BASELINE windows as per comparison_modes.","Compute recent_avg, baseline_avg, abs_change, pct_change and delta_rev_per_script (if scripts available).","Require baseline strength: baseline_avg >= min_revenue_threshold and baseline_scripts >= min_scripts_threshold (if available).","Flag decline where pct_change <= -min_percent_change_abs and/or delta_rev_per_script < 0 when evaluating margin/mix effects.","Optional robustness: recent 3-month MA < prior 3-month MA to emphasize recent deterioration.","Apply ranking_policy bottom behavior, honoring query_hint (e.g., bottom_10 = most negative pct_change among valid baselines)."]}}}]}}
-
-selection_prompt = f"""
-                You are a Dataset Identifier Agent. You have TWO sequential tasks to complete.
-
-                CURRENT QUESTION: {user_question}
-                AVAILABLE DATASETS: {search_results}
-
-                A. **METRICS & ATTRIBUTES CHECK**:
-                    - Extract requested metrics/measures and attributes/dimensions
-                    - Apply smart mapping with these rules:
-                    
-                    **TIER 1 - Direct Matches**: Exact column names
-                    **TIER 2 - Standard Healthcare Mapping**: 
-                        * "therapies" → "therapy_class_name"
-                        * "scripts" → "unadjusted_scripts/adjusted_scripts"  
-                        * "drugs" → "drug_name"
-                        * "clients" → "client_id/client_name"
-                    
-                    **TIER 3 - Mathematical Operations**: 
-                        * "variance/variances" → calculated from existing metrics over time periods
-                        * "growth/change" → period-over-period calculations
-                        * "percentage/rate" → ratio calculations
-                    
-                    **TIER 4 - Skip Common Filter Values**: 
-                        * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
-                        * These appear to be filter values, not missing attributes
-                    
-                    **BLOCK - Creative Substitutions**:
-                        * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
-                        * Do NOT assume domain knowledge not in metadata
-
-                    - Only mark as missing if NO reasonable Tier 1-3 mapping exists
-
-                B. **KEYWORD & SUITABILITY ANALYSIS**:
-                - **KEYWORD MATCHING**: Look for obvious domain keywords:
-                * "claim/claims" → strongly suggests claim_transaction dataset
-                * "forecast/budget" → strongly suggests actuals_vs_forecast dataset
-                - Check "useful_for" and "not_useful_for" fields
-                - Verify time_grains match user needs (daily vs monthly vs quarterly)
-
-                C. **FINAL DECISION LOGIC**:
-                - **STEP 1**: Check which datasets have ALL required metrics/attributes (EXACT matches only)
-                - **STEP 2**: Filter by suitability ("useful_for" vs "not_useful_for")  
-                - **STEP 3**: Verify time granularity compatibility
-                - **STEP 4**: Apply decision rules STRICTLY:
-                * **SINGLE DATASET** meets all criteria → SELECT IT
-                * **MULTIPLE COMPLEMENTARY** datasets (different but related data) → SELECT MULTIPLE
-                * **MULTIPLE CONFLICTING** datasets (same data, different contexts) → Use keywords as tiebreaker:
-                    - If keywords clearly favor one → SELECT that one
-                    - If no clear keyword preference → MUST ASK CLARIFICATION (mandatory - do not make subjective judgments)
-                * **NO DATASET** fully satisfies → SELECT closest match by coverage
-                * **MISSING ITEMS** with no alternatives → REPORT MISSING
-
-                ==============================
-                DECISION CRITERIA
-                ==============================
-
-                **PROCEED** (SELECT DATASET) IF:
-                - All requested metrics/attributes have EXACT matches AND clear single choice
-                - Clear keyword match resolves multiple suitable datasets
-
-                **MISSING_ITEMS** IF:
-                - Required metrics/attributes don't have EXACT matches in any dataset
-                - No suitable alternatives available
-
-                **REQUEST_FOLLOW_UP** IF:
-                - Multiple datasets with conflicting contexts AND no clear keyword preference
-                - Any ambiguity exists after full validation
-
-                ==============================
-                ASSESSMENT FORMAT
-                ==============================
-
-                A. **METRICS & ATTRIBUTES CHECK**: ✓ Clear / ❌ Issues Found
-                - [List each requested item and EXACT availability status - no assumptions]
-
-                B. **KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear / ❌ Issues Found
-                - [Analysis of keyword matches and dataset suitability]
-
-                C. **FINAL DECISION LOGIC**: ✓ Clear / ❌ Needs Clarification
-                - [Decision reasoning based STRICTLY on above analysis]
-
-                **DECISION: PROCEED** / **MISSING_ITEMS** / **REQUEST_FOLLOW_UP** - [Brief reasoning]
-
-                ==============================
-                RESPONSE FORMAT
-                ==============================
-
-                IMPORTANT: Provide your assessment reasoning, then output ONLY the JSON wrapped in <json> tags.
-
-                Show your assessment first, then provide the JSON response:
-
-                If DECISION = PROCEED:
-                <json>
-                {{
-                    "status": "success",
-                    "final_actual_tables": ["table_name"] or ["table1", "table2"] if multiple needed,
-                    "functional_names": ["user-friendly name"] or ["name1", "name2"] if multiple,
-                    "requires_clarification": false,
-                    "selection_reasoning": "Brief explanation with assessment summary"
-                }}
-                </json>
-
-                If DECISION = MISSING_ITEMS:
-                <json>
-                {{
-                    "status": "missing_items", 
-                    "final_actual_tables": [],
-                    "functional_names": [],
-                    "requires_clarification": false,
-                    "selection_reasoning": "Assessment summary showing missing items",
-                    "missing_items": {{"metrics": ["missing_metric1"], "attributes": ["missing_attr1"]}},
-                    "user_message": "I don't have access to the following metrics: [list] and attributes: [list] in our current datasets. However, I can help you with similar available metrics like: [alternatives]. You'll need to reach out to the FDM team for these"
-                }}
-                </json>
-
-                If DECISION = REQUEST_FOLLOW_UP:
-                <json>
-                {{
-                    "status": "needs_disambiguation",
-                    "requires_clarification": true,
-                    "clarification_question": "I found multiple datasets that could work for your analysis. Which approach would you prefer: [specific options with context]?",
-                    "functional_names": ["dataset1_name", "dataset2_name"],
-                    "candidate_actual_tables": ["table1", "table2"],
-                    "selection_reasoning": "Assessment summary showing why clarification is needed"
-                }}
-                </json>
-
-                CRITICAL ANTI-HALLUCINATION RULES:
-                - Use the TIER-based mapping system (Tiers 1-4) for validation
-                - ALLOW standard healthcare business term mapping (Tier 2) and mathematical operations (Tier 3)
-                - DO NOT map unrelated business terms (e.g., "ingredient fee" ≠ "expense")
-                - Skip validation for common filter values (Tier 4) rather than marking as missing
-                - When multiple suitable datasets exist without clear keyword preference, you MUST ask clarification
-                - Do not choose based on subjective interpretation of what seems "better suited"
-                - Stick to the decision rules after proper tier-based validation
-                - If genuinely unsure about tier classification, lean toward asking clarification
-                - Use ONLY the provided dataset metadata - no external domain knowledge beyond standard healthcare terminology
-                """
-
-in PBM,what is ledger revenue for july 2025 and break it down at therapy class level
-
-## Assessment
-
-**A. METRICS & ATTRIBUTES CHECK**: ✓ Clear
-- **Requested metrics**: "ledger revenue" → EXACT match: "revenue" ✓
-- **Requested attributes**:
-  - "therapy class level" → TIER 2 mapping: "therapy_class_name" ✓
-  - "product category PBM" → EXACT match: "product_category" ✓
-  - Time dimension: "July 2025" → monthly granularity needed ✓
-
-**B. KEYWORD & SUITABILITY ANALYSIS**: ✓ Clear
-- **KEYWORD MATCHING**: "ledger revenue" strongly suggests the actuals_vs_forecast_analysis dataset which contains "ledger-level financial data"
-- **SUITABILITY**:
-  - actuals_vs_forecast_analysis: ✓ "useful_for: monthly actuals analysis" and contains ledger-level data
-  - claim_transaction_for_pharmacy_pbm: Has revenue but is claim-level, not ledger-level
-- **TIME GRANULARITY**: Both support monthly, but actuals_vs_forecast is specifically designed for ledger-level monthly analysis
-
-**C. FINAL DECISION LOGIC**: ✓ Clear
-- **STEP 1**: Both datasets have required metrics/attributes
-- **STEP 2**: actuals_vs_forecast_analysis is specifically useful for "monthly actuals analysis" and contains "ledger-level financial data"
-- **STEP 3**: Monthly granularity matches "July 2025" requirement
-- **STEP 4**: Clear keyword preference for "ledger revenue" points to actuals_vs_forecast dataset
-
-**DECISION: PROCEED** - Clear keyword match ("ledger revenue") with dataset designed for ledger-level monthly actuals analysis
-
-<json>
 {
-    "status": "success",
-    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
-    "functional_names": ["Actuals vs Forecast Analysis"],
-    "requires_clarification": false,
-    "selection_reasoning": "The query specifically asks for 'ledger revenue' which directly matches the actuals_vs_forecast_analysis dataset that contains 'ledger-level financial data' and is designed for 'monthly actuals analysis'. This dataset has the required revenue metric, therapy_class_name attribute (via standard healthcare mapping), product_category filter, and monthly time granularity for July 2025 analysis."
-}
-</json>
-Extracted JSON: {
-    "status": "success",
-    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
-    "functional_names": ["Actuals vs Forecast Analysis"],
-    "requires_clarification": false,
-    "selection_reasoning": "The query specifically asks for 'ledger revenue' which directly matches the actuals_vs_forecast_analysis dataset that contains 'ledger-level financial data' and is designed for 'monthly actuals analysis'. This dataset has the required revenue metric, therapy_class_name attribute (via standard healthcare mapping), product_category filter, and monthly time granularity for July 2025 analysis."
-}
-                 
-
-
-
-
-A. METRICS AVAILABILITY CHECK: ✓ Clear
-- "claim revenue": Available as "revenue" metric in both datasets
-
-B. ATTRIBUTES AVAILABILITY CHECK: ✓ Clear
-- "month of July 2025": Both datasets have date/time attributes (submit_date, transaction_date, month, year)
-- "product category PBM": Available as "product_category" attribute in both datasets
-
-C. DATASET SUITABILITY ANALYSIS: ✓ Clear
-- claim_transaction_for_pharmacy_pbm: Has revenue metric, product_category attribute, monthly time grain, useful for "claim-level financial analysis"
-- actuals_vs_forecast_analysis: Has revenue metric, product_category attribute, monthly time grain, useful for "monthly actuals analysis"
-- Both datasets support the required monthly granularity and have the needed attributes
-
-D. COLUMN DISAMBIGUATION NEEDS: ❌ Disambiguation Needed
-- Both datasets have "revenue" metric and "product_category" attribute
-- Different contexts: claim-level revenue vs ledger-level revenue
-- User asked specifically for "claim revenue" which suggests claim-level data
-- Disambiguation needed to confirm user intent
-
-E. ALTERNATIVE SUGGESTIONS: ✓ Not Needed
-- All requested items are available in datasets
-
-**DECISION: REQUEST_FOLLOW_UP** - Both datasets contain the required metrics and attributes, but "claim revenue" specifically suggests claim-level analysis. Need to confirm if user wants claim-level detail or ledger-level aggregated revenue.
-
-```json
-{
-    "status": "needs_disambiguation",
-    "final_actual_tables": [],
-    "functional_names": [],
-    "requires_clarification": true,
-    "clarification_question": "I found revenue data for PBM product category in July 2025 in two datasets. Since you mentioned 'claim revenue' specifically, do you want: 1) Claim-level revenue data with individual transaction details, or 2) Aggregated ledger-level revenue totals? The claim-level data provides more granular analysis while the ledger data gives you monthly totals.",
-    "candidate_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm", "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
-    "selection_reasoning": "Both datasets contain revenue metrics and product_category attributes with monthly time grain. However, they represent different contexts - claim-level vs ledger-level revenue. User's specific mention of 'claim revenue' suggests preference for claim-level data, but confirmation needed.",
-    "missing_items": {"metrics": [], "attributes": []},
-    "user_message": null
-}
-```
-⚠ Dataset selection attempt 2 failed: Expecting value: line 1 column 1 (char 0)
-
-
-==============================
-TASK 1: COMPREHENSIVE ASSESSMENT
-==============================
-
-A. TIME PERIOD CLARITY: ✓ Clear
-- Specific time periods mentioned: May 2025 to June 2025
-
-B. METRIC DEFINITIONS: ❌ Needs Clarification
-- "Rate volume variance" is not clearly defined - what specific formula should be used?
-- Unclear what baseline/comparison period for variance calculation
-
-C. BUSINESS CONTEXT: ✓ Clear
-- LOB (line of business) grouping is clear
-- Product category PBM filtering is specified
-
-D. FORMULA & CALCULATION REQUIREMENTS: ❌ Needs Clarification
-- "Rate volume variance" requires custom formula definition
-- Unclear if this is price variance, volume variance, or a combined metric
-
-E. METADATA MAPPING: ✓ Clear
-- Can map LOB to line_of_business column
-- Can map product category to product_category column
-- Time period maps to month/year columns
-
-**DECISION: REQUEST FOLLOW-UP** - Areas B and D need clarification
-
-<followup>
-I need clarification to generate accurate SQL:
-
-**Rate Volume Variance Formula**: What specific calculation method should I use for "rate volume variance"?
-- Available data: revenue_amt, unadjusted_script_count, revenue_per_script columns
-- Suggested approach: (May Revenue/Scripts - June Revenue/Scripts) * June Scripts, or price variance + volume variance
-
-**Variance Baseline**: Should I compare May 2025 vs June 2025, or compare each month against a different baseline?
-- Available data: Monthly data for May and June 2025
-- Alternative: Month-over-month comparison (June vs May) or year-over-year if baseline year needed
-
-Please clarify these points.
-</followup>
-
-
-
-unified_prompt = f"""You are a healthcare finance analytics assistant for pharmacy and healthcare performance data.
-
-## AVAILABLE DATASETS
-
-**Dataset 1: Actuals vs Forecast Analysis**
-- Attributes: Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)
-- Metrics: Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis
-
-**Dataset 2: PBM & Pharmacy Claim Transaction**
-- Attributes: Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status, Client Type, Pharmacy Type, Member Age group, State (Paid/Reversed/Rejected)
-- Metrics: Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)
-
-**Product Categories:** Home Delivery (HDP), Specialty (SP), PBM
-**Analysis Types:** Variance analysis, Mix shift tracking, Trend reporting, Prescription volume analysis, Revenue/cost analysis, Membership analytics
-
-## CLASSIFICATION TASK
-
-**User Input:** "{current_question}"
-**Context:** {existing_domain_selection if existing_domain_selection else "None"}
-
-### Step 1: Input Type Classification
-- **GREETING**: "Hi", "Hello", "What can you do?", "What data is available?"
-- **DML/DDL**: "INSERT", "UPDATE", "DELETE", "CREATE", "DROP" 
-- **BUSINESS_QUESTION**: Analytics queries about healthcare/pharmacy data
-
-### Step 2: Domain Detection (Case-Insensitive)
-**Exact Text Matching Rules:**
-- Contains "home delivery" OR "hdp" OR "home delivery pharmacy" → Include "Home Delivery"
-- Contains "specialty" OR "sp" OR "specialty pharmacy" → Include "Specialty"  
-- Contains "pbm" OR "pharmacy benefit management" → Include "PBM"
-- Contains "all" OR "all categories" OR "all domains" → ["Home Delivery", "Specialty", "PBM"]
-
-**Detection Logic:**
-- Scan input text for exact matches (case-insensitive)
-- Multiple domains can be detected in single input
-- If ANY domain found → domain_found = true, detected_domains = [list]
-- If NO domains found but valid business question → domain_found = false, detected_domains = []
-
-**Critical Examples:**
-- "Show me PBM data" → domains = ["PBM"]
-- "Specialty and HDP costs" → domains = ["Specialty", "Home Delivery"]  
-- "Revenue across all categories" → domains = ["Home Delivery", "Specialty", "PBM"]
-- "Show me revenue" (no domain) → domains = []
-
-### Step 3: Response Generation
-- **GREETING**: Provide capability overview including available datasets
-- **DML/DDL**: "I can only analyze existing data, not modify it. Please ask about analytics or reporting needs."
-- **VALID BUSINESS_QUESTION**: Return empty string ""
-- **INVALID BUSINESS_QUESTION**: "I specialize in healthcare finance analytics. Please ask about prescription data, revenue analysis, or performance metrics."
-
-## RESPONSE FORMAT
-Return ONLY valid JSON (no markdown formatting):
-
-{{
-    "input_type": "greeting|dml_ddl|business_question",
-    "is_valid_business_question": boolean,
-    "domain_found": boolean,
-    "detected_domains": [],
-    "response_message": ""
-}}
-
-## EXAMPLES
-Input: "Hi" → {{"input_type": "greeting", "is_valid_business_question": false, "domain_found": false, "detected_domains": [], "response_message": "Hello! I'm your healthcare finance analytics assistant. I can analyze pharmacy and PBM data including prescription volumes, revenue trends, cost analysis, and performance metrics across Home Delivery, Specialty, and PBM product categories."}}
-
-Input: "Show me PBM revenue" → {{"input_type": "business_question", "is_valid_business_question": true, "domain_found": true, "detected_domains": ["PBM"], "response_message": ""}}
-
-Input: "Tell me about weather" → {{"input_type": "business_question", "is_valid_business_question": false, "domain_found": false, "detected_domains": [], "response_message": "I specialize in healthcare finance analytics. Please ask about prescription data, revenue analysis, or performance metrics."}}
-"""
-
-
-unified_prompt = f"""You are a healthcare finance analytics assistant specialized in pharmacy and healthcare performance data analysis.
-
-        SYSTEM KNOWLEDGE - WHAT THIS CHATBOT IS BUILT FOR:
-
-        ## Dataset 1: Actuals vs Forecast Analysis
-        **Attributes:** Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)  
-        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis
-
-        ## Dataset 2: PBM & Pharmacy Claim Transaction
-        **Attributes:** Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status, Client Type, Pharmacy Type, Member Age group, State (Paid/Reversed/Rejected)  
-        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)
-
-        **Supported Analysis Types:**
-        - Variance analysis (actual vs forecast/budget)
-        - Mix shift tracking by LOB or product category
-        - Trend reporting across timeframes
-        - Prescription volume analysis
-        - Revenue and cost analysis
-        - Membership analytics
-
-        **Available Product Categories:**
-        - Home Delivery (HDP) - Home delivery pharmacy services
-        - Specialty (SP) - Specialty pharmacy services  
-        - PBM - Pharmacy Benefit Management services
-
-        NOW ANALYZE THIS USER INPUT:
-        User Input: "{current_question}"
-        Existing Domain Context: {existing_domain_selection if existing_domain_selection else "None"}
-
-        === TASK 1: CLASSIFY INPUT TYPE ===
-
-        Classify the user input into one of these categories:
-
-        1. **GREETING** - Simple greetings, capability questions, general chat
-        Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning"
-
-        2. **DML/DDL** - Data modification requests (not supported)
-        Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
-
-        3. **BUSINESS_QUESTION** - Questions about data, analytics, healthcare finance
-        Examples: "Show me revenue", "Prescription counts", "Cost analysis", "Performance metrics"
-
-        BUSINESS QUESTION VALIDATION RULES:
-        ✅ VALID: Healthcare/pharmacy related queries about metrics, trends, analysis
-        ✅ VALID: Vague but analytics-related: "show me data", "performance metrics"
-        ❌ INVALID: Completely unrelated topics: "weather", "sports", "personal advice"
-
-        === TASK 2: EXTRACT DOMAIN CONTEXT ===
-
-        For VALID business questions only, extract product category mentions:
-
-        **Domain Detection Rules - CASE INSENSITIVE MATCHING:**
-        - Look for exact text matches (case insensitive): "specialty", "home delivery", "pbm"
-        - Look for abbreviations: "hdp", "sp" 
-        - Look for specific phrases: "home delivery pharmacy", "specialty pharmacy", "pharmacy benefit management"
-        - Multiple domains can be detected in one input
-
-        **Exact Domain Mapping (IMPORTANT - Match these exactly):**
-        - If input contains "home delivery" OR "hdp" (case insensitive) → include "Home Delivery" in domains
-        - If input contains "specialty" OR "sp" (case insensitive) → include "Specialty" in domains  
-        - If input contains "pbm" (case insensitive) → include "PBM" in domains
-        - If input contains "all" OR "all categories" (case insensitive) → domains = ["Home Delivery", "Specialty", "PBM"]
-
-        **Domain Found Logic:**
-        - If ANY domain explicitly mentioned → domain_found = true, detected_domains = [list of found domains]
-        - If NO domain mentioned but valid business question → domain_found = false, detected_domains = []
-
-        **CRITICAL: PBM Detection Examples:**
-        - "Show me PBM data" → domain_found = true, detected_domains = ["PBM"]
-        - "PBM revenue" → domain_found = true, detected_domains = ["PBM"] 
-        - "pbm costs" → domain_found = true, detected_domains = ["PBM"]
-        - "What is PBM performance?" → domain_found = true, detected_domains = ["PBM"]
-
-        === TASK 3: GENERATE RESPONSE MESSAGE ===
-
-        Based on input type:
-
-        - **GREETING** - Simple greetings, capability questions, general chat, or questions about what information/datasets are available.
-            -Examples: "Hi", "Hello", "What can you do?", "Help me", "Good morning", 
-            -"What information do you have about claims?", 
-            -"What data is available for claims?", 
-            -"Specifically within claims, what information you have?"
-
-        - **DML/DDL**: Polite refusal explaining you only analyze data (2-3 lines)
-        - **VALID BUSINESS_QUESTION**: Empty string "" (will be processed further)
-        - **INVALID BUSINESS_QUESTION**: Helpful redirect to your capabilities (2-3 lines)
-
-        === EXAMPLES FOR CLAUDE ===
-
-        Input: "Hi" 
-        → input_type="greeting", valid=false, domain_found=false, domains=[], response="Hello! I'm your healthcare finance analytics assistant..."
-
-        Input: "What can you do?"
-        → input_type="greeting", valid=false, domain_found=false, domains=[], response="I can help analyze pharmacy data..."
+    "revenue_investigation_config": {
+        "version": "1.0",
+        "investigation_type": "revenue_variance_analysis",
+        "description": "Complete revenue investigation pattern with embedded metadata and framework",
         
-        Input: "Specifically within claims, what information you have"
-        → input_type="greeting", valid=false, domain_found=false, domains=[], response="Here is the information I have about claims: ..."
+        "question_classification": {
+            "trigger_keywords": [
+                ["revenue", "drop|decrease|decline|fall"],
+                ["revenue", "increase|growth|rise|up"],
+                ["revenue", "vs|versus|compared", "previous|last|prior"],
+                ["why", "revenue"]
+            ],
+            "time_pattern_keywords": [
+                "month over month|mom|m-o-m",
+                "quarter over quarter|qoq|q-o-q", 
+                "year over year|yoy|y-o-y",
+                "vs previous|vs last|compared to"
+            ]
+        },
 
-        Input: "INSERT new data"
-        → input_type="dml_ddl", valid=false, domain_found=false, domains=[], response="I can only analyze data, not modify it..."
+        "investigation_framework": {
+            "query_sequence": ["revenue_variance_detection", "client_membership_analysis", "carrier_analysis"],
+            "max_queries": 3,
+            "synthesis_approach": "markdown_intelligence_report",
+            "expected_investigation_depth": "high"
+        },
 
-        Input: "Show me revenue"
-        → input_type="business_question", valid=true, domain_found=false, domains=[], response=""
+        "strategic_queries": {
+            "query_1_revenue_variance": {
+                "purpose": "Identify primary revenue variance areas by LOB and product",
+                "sequence_order": 1,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+                "table_metadata": {
+                    "description": "High-level monthly or quarterly revenue performance by LOB and product category",
+                    "columns": [
+                        {
+                            "name": "ledger",
+                            "description": "Ledger type for the record",
+                            "distinct_values": ["GAAP", "BUDGET", "8+4", "2+10", "5+7"]
+                        },
+                        {
+                            "name": "metric_type",
+                            "description": "Type of metric captured in amount_or_count",
+                            "sample_values": ["Revenues", "Adjusted Scripts", "Unadjusted Scripts", "COGS Post Reclass", "SG&A Post Reclass", "IOI", "Total Membership"]
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the revenue record",
+                            "sample_values": ["C&S", "E&I", "M&R", "Rev Reclass", "Optum", "External"]
+                        },
+                        {
+                            "name": "product_category",
+                            "description": "High-level product or service grouping",
+                            "sample_values": ["PBM", "Specialty", "HDP"]
+                        },
+                        {
+                            "name": "transaction_date",
+                            "description": "Transaction date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "quarter",
+                            "description": "Quarter (Q1–Q4) derived from transaction_date"
+                        },
+                        {
+                            "name": "amount_or_count",
+                            "description": "Value for the record (amount or count depending on metric_type)"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "required_filters": ["metric_type = 'Revenues'", "ledger = 'GAAP'"],
+                    "key_dimensions": ["line_of_business", "product_category"],
+                    "focus_metrics": ["amount_or_count"],
+                    "analysis_type": "period_comparison_with_variance",
+                    "variance_threshold": "$250K absolute OR 10% percentage"
+                },
+                "output_requirements": {
+                    "include_variance_calculation": true,
+                    "include_percentage_change": true,
+                    "order_by": "absolute_variance_impact_desc",
+                    "filter_significant_only": true
+                }
+            },
 
-        Input: "PBM revenue trends"
-        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
+            "query_2_client_membership": {
+                "purpose": "Analyze client portfolio and membership changes driving revenue variance",
+                "sequence_order": 2,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "client_name",
+                            "description": "Client name"
+                        },
+                        {
+                            "name": "client_id",
+                            "description": "Client identifier"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["line_of_business", "client_name"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "client_churn_and_acquisition_detection",
+                    "client_change_threshold": "$100K revenue impact",
+                    "depends_on_query": "query_1_revenue_variance"
+                },
+                "output_requirements": {
+                    "identify_client_status": ["Lost", "New", "Existing"],
+                    "calculate_client_variance": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "absolute_client_impact_desc"
+                }
+            },
 
-        Input: "Show me PBM data"
-        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
+            "query_3_carrier_analysis": {
+                "purpose": "Identify carrier utilization changes affecting revenue",
+                "sequence_order": 3,
+                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+                "table_metadata": {
+                    "description": "Operational revenue drivers from pharmacy claims",
+                    "columns": [
+                        {
+                            "name": "carrier_id",
+                            "description": "Insurance carrier identifier"
+                        },
+                        {
+                            "name": "line_of_business",
+                            "description": "Business segment for the claim"
+                        },
+                        {
+                            "name": "submit_date",
+                            "description": "Claim submission date (yyyy-MM-dd)"
+                        },
+                        {
+                            "name": "revenue_amt",
+                            "description": "Revenue amount for the claim"
+                        },
+                        {
+                            "name": "unadjusted_script_count",
+                            "description": "Actual script count for each claim"
+                        }
+                    ]
+                },
+                "analysis_requirements": {
+                    "key_dimensions": ["carrier_id", "line_of_business"],
+                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
+                    "analysis_type": "carrier_utilization_variance",
+                    "depends_on_query": "query_1_revenue_variance",
+                    "conditional_execution": "if_client_changes_insufficient_to_explain_variance"
+                },
+                "output_requirements": {
+                    "calculate_utilization_changes": true,
+                    "identify_significant_carrier_changes": true,
+                    "focus_on_significant_lobs": "from_query_1_results",
+                    "order_by": "carrier_impact_significance"
+                }
+            }
+        },
 
-        Input: "pbm costs"
-        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
-
-        Input: "Specialty and HDP costs"
-        → input_type="business_question", valid=true, domain_found=true, domains=["Specialty", "Home Delivery"], response=""
-
-        Input: "Tell me about the weather"
-        → input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics..."
-
-        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-        {{
-            "input_type": "greeting|dml_ddl|business_question",
-            "is_valid_business_question": true,
-            "domain_found": true,
-            "detected_domains": ["PBM"],
-            "response_message": ""
-        }}
-
-        Important: Return ONLY valid JSON. No additional text, markdown, or formatting."""
-
-
-
-selection_prompt = f"""
-You are a meticulous dataset router. Choose EXACTLY ONE dataset OR ask for clarification.
-
-USER QUESTION: "{user_question}"
-
-AVAILABLE DATASETS:
-{json.dumps(search_results[:5], indent=2)}
-
-GOAL: Map the user question to required columns using ONLY the dataset metadata. Evaluate ALL datasets. Prefer a table that can satisfy ALL required columns and the requested time grain.
-
-DECISION PROCESS:
-1. **Match Attributes and Metrics First**
-   - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
-   - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
-
-2. **Check Time Granularity** 
-   - Ensure the dataset supports the required time grain (e.g., monthly, daily)
-
-3. **Evaluate Suitability Tags**
-   - If dataset is marked in 'query_patterns' for the analysis type, increase relevance
-   - If dataset is marked in 'not_suitable_for' for the analysis type, exclude it
-
-4. **Final Selection**
-   - If EXACTLY ONE dataset satisfies all criteria → SELECT IT
-   - If MULTIPLE datasets satisfy criteria → ASK CLARIFICATION  
-   - If NO dataset fully satisfies → SELECT closest match by coverage
-
-WHEN TO ASK CLARIFICATION:
-- Multiple datasets have the required attributes/metrics AND both are suitable
-- Question could legitimately use different dataset types
-- Ask: "Multiple datasets match your requirements. Which analysis: [brief dataset type descriptions]?"
-
-RESPONSE FORMAT (valid JSON only, no markdown):
-{{
-    "final_actual_tables": ["table_name"] or [],
-    "functional_names": ["friendly_name"] or [],
-    "requires_clarification": false or true,
-    "clarification_question": null or "question text",
-    "candidate_actual_tables": [] or ["table1", "table2"],
-    "selection_reasoning": "Brief explanation referencing attribute/metric match and suitability"
-}}
-
-CRITICAL RULES:
-- Use ONLY the provided dataset metadata
-- When multiple datasets match equally, ASK clarification rather than guessing
-- Be decisive when there's a clear best match
-- Focus on exact attribute/metric matches first
-"""
-
-        USER QUESTION: "For the PBM provide a rate volume variance by LOB from May 2025 to June 2025 for the product category PBM"
-
-        AVAILABLE DATASETS:
-        [
-  {
-    "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-    "purpose": "Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.",
-    "core_capabilities": "revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, rate/volume analysis",
-    "key_measures": [
-      "revenue",
-      "expense",
-      "WAC",
-      "AWP",
-      "unadjusted scripts",
-      "adjusted scripts",
-      "30-day scripts",
-      "90-day scripts",
-      "revenue per script",
-      "volume",
-      "Generic dispensing ratio/GDR"
-    ],
-    "key_dimensions": [
-      "claim identifiers",
-      "claim status",
-      "client id/Client name/Client type",
-      "carrier/account/group/CAG",
-      "pharmacy name/NPI/Pharmacy type",
-      "drug name/ NDC Code",
-      "therapy class",
-      "GPI",
-      "line of business",
-      "brand vs generic",
-      "product category",
-      "state code",
-      "member date of birth",
-      "member sex",
-      "submit date",
-      "year",
-      "month",
-      "quarter"
-    ],
-    "query_patterns": [
-      "claim-level financial analysis",
-      "client-level analysis",
-      "drug and therapy class performance",
-      "manufacturer-level insights",
-      "revenue per script and GDR metrics",
-      "line-of-business tracking",
-      "rate analysis"
-    ],
-    "not_suitable_for": [
-      "budget planning",
-      "forecast generation",
-      "ledger-level summaries"
-    ],
-    "grain": "claim_transaction",
-    "temporal": "daily via submit_date"
-  },
-  {
-    "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
-    "purpose": "Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for forecast analysis and planning at LOB level.",
-    "key_measures": [
-      "revenue",
-      "IOI",
-      "total membership",
-      "unadjusted scripts",
-      "adjusted scripts",
-      "30-day scripts",
-      "90-day scripts",
-      "amount or count",
-      "expense",
-      "volume"
-    ],
-    "key_dimensions": [
-      "ledger type",
-      "line of business",
-      "product category",
-      "product subcategory level 1",
-      "product subcategory level 2",
-      "transaction date",
-      "year",
-      "month",
-      "quarter"
-    ],
-    "query_patterns": [
-      "actuals vs forecast",
-      "budget comparison"
-    ],
-    "not_suitable_for": [
-      "claim-level analysis",
-      "daily granularity",
-      "client-specific analysis"
-    ],
-    "grain": "aggregated_metrics",
-    "temporal": "monthly/quarterly/yearly via transaction_date"
-  }
-]
-
-        MANDATORY 4-STEP PROCESS:
-
-        **STEP 1: Keyword Match (CHECK FIRST)**
-        For each dataset, scan the user question for these matches:
-        - Words that appear in table_name, purpose, core_capabilities, or query_patterns
-        - Look for: "claim", "rate", "therapy", "pharmacy", "member", "budget", "forecast", "ledger", "variance", etc.
-        - If EXACTLY ONE dataset has keyword matches → SELECT IT, set requires_clarification=false
-        - If MULTIPLE datasets have keyword matches OR NO keywords found → GO TO STEP 2
-        - You MUST document which keywords you found for each dataset
-
-        **STEP 2: Column Match (CHECK IF STEP 1 DIDN'T RESOLVE)**
-        - Extract ALL required columns from user question (LOB, product category, volume, rate, etc.)
-        - For each remaining dataset: count how many required columns exist in key_measures + key_dimensions
-        - If EXACTLY ONE dataset has ALL required columns → SELECT IT, set requires_clarification=false
-        - If MULTIPLE datasets have all required columns → GO TO STEP 3
-        - You MUST list the required columns you extracted
-
-        **STEP 3: Suitability Check (CHECK IF STEP 2 DIDN'T RESOLVE)**
-        - Check query_patterns: does user question match patterns in remaining datasets?
-        - Check not_suitable_for: eliminate datasets that exclude this analysis type
-        - If EXACTLY ONE dataset remains suitable → SELECT IT, set requires_clarification=false
-        - If MULTIPLE datasets remain suitable → GO TO STEP 4
-
-        **STEP 4: Ask Follow-Up (MANDATORY IF STEPS 1-3 DIDN'T RESOLVE)**
-        - Set requires_clarification=true
-        - Set clarification_question with specific options
-        - Set candidate_actual_tables with competing tables
-        - Set final_actual_tables=[]
-
-        RESPONSE FORMAT :
-        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
-        {
-            "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
-            "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
-            "requires_clarification": false if dataset found else true,
-            "clarification_question": null if dataset found else ask question,
-            "candidate_actual_tables": []  ,
-            "selection_reasoning": "Brief explanation of selection based on attribute/metric match"
+        "intelligence_synthesis": {
+            "variance_thresholds": {
+                "significant_lob_variance": "$500K",
+                "significant_client_change": "$100K", 
+                "significant_membership_change": "5%",
+                "significant_carrier_change": "20% utilization change"
+            },
+            
+            "correlation_analysis": [
+                "revenue_vs_membership",
+                "revenue_vs_client_churn",
+                "revenue_vs_carrier_changes"
+            ],
+            
+            "tactical_direction_rules": {
+                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
+                "membership_driven_variance": "if_membership_changes_correlate_with_revenue", 
+                "operational_variance": "if_none_of_above_explain_variance_sufficiently"
+            }
         }
-
-        CRITICAL RULES:
-        - candidate_actual_tables should be populated only when requires_clarification: true
-        - NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions
-        - You MUST execute all 4 steps in order until one resolves
-        -You MUST show your work for each step in selection_reasoning
-        -If steps 1-3 don't resolve to exactly ONE table, you MUST ask clarification (step 4)
-        - Do NOT make assumptions about "better" tables - follow the process
-
-
-router resposne {
-    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
-    "functional_names": ["Actuals vs Forecast Analysis"],
-    "requires_clarification": false,
-    "clarification_question": null,
-    "candidate_actual_tables": [],
-    "selection_reasoning": "STEP 1: Found keyword matches - 'variance' relates to forecast analysis patterns, 'volume' appears in key_measures, 'rate' relates to rate analysis capabilities, and 'PBM' matches product category context. STEP 2: Required columns extracted: line of business (LOB), product category, volume, rate, time period (May-June 2025). The actuals_vs_forecast_analysis table contains all required dimensions: 'line of business', 'product category', 'volume' in key_measures, and monthly temporal granularity via transaction_date. The claim_transaction table lacks the variance analysis capability needed for rate volume variance analysis. STEP 3: Query pattern 'rate volume variance' aligns with 'actuals vs forecast' and 'budget comparison' patterns in the actuals_vs_forecast_analysis table, while claim-level analysis is not suitable for variance analysis. Selected actuals_vs_forecast_analysis as it uniquely supports variance analysis at the LOB and product category level with the required temporal granularity."
+    }
 }
 
 
 
 
-selection_prompt = f"""
-You are a dataset router. You MUST follow this EXACT 4-step process. Do NOT skip steps or make assumptions.
+preparation_prompt = f"""
+You are a Strategic SQL Query Architect. Using the drill-through configuration metadata, generate strategic SQL queries for financial variance investigation.
 
-USER QUESTION: "{user_question}"
+USER QUESTION: {current_question}
+QUESTION TYPE: {classification.get('question_type', 'financial_analysis')}
 
-AVAILABLE DATASETS:
-{json.dumps(search_results[:5], indent=2)}
+DRILL-THROUGH METADATA:
+{json.dumps(strategic_queries_config, indent=2)}
 
-MANDATORY 4-STEP PROCESS:
+STRATEGIC QUERY GENERATION INSTRUCTIONS:
 
-**STEP 1: Keyword Match (CHECK FIRST)**
-For each dataset, scan the user question for these matches:
-- Words that appear in table_name, purpose, core_capabilities, or query_patterns
-- Look for: "claim", "rate", "therapy", "pharmacy", "member", "budget", "forecast", "ledger", "variance", etc.
-- If EXACTLY ONE dataset has keyword matches → SELECT IT, set requires_clarification=false
-- If MULTIPLE datasets have keyword matches OR NO keywords found → GO TO STEP 2
-- You MUST document which keywords you found for each dataset
+You are provided with a comprehensive drill-through configuration that contains metadata for strategic investigation. Your task is to analyze this metadata and generate SQL queries based on the configuration structure.
 
-**STEP 2: Column Match (CHECK IF STEP 1 DIDN'T RESOLVE)**
-- Extract ALL required columns from user question (LOB, product category, volume, rate, etc.)
-- For each remaining dataset: count how many required columns exist in key_measures + key_dimensions
-- If EXACTLY ONE dataset has ALL required columns → SELECT IT, set requires_clarification=false  
-- If MULTIPLE datasets have all required columns → GO TO STEP 3
-- You MUST list the required columns you extracted
+CONFIGURATION ANALYSIS:
+1. Extract the investigation type from the metadata
+2. Identify the query sequence and purposes from strategic_queries section
+3. Use the table_metadata to understand available columns and data structure
+4. Apply analysis_requirements and output_requirements for each query
+5. Generate queries that follow the investigation framework
 
-**STEP 3: Suitability Check (CHECK IF STEP 2 DIDN'T RESOLVE)**
-- Check query_patterns: does user question match patterns in remaining datasets?
-- Check not_suitable_for: eliminate datasets that exclude this analysis type
-- If EXACTLY ONE dataset remains suitable → SELECT IT, set requires_clarification=false
-- If MULTIPLE datasets remain suitable → GO TO STEP 4
+METADATA-DRIVEN QUERY GENERATION:
+- For each query in the strategic_queries section:
+  * Use the specified table_name
+  * Apply required_filters from analysis_requirements
+  * Focus on key_dimensions and focus_metrics
+  * Implement the analysis_type specified
+  * Follow output_requirements for formatting and ordering
+  * Consider variance_threshold values for filtering significant results
 
-**STEP 4: Ask Follow-Up (MANDATORY IF STEPS 1-3 DIDN'T RESOLVE)**
-- Set requires_clarification=true
-- Set clarification_question with specific options
-- Set candidate_actual_tables with competing tables
-- Set final_actual_tables=[]
+REASONING FOR QUERY SEQUENCE:
+The metadata defines an investigation framework designed to systematically identify root causes of variance. Each query builds upon the previous one, starting with high-level variance detection, then drilling into specific drivers based on the investigation type. The queries are designed to provide complementary views that together form a comprehensive understanding of the variance drivers.
 
-RESPONSE FORMAT (JSON only):
-{{
-    "final_actual_tables": ["table_name"] or [],
-    "functional_names": ["friendly_name"] or [],
-    "requires_clarification": false or true,
-    "clarification_question": null or "question text",
-    "candidate_actual_tables": [] or ["table1", "table2"],
-    "selection_reasoning": "Step X resolved: [exact reason with evidence from dataset metadata]"
-}}
+SQL GENERATION RULES:
+1. Use exact table names and column names from table_metadata
+2. Apply all required_filters specified in analysis_requirements
+3. Include variance calculations based on analysis_type (period comparisons)
+4. Focus on significant changes based on variance_threshold values
+5. Use proper time period comparisons based on user question context
+6. Include meaningful column aliases that match the business context
+7. Follow ordering requirements from output_requirements
+8. Implement conditional logic where depends_on_query is specified
 
-CRITICAL RULES:
-1. You MUST execute all 4 steps in order until one resolves
-2. You MUST show your work for each step in selection_reasoning
-3. If steps 1-3 don't resolve to exactly ONE table, you MUST ask clarification (step 4)
-4. Do NOT make assumptions about "better" tables - follow the process
-5. Do NOT skip keyword matching in step 1
+RESPONSE FORMAT:
+<multiple_sql>
+<query1_title>
+[Extract title from first query purpose - max 8 words]
+</query1_title>
+<query1>
+[First SQL query based on metadata]
+</query1>
+<query2_title>
+[Extract title from second query purpose - max 8 words]
+</query2_title>
+<query2>
+[Second SQL query based on metadata]
+</query2>
+<query3_title>
+[Extract title from third query purpose - max 8 words]
+</query3_title>
+<query3>
+[Third SQL query based on metadata]
+</query3>
+</multiple_sql>
 
-Example reasoning format:
-"Step 1: Found keyword 'rate' in claims table core_capabilities but not in forecast table. Selected claims table."
-
-OR
-
-"Step 1: No unique keywords found. Step 2: Both tables have required columns LOB, product category, volume. Step 3: Both tables suitable. Step 4: Asking clarification."
+Generate the strategic SQL queries based solely on the provided metadata configuration.
 """
-
-
-def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState) -> Dict:
-        """LLM selection with direct actual table name handling"""
-        
-        user_question = state.get('current_question', state.get('original_question', ''))
-
-        selection_prompt = f"""
-        You are a decisive dataset router. Follow this decision process strictly:
-
-        USER QUESTION: "{user_question}"
-
-        AVAILABLE DATASETS:
-        {json.dumps(search_results, indent=2)}
-
-        **Step 1: Keyword Match**
-- Look for specific keywords in the user question that directly indicate a dataset type
-- Match keywords to table names, purpose descriptions, or core_capabilities
-- Examples: "claim" → claim_transaction tables, "forecast/budget" → forecast tables, "member" → member tables
-- If ONE clear keyword match found → STOP, select that table
-- If multiple tables match same keywords → Continue to Step 2
-
-**Step 2: Column Match**  
-- Extract required columns/attributes from user question
-- Check which tables have ALL required columns in key_measures and key_dimensions  
-- Score each table by percentage of required columns available
-- If only ONE table has all required columns → STOP, select that table
-- If multiple tables have all required columns → Continue to Step 3
-
-**Step 3: Suitability Check**
-- Check query_patterns - does user question type match any patterns in remaining tables?
-- Check not_suitable_for - eliminate tables that explicitly exclude this analysis type
-- Check purpose and core_capabilities for best alignment with user intent
-- If only ONE table remains suitable → STOP, select that table
-- If multiple tables remain suitable → Continue to Step 4
-
-**Step 4: Ask Follow-up Question**
-- If multiple tables still match after Steps 1-3 → ASK CLARIFICATION
-- If question needs multi-table analysis → ASK CLARIFICATION
-
-FOLLOW-UP SCENARIOS:
-1. **Ambiguity**: Multiple tables have required columns and are suitable after all 3 steps
-   - Ask: "Multiple datasets match your requirements. Which type of analysis: [list top 2-3 dataset types]?"
-
-2. **Multi-table Analysis**: Query explicitly needs data from multiple different dataset types  
-   - Ask: "This analysis requires multiple datasets. Proceed with: [list dataset types]?"
-        
-        RESPONSE FORMAT :
-        The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
-        {{
-            "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
-            "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
-            "requires_clarification": false,
-            "clarification_question": null,
-            "candidate_actual_tables": [],
-            "selection_reasoning": "Brief explanation of selection based on attribute/metric match"
-        }}
-        
-        CRITICAL RULES:
-        - When LLM decides on right dataset(s), ALWAYS set requires_clarification: false and clarification_question: null
-        - Keep clarification_question short and direct when needed (max 20 words)
-        - candidate_actual_tables should be populated only when requires_clarification: true
-        - NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions
-        - Trust keyword analysis over complex reasoning about aggregation levels
-        """
-        
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                llm_response = self.db_client.call_claude_api_endpoint([
-                    {"role": "user", "content": selection_prompt}
-                ])
-                selection_result = json.loads(llm_response)
-                
-                print(f"✅ Dataset selection complete: {selection_result.get('functional_names')}")
-                return selection_result
-                    
-            except Exception as e:
-                retry_count += 1
-                print(f"❌ Dataset selection attempt {retry_count} failed: {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
-                    import time
-                    time.sleep(2 ** retry_count)
-                    continue
-                else:
-                    return {
-                        'final_actual_tables': [],
-                        'functional_names': [],
-                        'requires_clarification': False,
-                        'selection_reasoning': 'Dataset selection failed',
-                        'error': True,
-                        'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}"
-                    }
-
-    def _fix_router_llm_call(self, state: AgentState) -> Dict:
-
-
-selection_prompt = f"""
-You are a decisive dataset router. Follow this decision process strictly:
-
-USER QUESTION: "{user_question}"
-
-AVAILABLE DATASETS:
-{json.dumps(search_results[:5], indent=2)}
-
-DECISION PROCESS:
-1. **Keyword-Based Primary Routing**
-   - If question contains "claim", "claims", "claim revenue", "claim data" → STRONGLY favor claim_transaction table
-   - If question contains "budget", "forecast", "actuals vs forecast", "planning" → STRONGLY favor actuals_vs_forecast table
-   - If question contains "ledger" → favor actuals_vs_forecast table
-   - IMPORTANT: "Claim revenue" means revenue FROM individual claim transactions, not ledger summaries
-
-2. **Match Attributes and Metrics**
-   - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
-   - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
-   - Consider synonyms and related terms (e.g., 'scripts' relates to prescription volume)
-
-3. **Check Time Granularity**
-   - Ensure the dataset supports the required time grain (e.g., monthly, daily)
-   - claim_transaction supports daily granularity via submit_date
-   - actuals_vs_forecast supports monthly/quarterly/yearly via transaction_date
-
-4. **Evaluate Purpose and Suitability**
-   - Match the question's analytical purpose with dataset purpose
-   - If dataset is marked as 'not_suitable_for' the type of analysis requested, exclude it ONLY if no keyword match from step 1
-   - If dataset is marked in 'query_patterns' or 'core_capabilities' for the analysis type, increase relevance
-
-5. **Multi-Table Analysis Detection**
-   - Detect if query requires joining data across tables (e.g., claim amounts from different tables)
-   - Identify queries that benefit from complementary data perspectives (volumes + financials from different sources)
-   - Recognize queries needing separate analysis on related datasets (demographics + transactions)
-
-6. **Dataset Selection Strategy**
-   - Choose the single best dataset that satisfies the above criteria
-   - Select multiple datasets only when analysis inherently requires multiple tables
-   - When in doubt between tables and no clear keyword match, prefer the table with better attribute coverage
-
-WHEN TO ASK FOLLOW-UP:
-
-**Scenario 1: Keyword Ambiguity**
-- When both tables have the requested metrics AND user didn't specify distinguishing keywords
-- When the question could legitimately use either table based on available attributes
-- Examples: "revenue trends", "revenue analysis", "show revenue data", "pharmacy performance" without claim/forecast context
-- Ask: "Do you need claim-level transaction data or ledger-level financial summaries?"
-
-**Scenario 2: True Data Type Ambiguity** 
-- When question contains general business terms that both tables can satisfy
-- When no clear analytical context points to one table over another
-- Example: "revenue by product category" (both tables have revenue and product category)
-- Ask: "Which dataset: detailed claim transactions or aggregated financial ledger data?"
-
-**Scenario 3: Multi-Table Analysis Confirmation**
-- When query explicitly requires data from different table types (e.g., "claim details with billing reconciliation")
-- When query needs to join claim-level data with ledger-level data for comprehensive analysis
-- When query benefits from combining transactional data with financial planning data
-- Example: "Compare individual claim patterns with overall budget performance" → Claims + Ledger analysis
-
-DO NOT ASK FOLLOW-UP FOR THESE AMBIGUITIES (BE DECISIVE):
-- Time period vagueness (e.g., "show pharmacy sales July 2024" without claim/forecast keywords) → If no keywords, ask for clarification between claim vs ledger
-- Aggregation level uncertainty (e.g., "revenue data monthly" without context) → If no distinguishing keywords, ask for clarification  
-- Scope ambiguity with clear keywords (e.g., "claim trends" without LOB specified) → Use claims table, don't ask about table choice
-- Metric questions with clear dataset indicators (e.g., "GDR analysis", "therapy class performance") → Route to claims table directly
-
-EXAMPLES REQUIRING CLARIFICATION:
-- "What are the revenue trends?" → Both tables have revenue, no distinguishing keywords
-- "Show me pharmacy performance data" → Could be claim-level or ledger-level analysis
-- "Revenue analysis by product category" → Both tables support this, need clarification
-
-EXAMPLES NOT REQUIRING CLARIFICATION:
-- "What is the claim revenue for July 2025?" → claim_transaction (keyword: "claim")
-- "Show me budget vs actuals" → actuals_vs_forecast (keywords: "budget", "actuals") 
-- "What is the variance between actual costs and forecasted costs?" → actuals_vs_forecast (actuals vs forecast analysis)
-- "Generic dispensing ratio trends" → claim_transaction (GDR in core_capabilities)
-- "Revenue per script analysis" → claim_transaction (explicitly in core_capabilities)
-- "Forecast analysis for Q3" → actuals_vs_forecast (keyword: "forecast")
-- "Therapy class performance last month" → claim_transaction (therapy class only in claims)
-- "Client-level claim analysis" → claim_transaction (client analysis in query_patterns)
-
-RESPONSE FORMAT (valid JSON only, no markdown):
-{{
-    "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
-    "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
-    "requires_clarification": false,
-    "clarification_question": null,
-    "candidate_actual_tables": [],
-    "selection_reasoning": "Brief explanation referencing keyword match, attribute coverage, and why this dataset best serves the user's question"
-}}
-
-CRITICAL RULES:
-- When LLM decides on right dataset(s), ALWAYS set requires_clarification: false and clarification_question: null
-- Only set requires_clarification: true for the 2 specific scenarios mentioned above
-- Keep clarification_question short and direct when needed (max 15 words)
-- candidate_actual_tables should be populated only when requires_clarification: true
-- NEVER ask for clarification on time periods, aggregation levels, or general scope - make reasonable assumptions
-- Trust keyword analysis over complex reasoning about aggregation levels
-"""
-
-
-
-
-selection_prompt = f"""
-                    You are a meticulous dataset router. Choose EXACTLY ONE dataset.
-
-                    USER QUESTION: "{user_question}"
-
-                    DATASETS (JSON array). Each dataset has:
-                    - name,description,metrics,attributes,columns,hints,time_grains
-
-                    DATA:
-                    {json.dumps(dataset_options, indent=2)}
-
-                    GOAL
-                    Map the user question to required columns using ONLY the dataset metadata and order of meta data is random. Evaluate BOTH datasets. Prefer a table that can satisfy ALL required columns and the requested time grain. If no table can fully satisfy, return the closest table by coverage.
-
-                    Follow this decision process strictly:
-
-                    1. **Match Attributes and Metrics First**
-                    - Check if the dataset contains the attributes and metrics mentioned or implied in the user question.
-                    - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue').
-
-                    2. **Check Time Granularity**
-                    - Ensure the dataset supports the required time grain (e.g., monthly, daily).
-
-                    3. **Evaluate Usefulness Tags**
-                    - If the dataset is marked as 'useful_for' the type of analysis requested, that increases its relevance.
-                    - If the dataset is marked as 'not_useful_for' the type of analysis requested, it should be excluded.
-
-                    4. **Select Only One Dataset**
-                    - Choose the single best dataset that satisfies the above criteria.
-
-                    RESPONSE FORMAT:
-                    The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
-
-                    {{ "clear_selection": true, "selected_dataset": "<one of the dataset 'table_name' values>", "selection_reasoning": "One concise sentence referencing why the dataset is best match (e.g., therapy_class_name + month required; only claims has therapy_class_name and supports month/day)." }}
-
-                    """
-
-
-selection_prompt = f"""
-        You are a decisive dataset router. Follow this decision process strictly:
-
-        USER QUESTION: "{user_question}"
-
-        AVAILABLE DATASETS:
-        {json.dumps(search_results[:5], indent=2)}
-
-        DECISION PROCESS:
-        1. **Match Attributes and Metrics First**
-        - Check if the dataset contains the attributes and metrics mentioned or implied in the user question
-        - Prioritize exact matches (e.g., 'line_of_business', 'month', 'revenue')
-        
-        2. **Check Time Granularity**
-        - Ensure the dataset supports the required time grain (e.g., monthly, daily)
-        
-        3. **Evaluate Usefulness Tags**
-        - If dataset is marked as 'useful_for' the type of analysis requested, increase relevance
-        - If dataset is marked as 'not_useful_for' the type of analysis requested, exclude it
-        
-        4. **Multi-Table Analysis Detection**
-        - Detect if query requires joining data across tables (e.g., claim amounts from different tables)
-        - Identify queries that benefit from complementary data perspectives (volumes + financials)
-        - Recognize queries needing separate analysis on related datasets (demographics + transactions)
-        
-        5. **Dataset Selection Strategy**
-        - Choose the single best dataset that satisfies the above criteria
-        - Select multiple datasets only when analysis inherently requires multiple tables
-        
-        WHEN TO ASK FOLLOW-UP (RARE CASES ONLY):
-        
-        **Scenario 1: Data Type Ambiguity**
-        - ONLY when both tables have same LOB and user didn't specify "ledger" vs "claims" keywords
-        - Example: "Which dataset: claims transactions or financial ledger data?"
-        
-        **Scenario 2: Multi-Table Analysis Confirmation**
-        - When query requires joining data across tables (e.g., billed amount from Table A + paid amount from Table B)
-        - When query benefits from complementary perspectives (transaction volumes + financial metrics)
-        - When query needs separate analysis on related datasets then combining insights
-        - Example: "This analysis requires both Claims Details and Payment Records tables. Proceed with both?"
-        
-        DO NOT ASK FOLLOW-UP FOR GENERAL AMBIGUITIES:
-        - Time period vagueness (e.g., "show pharmacy sales" without specifying when) → Pick most recent complete period
-        - Aggregation level uncertainty (e.g., "revenue data" without daily/monthly) → Use most appropriate grain available
-        - Scope ambiguity (e.g., "claim trends" without LOB specified) → Use broadest/most complete dataset
-        - Metric preference vagueness (e.g., "pharmacy performance" unclear on volume vs financial) → Pick best match based on context
-        - BE DECISIVE: Make reasonable choices for these ambiguities rather than asking clarification
-        
-        MULTI-TABLE EXAMPLES:
-        - "What is the claim paid and billed amount?" → Need claims table + payments table (JOIN required)
-        - "Show pharmacy performance trends" → Transaction data + Financial metrics (Complementary analysis)
-        - "Compare member demographics with claim patterns" → Demographics table + Claims table (Separate analysis)
-        
-        RESPONSE FORMAT (valid JSON only, no markdown):
-        {{
-            "final_actual_tables": ["actual_table_name1"] or ["table1", "table2"] if multiple needed,
-            "functional_names": ["user-friendly name 1"] or ["name1", "name2"] if multiple,
-            "requires_clarification": false,
-            "clarification_question": null,
-            "candidate_actual_tables": [],
-            "selection_reasoning": "Brief explanation of selection based on attribute/metric match"
-        }}
-        
-        IMPORTANT: 
-        - When LLM decides on right dataset(s), ALWAYS set requires_clarification: false and clarification_question: null
-        - Only set requires_clarification: true and populate clarification_question for the 2 scenarios mentioned above
-        - Keep clarification_question short and direct when needed
-        - candidate_actual_tables should be populated only when requires_clarification: true
-        """
-
-llm response router {
-    "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis"],
-    "functional_names": ["Actuals vs Forecast Analysis"],
-    "requires_clarification": false,
-    "clarification_question": null,
-    "candidate_actual_tables": [],
-    "selection_reasoning": "Query asks for claim revenue by month and product category PBM. The actuals_vs_forecast_analysis table has exact matches for 'revenue', 'month', and 'product category' dimensions with monthly temporal granularity. The claim_transaction table, while having revenue data, is designed for claim-level analysis and marked as 'not suitable for ledger-level summaries', whereas this query appears to need aggregated revenue metrics by time period and product category."
-}
-
-      [
-  {
-    "llm_context": "{\"table_name\":\"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm\",\"purpose\":\"Claim-level pharmacy transactions with detailed drug, client, and pharmacy attributes. Individual claim records with payment status for utilization and financial analysis.\",\"core_capabilities\":\"revenue per script analysis, drug utilization trending, therapy class performance (GLP-1, SGLT-2, Oncology), generic dispense rate (GDR), pharmacy network analysis, client-level metrics, brand vs generic mix, claim status tracking\",\"key_measures\":[\"revenue\",\"expense\",\"WAC\",\"AWP\",\"unadjusted scripts\",\"adjusted scripts\",\"30-day scripts\",\"90-day scripts\",\"revenue per script\",\"volume\",\"Generic dispensing ratio/GDR\"],\"key_dimensions\":[\"claim identifiers\",\"claim status\",\"client id/Client name/Client type\",\"carrier/account/group/CAG\",\"pharmacy name/NPI/Pharmacy type\",\"drug name/ NDC Code\",\"therapy class\",\"GPI\",\"line of business\",\"brand vs generic\",\"product category\",\"state code\",\"member date of birth\",\"member sex\",\"submit date\",\"year\",\"month\",\"quarter\"],\"query_patterns\":[\"claim-level financial analysis\",\"client-level analysis\",\"drug and therapy class performance\",\"manufacturer-level insights\",\"revenue per script and GDR metrics\",\"line-of-business tracking\",\"daily and monthly trend analysis\",\"rate analysis\",\"pharmacy performance\",\"member usage analysis\"],\"not_suitable_for\":[\"budget planning\",\"forecast generation\",\"ledger-level summaries\"],\"grain\":\"claim_transaction\",\"temporal\":\"daily via submit_date\"}"
-  },
-  {
-    "llm_context": "{\"table_name\":\"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis\",\"purpose\":\"Ledger-level financial data for actuals, forecast, and budget analysis. Aggregated financial metrics for forecast analysis and planning at LOB level.\",\"key_measures\":[\"revenue\",\"IOI\",\"total membership\",\"unadjusted scripts\",\"adjusted scripts\",\"30-day scripts\",\"90-day scripts\",\"amount or count\",\"expense\",\"volume\"],\"key_dimensions\":[\"ledger type\",\"line of business\",\"product category\",\"product subcategory level 1\",\"product subcategory level 2\",\"transaction date\",\"year\",\"month\",\"quarter\"],\"query_patterns\":[\"actuals vs forecast\",\"budget comparison\"],\"not_suitable_for\":[\"claim-level analysis\",\"daily granularity\",\"client-specific analysis\"],\"grain\":\"aggregated_metrics\",\"temporal\":\"monthly/quarterly/yearly via transaction_date\"}"
-  }
-]

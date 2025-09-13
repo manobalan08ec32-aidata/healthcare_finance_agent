@@ -1,205 +1,97 @@
-prompt = f"""
-You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL queries for dynamic drill-through analysis using JSON configuration.
+synthesis_prompt = f"""
+You are a Strategic Financial Intelligence Analyst conducting FIRST-PASS analysis for multi-level drill-through investigation.
 
-USER QUESTION: {current_question}
+STRATEGIC CONTEXT:
+- Analysis Type: {investigation_config.get('investigation_type', 'variance_analysis')}
+- Query Level: {query_level}  # LOB/Client/Carrier/Membership
+- Analysis Scope: {analysis_scope}  # "Enterprise-wide" or "C&S LOB focused"
+- Baseline Variance: {baseline_variance}  # Primary scope variance
+- Enterprise Context: {enterprise_context}  # Total enterprise variance for perspective
+- Query Title: "{query_title}"
 
-INVESTIGATION CONFIGURATION:
-{json.dumps(investigation_config, indent=2)}
+SQL QUERY EXECUTED:
+{sql_query}
 
-==============================
-DYNAMIC QUERY GENERATION LOGIC
-==============================
+STRATEGIC QUERY RESULTS:
+{sql_data}
 
-CRITICAL: Generate queries based on detected analysis level and hierarchy defined in JSON:
+DATA QUALITY METRICS:
+- Total Records: {total_records}
+- Record Selection: Top {record_limit} entities by variance impact
 
-HIERARCHY-BASED QUERY GENERATION:
-1. **Parse investigation_hierarchy** from JSON to understand parent-child relationships
-2. **Detect primary analysis level** from user question (top-level entity vs specific entity)
-3. **Generate required queries** based on hierarchy depth:
-   - Top-level entity → Generate queries for primary + all children
-   - Mid-level entity → Generate queries for that level + its children only
-   - Bottom-level entity → Generate single query for that entity only
+========================
+FIRST-PASS BALANCED SYNTHESIS REQUIREMENTS
+========================
 
-ANALYSIS LEVEL DETECTION PROCESS:
-1. **Extract entity references** from user question (specific names, IDs, categories)
-2. **Map entities to hierarchy levels** using investigation_hierarchy structure
-3. **Determine analysis scope** (specific entity vs general analysis at that level)
-4. **Apply contextual scope inheritance** - children inherit parent entity filters
+STRATEGIC OBJECTIVE: Generate high-level insights that identify TOP 3-4 variance drivers that collectively explain 75-80% of total variance. AVOID single-entity focus bias.
 
-DYNAMIC HIERARCHY EXAMPLES:
-- If hierarchy: {"department": ["team", "employee"], "team": ["employee"], "employee": []}
-- "Why did Sales department underperform?" → Generate 3 queries: department + team + employee
-- "Why did Team Alpha struggle?" → Generate 2 queries: team + employee
-- "Why did John's metrics drop?" → Generate 1 query: employee only
+AUDIENCE: Strategic analysts who will use these insights to determine balanced second-pass drill-through focus areas.
 
-==============================
-INTENT DETECTION REQUIREMENTS
-==============================
+BALANCED ANALYSIS CONSTRAINTS:
+- Generate exactly 3-4 strategic bullets covering multiple variance contributors
+- Each bullet ≤30 words maximum
+- Focus on PORTFOLIO of drivers, not single dominant factor
+- Identify diverse contributing entities/patterns for comprehensive second-pass targeting
+- Ensure balanced coverage: positive AND negative contributors
+- Target cumulative explanation of 75-80% variance across multiple drivers
 
-CRITICAL: Extract these signals from user question using JSON context:
+STRATEGIC CONTENT STRUCTURE:
 
-1. **ENTITY SCOPE DETECTION**:
-   - Parse investigation_hierarchy to understand available entity levels
-   - Detect specific entity mentions vs general entity analysis
-   - Map detected entities to appropriate hierarchy level
+1. **PRIMARY VARIANCE PORTFOLIO** (1 bullet):
+   - Top 2-3 entities contributing to variance with cumulative impact
+   - Use exact values with auto-scaling (≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK)
+   - Show balanced contributors: "Top 3 LOBs drive 78% of $12.3M variance"
 
-2. **CATEGORY/FILTER DETECTION**:
-   - Scan analysis_templates for filters marked as "USER_INTENT_DRIVEN"
-   - Extract relevant category values from user question
-   - Apply detected categories consistently across all generated queries
+2. **DIRECTIONAL BALANCE PATTERN** (1 bullet):
+   - Both positive and negative contributors identified
+   - Avoid single-direction bias: "2 LOBs declining ($8M), 1 LOB growing ($3M)"
+   - Entity names for second-pass targeting
 
-3. **DATE RANGE INTELLIGENCE**:
-   - "Current period only" → Single period analysis
-   - "vs previous/last period" → Two-period comparison (current vs previous)
-   - "Period A vs Period B" → Specific period comparison  
-   - "Year over year/YoY" → Same period previous year comparison
-   - Extract specific dates/periods if mentioned
+3. **CONCENTRATION RISK ASSESSMENT** (1 bullet):
+   - Risk distribution across multiple entities/segments
+   - Identify if variance is concentrated or distributed
+   - Signal diversified investigation approach needed
 
-4. **VARIANCE DIRECTION SIGNALS**:
-   - "Drop/decline/fall/decrease" → Focus on bottom performers, negative variance
-   - "Spike/increase/growth/rise" → Focus on top performers, positive variance
-   - "Variance/change/vs/compared" → Analyze both positive and negative variance
+4. **STRATEGIC DRILL-THROUGH PORTFOLIO** (1 bullet):
+   - Multiple investigation paths for second-pass analysis
+   - 3-4 specific targets that collectively explain majority variance
+   - Balanced focus areas to avoid investigation blind spots
 
-==============================
-JSON CONFIGURATION INTERPRETATION
-==============================
+BALANCED PORTFOLIO EXAMPLES:
+✓ "Top 3 LOBs (C&S -$7M, E&I -$3M, M&R +$2M) explain 73% of variance across mixed performance patterns"
+✓ "Variance distributed: 5 clients declining ($12M), 3 clients growing ($4M), requiring portfolio-wide investigation"
+✓ "Multi-factor drivers: membership decline (40%), client churn (25%), carrier shifts (15%) require parallel analysis"
 
-CONFIGURATION PARSING PROCESS:
-1. **Extract investigation_type and description** for business context
-2. **Parse shared_table_metadata** for table structures and column definitions
-3. **Lookup investigation_hierarchy** to determine required child analyses
-4. **For each required analysis**:
-   - Locate corresponding template in analysis_templates
-   - Extract: table_reference, dimensions, metrics, filters, date_column
-   - Parse llm_instructions as the business intelligence brain
-5. **Apply global_llm_instructions** for domain-specific orchestration
+❌ Avoid single-focus bias:
+❌ "C&S LOB drives all variance" (ignores other contributors)
+❌ "Focus only on top declining client" (misses growth opportunities)
 
-TEMPLATE STRUCTURE USAGE:
-- **table_reference**: Maps to table in shared_table_metadata for column context
-- **dimensions**: Primary grouping/analysis columns
-- **metrics**: Key measurement columns to analyze and compare
-- **filters**: Base filters (with USER_INTENT_DRIVEN for dynamic application)
-- **date_column**: Column for period comparisons and time-based filtering
-- **llm_instructions**: Business logic and domain-specific intelligence
+CONFIDENCE SCORING FRAMEWORK:
+- High Confidence (>90%): "Analysis clearly shows balanced variance pattern..."
+- Medium Confidence (70-90%): "Data suggests diversified contributors..." 
+- Low Confidence (<70%): "Initial findings indicate multiple factors..." + data quality flag
+- Portfolio Coverage: Track if top contributors explain target 75-80% threshold
 
-==============================
-CONTEXTUAL SCOPE INHERITANCE
-==============================
+SECOND-PASS TARGET DIVERSIFICATION:
+- Ensure 3-4 different investigation paths identified
+- Balance positive/negative variance contributors
+- Include different entity types (clients, carriers, segments)
+- Avoid over-concentration on single pattern
 
-CRITICAL: Apply scope inheritance consistently:
+RESPONSE FORMAT:
+The response MUST be valid JSON with balanced analysis:
 
-SCOPE INHERITANCE RULES:
-1. **Parent Scope Cascades**: If parent analysis scoped to specific entity, all child analyses inherit that scope
-2. **Category Filter Inheritance**: Categories detected from user question apply to all analyses where relevant
-3. **Date Range Consistency**: Use identical date range logic across all analyses for proper correlation
-4. **Focus Direction Alignment**: Maintain variance direction focus (positive/negative) across related analyses
+{{
+  "narrative_response": "• Primary variance portfolio bullet\\n• Directional balance pattern bullet\\n• Concentration risk assessment bullet\\n• Strategic drill-through portfolio bullet",
+  "confidence_score": 85,
+  "data_quality_flags": ["15% null values in carrier data", "Incomplete membership records for External LOB"],
+  "second_pass_targets": ["Client portfolio analysis for C&S LOB", "Growth driver analysis for M&R LOB", "Carrier investigation for top 3 declining clients", "Membership correlation analysis"],
+  "variance_explanation_coverage": 78,
+  "balance_score": 92
+}}
 
-INHERITANCE IMPLEMENTATION:
-- Extract parent entity scope and apply to all child analysis WHERE clauses
-- Propagate USER_INTENT_DRIVEN filter values to all applicable analyses
-- Ensure consistent date range filtering across all generated queries
-- Align result ordering and selection criteria with detected variance direction
-
-==============================
-SQL GENERATION REQUIREMENTS
-==============================
-
-DATABRICKS SQL STANDARDS:
-1. **Clean, efficient SQL** with proper table aliasing and formatting
-2. **Window functions** for period-over-period comparisons when applicable
-3. **Dynamic date filtering** using detected date range logic
-4. **Comprehensive NULL handling** and data quality filters
-5. **Strategic result limiting** based on llm_instructions guidance
-
-ANALYSIS CALCULATION REQUIREMENTS:
-1. **Variance Calculations**: current_period - prior_period (when comparing periods)
-2. **Percentage Changes**: ((current_period - prior_period) / prior_period) * 100
-3. **Entity Status Analysis**: NEW/DROP/EXISTING identification when specified in llm_instructions
-4. **Derived Metrics**: Calculate ratios and per-unit metrics as defined in analysis templates
-
-DYNAMIC FILTERING INTELLIGENCE:
-1. **Apply base filters** from analysis template
-2. **Substitute USER_INTENT_DRIVEN** filters with detected values from user question
-3. **Add scope inheritance** filters from parent analyses
-4. **Apply significance thresholds** and selection strategies from llm_instructions
-5. **Include data quality** filters appropriate to the domain
-
-==============================
-COMPREHENSIVE REASONING REQUIREMENT
-==============================
-
-Provide detailed reasoning covering ALL these validation points:
-
-1. **USER INTENT ANALYSIS**:
-   - How you detected the primary analysis level from investigation_hierarchy
-   - What entity scope you identified (specific entities vs general analysis)
-   - What category/filter values you extracted for USER_INTENT_DRIVEN substitution
-   - What date range logic you derived from the question
-   - What variance direction signals you identified
-
-2. **HIERARCHY APPLICATION**:
-   - How you used investigation_hierarchy to determine required analyses
-   - How many queries you will generate and why based on detected level
-   - How scope inheritance will cascade from parent to child analyses
-
-3. **JSON CONFIGURATION USAGE**:
-   - How you parsed analysis_templates for each required analysis
-   - How you mapped table_reference to shared_table_metadata for column context
-   - How you extracted dimensions, metrics, filters for each query
-   - How you interpreted llm_instructions as domain-specific business logic
-
-4. **CONTEXTUAL SCOPING VALIDATION**:
-   - How you applied entity scope inheritance to child analyses
-   - How you substituted USER_INTENT_DRIVEN filters with detected values
-   - How you aligned date range logic across all queries for correlation
-
-5. **SQL GENERATION STRATEGY**:
-   - How you will structure each SQL using template components and metadata
-   - What calculation logic you will implement based on analysis requirements
-   - What filtering and selection strategies you will apply from llm_instructions
-   - How you will handle any special analysis types (entity status, trending, etc.)
-
-6. **BUSINESS CONTEXT APPLICATION**:
-   - How you incorporated domain knowledge from global_llm_instructions
-   - What significance thresholds and business rules you will apply
-   - How you will ensure results align with the investigation_type objective
-
-7. **CROSS-QUERY VALIDATION**:
-   - How you will ensure consistency across multiple generated queries
-   - How child analyses will correlate with parent analysis findings
-   - What validation logic you will apply to ensure coherent investigation
-
-8. **DATA QUALITY CONSIDERATIONS**:
-   - What data quality filters you will implement based on table metadata
-   - How you will handle potential null values, outliers, or data inconsistencies
-   - What data validation steps you will include
-
-9. **RESULT PRIORITIZATION**:
-   - How you will apply selection and ranking strategies from llm_instructions
-   - What prioritization logic you will use for actionable insights
-   - How you will focus results on factors most relevant to user question
-
-==============================
-RESPONSE FORMAT
-==============================
-
-<reasoning>
-[Provide comprehensive reasoning following ALL 9 validation points above. Demonstrate thorough understanding of user intent, JSON configuration interpretation, hierarchy application, and SQL generation strategy. Show validation of each critical aspect for this specific analysis type and domain.]
-</reasoning>
-
-<sql_queries>
-Query 1: [{detected_analysis_type} - Primary Analysis]
-[Complete, executable Databricks SQL with proper formatting and business logic]
-
-Query 2: [{detected_analysis_type} - Child Analysis]  
-[Complete, executable Databricks SQL with proper formatting and business logic]
-
-[Continue for all required queries based on investigation_hierarchy...]
-</sql_queries>
-
-Generate the strategic SQL queries with comprehensive validation reasoning now.
+Generate strategic first-pass insights that guide BALANCED second-pass investigation across multiple variance drivers.
 """
-
 
 perfect . I have idea and tell how we can do . say suppose if I want to make it as configuration as UI table in streamlit so that tomorrow if user wants to add another parameter then they can add and llm take care if merging to json and dynamically everything works . is it possible to do . if so how the config table structure should be designed based on this meta data.
 

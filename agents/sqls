@@ -1,0 +1,207 @@
+ LOB Revenue Variance Detection for PBM: August 2025 vs July 2025 This query identifies which lines of business within PBM experienced significant revenue changes, providing the foundation for deeper drill-through analysis.
+WITH revenue_comparison AS (
+  SELECT 
+    line_of_business,
+    SUM(CASE WHEN YEAR(transaction_date) = 2025 AND MONTH(transaction_date) = 8 THEN amount_or_count ELSE 0 END) AS aug_2025_revenue,
+    SUM(CASE WHEN YEAR(transaction_date) = 2025 AND MONTH(transaction_date) = 7 THEN amount_or_count ELSE 0 END) AS jul_2025_revenue
+  FROM prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis
+  WHERE metric_type = 'Revenues'
+    AND ledger = 'GAAP'
+    AND product_category = 'PBM'
+    AND transaction_date >= '2025-07-01'
+    AND transaction_date <= '2025-08-31'
+    AND line_of_business IS NOT NULL
+    AND line_of_business NOT IN ('Rev Reclass', 'External')
+  GROUP BY line_of_business
+  HAVING SUM(CASE WHEN YEAR(transaction_date) = 2025 AND MONTH(transaction_date) = 8 THEN amount_or_count ELSE 0 END) > 0
+     OR SUM(CASE WHEN YEAR(transaction_date) = 2025 AND MONTH(transaction_date) = 7 THEN amount_or_count ELSE 0 END) > 0
+)
+SELECT 
+  line_of_business,
+  'PBM' AS product_category,
+  aug_2025_revenue,
+  jul_2025_revenue,
+  (aug_2025_revenue - jul_2025_revenue) AS revenue_variance,
+  CASE 
+    WHEN jul_2025_revenue > 0 THEN 
+      ROUND(((aug_2025_revenue - jul_2025_revenue) / jul_2025_revenue) * 100, 2)
+    ELSE NULL 
+  END AS variance_percentage,
+  ABS(aug_2025_revenue - jul_2025_revenue) AS abs_variance
+FROM revenue_comparison
+WHERE ABS(aug_2025_revenue - jul_2025_revenue) >= 1000000
+   OR (jul_2025_revenue > 0 AND ABS((aug_2025_revenue - jul_2025_revenue) / jul_2025_revenue) >= 0.05)
+ORDER BY ABS(aug_2025_revenue - jul_2025_revenue) DESC
+LIMIT 10;
+
+🎯 Membership Analysis for PBM: August 2025 vs July 2025 This query analyzes membership changes that may be driving the revenue variance patterns identified in Query 1.
+
+WITH membership_comparison AS (
+  SELECT 
+    line_of_business,
+    SUM(CASE WHEN transaction_date >= '2025-08-01' AND transaction_date < '2025-09-01' THEN amount_or_count ELSE 0 END) AS aug_2025_membership,
+    SUM(CASE WHEN transaction_date >= '2025-07-01' AND transaction_date < '2025-08-01' THEN amount_or_count ELSE 0 END) AS jul_2025_membership
+  FROM prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis
+  WHERE metric_type = 'Total Membership'
+    AND ledger = 'GAAP'
+    AND product_category = 'PBM'
+    AND transaction_date >= '2025-07-01'
+    AND transaction_date < '2025-09-01'
+    AND line_of_business IS NOT NULL
+    AND amount_or_count > 0
+  GROUP BY line_of_business
+  HAVING SUM(CASE WHEN transaction_date >= '2025-08-01' AND transaction_date < '2025-09-01' THEN amount_or_count ELSE 0 END) > 0
+     OR SUM(CASE WHEN transaction_date >= '2025-07-01' AND transaction_date < '2025-08-01' THEN amount_or_count ELSE 0 END) > 0
+)
+SELECT 
+  line_of_business,
+  aug_2025_membership,
+  jul_2025_membership,
+  (aug_2025_membership - jul_2025_membership) AS membership_variance,
+  CASE 
+    WHEN jul_2025_membership > 0 THEN 
+      ROUND(((aug_2025_membership - jul_2025_membership) / jul_2025_membership) * 100, 2)
+    ELSE NULL 
+  END AS membership_variance_percentage
+FROM membership_comparison
+WHERE ABS(aug_2025_membership - jul_2025_membership) >= 1000
+   OR (jul_2025_membership > 0 AND ABS((aug_2025_membership - jul_2025_membership) / jul_2025_membership) >= 0.05)
+ORDER BY ABS(aug_2025_membership - jul_2025_membership) DESC
+LIMIT 20;
+
+ Client Portfolio Analysis for PBM: August 2025 vs July 2025 This query identifies new, lost, and changing clients within PBM to explain revenue variance through client portfolio changes.
+WITH client_revenue_comparison AS (
+  SELECT 
+    client_id,
+    line_of_business,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN revenue_amt ELSE 0 END) AS aug_2025_revenue,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN revenue_amt ELSE 0 END) AS jul_2025_revenue,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN unadjusted_script_count ELSE 0 END) AS aug_2025_scripts,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN unadjusted_script_count ELSE 0 END) AS jul_2025_scripts,
+    COUNT(DISTINCT CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN CONCAT(client_id, '_', carrier_id) END) AS aug_2025_unique_records,
+    COUNT(DISTINCT CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN CONCAT(client_id, '_', carrier_id) END) AS jul_2025_unique_records
+  FROM prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm
+  WHERE submit_date >= '2025-07-01'
+    AND submit_date <= '2025-08-31'
+    AND client_id IS NOT NULL
+    AND line_of_business IS NOT NULL
+    AND revenue_amt > 0
+    AND unadjusted_script_count > 0
+  GROUP BY client_id, line_of_business
+),
+client_analysis AS (
+  SELECT 
+    client_id,
+    line_of_business,
+    aug_2025_revenue,
+    jul_2025_revenue,
+    aug_2025_scripts,
+    jul_2025_scripts,
+    aug_2025_unique_records,
+    jul_2025_unique_records,
+    (aug_2025_revenue - jul_2025_revenue) AS revenue_variance,
+    CASE 
+      WHEN jul_2025_revenue > 0 THEN 
+        ROUND(((aug_2025_revenue - jul_2025_revenue) / jul_2025_revenue) * 100, 2)
+      ELSE NULL 
+    END AS variance_percentage,
+    CASE 
+      WHEN jul_2025_revenue = 0 AND aug_2025_revenue > 500000 THEN 'New'
+      WHEN jul_2025_revenue > 500000 AND aug_2025_revenue = 0 THEN 'Lost'
+      WHEN jul_2025_revenue > 0 AND aug_2025_revenue > 0 THEN 'Existing'
+      ELSE 'Other'
+    END AS client_status
+  FROM client_revenue_comparison
+)
+SELECT 
+  client_id,
+  line_of_business,
+  client_status,
+  aug_2025_revenue,
+  jul_2025_revenue,
+  revenue_variance,
+  variance_percentage,
+  aug_2025_scripts,
+  jul_2025_scripts,
+  aug_2025_unique_records,
+  jul_2025_unique_records
+FROM client_analysis
+WHERE ABS(revenue_variance) >= 1000000  -- $1M client revenue variance threshold
+   OR client_status IN ('New', 'Lost')
+   OR (jul_2025_revenue > 10000000 AND ABS(revenue_variance) >= 500000)  -- Large clients with $500K+ variance
+ORDER BY ABS(revenue_variance) DESC;
+
+🎯 Carrier Utilization Analysis for PBM: August 2025 vs July 2025 This query analyzes carrier-level utilization changes to identify operational factors contributing to revenue variance.
+WITH carrier_analysis AS (
+  SELECT 
+    carrier_id,
+    line_of_business,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN revenue_amt ELSE 0 END) AS aug_2025_revenue,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN revenue_amt ELSE 0 END) AS jul_2025_revenue,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN unadjusted_script_count ELSE 0 END) AS aug_2025_scripts,
+    SUM(CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN unadjusted_script_count ELSE 0 END) AS jul_2025_scripts,
+    COUNT(DISTINCT CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 8 THEN client_id END) AS aug_2025_unique_members,
+    COUNT(DISTINCT CASE WHEN YEAR(submit_date) = 2025 AND MONTH(submit_date) = 7 THEN client_id END) AS jul_2025_unique_members
+  FROM prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm
+  WHERE submit_date >= '2025-07-01'
+    AND submit_date <= '2025-08-31'
+    AND carrier_id IS NOT NULL
+    AND line_of_business IS NOT NULL
+    AND revenue_amt > 0
+    AND unadjusted_script_count > 0
+    AND client_id IS NOT NULL
+  GROUP BY carrier_id, line_of_business
+),
+carrier_metrics AS (
+  SELECT 
+    carrier_id,
+    line_of_business,
+    aug_2025_revenue,
+    jul_2025_revenue,
+    aug_2025_scripts,
+    jul_2025_scripts,
+    aug_2025_unique_members,
+    jul_2025_unique_members,
+    (aug_2025_revenue - jul_2025_revenue) AS revenue_variance,
+    CASE 
+      WHEN jul_2025_revenue > 0 THEN 
+        ROUND(((aug_2025_revenue - jul_2025_revenue) / jul_2025_revenue) * 100, 2)
+      ELSE NULL 
+    END AS revenue_variance_percentage,
+    CASE 
+      WHEN jul_2025_scripts > 0 THEN 
+        ROUND(((aug_2025_scripts - jul_2025_scripts) / jul_2025_scripts) * 100, 2)
+      ELSE NULL 
+    END AS script_utilization_change_pct,
+    CASE 
+      WHEN aug_2025_unique_members > 0 THEN 
+        ROUND(aug_2025_scripts / aug_2025_unique_members, 2)
+      ELSE 0 
+    END AS aug_scripts_per_member,
+    CASE 
+      WHEN jul_2025_unique_members > 0 THEN 
+        ROUND(jul_2025_scripts / jul_2025_unique_members, 2)
+      ELSE 0 
+    END AS jul_scripts_per_member
+  FROM carrier_analysis
+)
+SELECT 
+  carrier_id,
+  line_of_business,
+  aug_2025_revenue,
+  jul_2025_revenue,
+  revenue_variance,
+  revenue_variance_percentage,
+  aug_2025_scripts,
+  jul_2025_scripts,
+  script_utilization_change_pct,
+  aug_scripts_per_member,
+  jul_scripts_per_member,
+  aug_2025_unique_members,
+  jul_2025_unique_members
+FROM carrier_metrics
+WHERE ABS(revenue_variance) >= 500000  -- $500K carrier revenue variance threshold
+   OR (jul_2025_revenue > 0 AND ABS(revenue_variance_percentage) >= 20)  -- 20% utilization change threshold
+   OR (jul_2025_revenue > 5000000 AND ABS(revenue_variance) >= 500000)  -- Major carriers with significant variance
+   OR (jul_2025_revenue BETWEEN 1000000 AND 5000000 AND ABS(revenue_variance) >= 250000)  -- Significant carriers
+ORDER BY ABS(revenue_variance) DESC;

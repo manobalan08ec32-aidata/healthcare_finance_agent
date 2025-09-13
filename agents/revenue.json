@@ -74,6 +74,11 @@
           {
             "name": "member_id",
             "description": "Individual member identifier for utilization analysis"
+          },
+          {
+            "name": "product_category",
+            "description": "High-level product or service grouping",
+            "sample_values": ["PBM", "Specialty", "HDP"]
           }
         ]
       }
@@ -92,10 +97,11 @@
         "metrics": ["amount_or_count"],
         "filters": {
           "metric_type": "Revenues",
-          "ledger": "GAAP"
+          "ledger": "GAAP",
+          "product_category": "USER_INTENT_DRIVEN"
         },
         "date_column": "transaction_date",
-        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Detect the analysis level from user question. If user asks general LOB question ('Why did LOB revenue drop?'), analyze all LOBs globally. If user specifies a particular LOB ('Why did C&S revenue drop?'), focus only on that LOB. This LOB context MUST cascade to all child analyses (membership, client, carrier) - they should be scoped to the same LOB filter detected here. ANALYSIS TYPE: Pure variance analysis - calculate variance amount and variance percentage between comparison periods. Focus on Revenue metrics only. No NEW/DROP/EXISTING entity analysis needed. Calculate revenue per script by dividing revenue by script count. VARIANCE THRESHOLDS: Flag LOBs with significant variance (>$1M absolute or >5% relative). Always show variance direction (positive/negative) and magnitude. CHILD TRIGGER LOGIC: If significant variance detected at LOB level, trigger child analyses (membership, client, carrier) with the same LOB scope inherited. The goal is to identify which LOB segments show significant revenue variance to guide subsequent drill-through analyses."
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Detect the analysis level from user question. If user asks general LOB question ('Why did LOB revenue drop?'), analyze all LOBs globally. If user specifies a particular LOB ('Why did C&S revenue drop?'), focus only on that LOB. This LOB context MUST cascade to all child analyses (membership, client, carrier) - they should be scoped to the same LOB filter detected here. PRODUCT CATEGORY SCOPING: Detect product category from user question - 'PBM', 'Specialty', 'Home Delivery' or combinations. If user mentions specific product category, apply that filter across all analyses. If no product category mentioned, analyze all categories. DATE RANGE INTELLIGENCE: Detect temporal intent from user question - 'current month only' = single period analysis, 'vs previous/last' = two-period comparison, 'Q1 vs Q2' = specific quarter comparison, 'YoY' = year-over-year. Extract specific dates/periods mentioned and build appropriate date filters and comparison logic in SQL. ANALYSIS TYPE: Pure variance analysis - calculate variance amount and variance percentage between comparison periods. Focus on Revenue metrics only. No NEW/DROP/EXISTING entity analysis needed. Calculate revenue per script by dividing revenue by script count. VARIANCE THRESHOLDS: Flag LOBs with significant variance (>$1M absolute or >5% relative). Always show variance direction (positive/negative) and magnitude. CHILD TRIGGER LOGIC: If significant variance detected at LOB level, trigger child analyses (membership, client, carrier) with the same LOB scope inherited. The goal is to identify which LOB segments show significant revenue variance to guide subsequent drill-through analyses."
       },
 
       "membership": {
@@ -104,26 +110,31 @@
         "metrics": ["amount_or_count"],
         "filters": {
           "metric_type": "Total Membership",
-          "ledger": "GAAP"
+          "ledger": "GAAP",
+          "product_category": "USER_INTENT_DRIVEN"
         },
         "date_column": "transaction_date",
-        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB (e.g., 'C&S'), then membership analysis should ONLY analyze membership for that LOB. If parent was global LOB analysis, then analyze membership across all LOBs showing revenue variance. ANALYSIS TYPE: Membership variance analysis to identify membership changes that could explain revenue variance patterns. VARIANCE THRESHOLDS: Flag membership changes of 5% or more OR absolute change of 1000+ members. Focus on LOBs that showed significant revenue variance in parent analysis. CORRELATION LOGIC: Look for correlation patterns between membership changes and revenue variance direction. Growing membership with declining revenue suggests per-member revenue issues. Declining membership with stable revenue suggests member retention of high-value segments. EXPECTED INSIGHTS: Identify whether revenue variance is driven by membership volume changes or per-member utilization/pricing changes. This analysis helps distinguish between volume-driven vs. intensity-driven revenue variance."
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB (e.g., 'C&S'), then membership analysis should ONLY analyze membership for that LOB. If parent was global LOB analysis, then analyze membership across all LOBs showing revenue variance. PRODUCT CATEGORY SCOPING: Inherit product category filter from parent analysis or detect from user question if this is standalone membership analysis. DATE RANGE INTELLIGENCE: Use same date range logic as parent analysis to ensure period alignment for correlation analysis. ANALYSIS TYPE: Membership variance analysis to identify membership changes that could explain revenue variance patterns. VARIANCE THRESHOLDS: Flag membership changes of 5% or more OR absolute change of 1000+ members. Focus on LOBs that showed significant revenue variance in parent analysis. CORRELATION LOGIC: Look for correlation patterns between membership changes and revenue variance direction. Growing membership with declining revenue suggests per-member revenue issues. Declining membership with stable revenue suggests member retention of high-value segments. EXPECTED INSIGHTS: Identify whether revenue variance is driven by membership volume changes or per-member utilization/pricing changes. This analysis helps distinguish between volume-driven vs. intensity-driven revenue variance."
       },
 
       "client": {
         "table_reference": "claims_drivers",
         "dimensions": ["client_id", "line_of_business"],
         "metrics": ["revenue_amt", "unadjusted_script_count"],
-        "filters": {},
+        "filters": {
+          "product_category": "USER_INTENT_DRIVEN"
+        },
         "date_column": "submit_date",
-        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB, filter client analysis to that LOB only. If user question is purely client-focused ('Why did Client ABC revenue drop?'), then no LOB scope inheritance - analyze that specific client only. ANALYSIS TYPE: Client portfolio change analysis - identify NEW, DROP, and EXISTING clients and their revenue impact. ENTITY STATUS DEFINITIONS: NEW clients = zero revenue in prior period AND current revenue >$500K. DROP clients = prior revenue >$500K AND zero current revenue. EXISTING clients = revenue presence in both periods with variance analysis. SELECTION STRATEGY: Don't analyze all clients - select strategically: Top 20 revenue gainers, Bottom 20 revenue losers, OR clients contributing to 70% of total variance (whichever provides better insight). VARIANCE THRESHOLDS: Include clients with >$1M revenue impact for large clients (>$10M annual), >$500K impact for medium clients ($1M-$10M annual). EXPECTED INSIGHTS: Identify specific client additions, losses, or behavioral changes driving revenue variance. Calculate client-level revenue per script to identify utilization pattern changes. Focus on actionable client relationship insights."
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB, filter client analysis to that LOB only. If user question is purely client-focused ('Why did Client ABC revenue drop?'), then no LOB scope inheritance - analyze that specific client only. PRODUCT CATEGORY SCOPING: Inherit product category filter from parent analysis or detect from user question if standalone client analysis. DATE RANGE INTELLIGENCE: Apply same date range logic as parent analysis or detect from user question for period comparison and entity status determination. ANALYSIS TYPE: Client portfolio change analysis - identify NEW, DROP, and EXISTING clients and their revenue impact. ENTITY STATUS DEFINITIONS: NEW clients = zero revenue in prior period AND current revenue >$500K. DROP clients = prior revenue >$500K AND zero current revenue. EXISTING clients = revenue presence in both periods with variance analysis. SELECTION STRATEGY: Don't analyze all clients - select strategically: Top 20 revenue gainers, Bottom 20 revenue losers, OR clients contributing to 70% of total variance (whichever provides better insight). VARIANCE THRESHOLDS: Include clients with >$1M revenue impact for large clients (>$10M annual), >$500K impact for medium clients ($1M-$10M annual). EXPECTED INSIGHTS: Identify specific client additions, losses, or behavioral changes driving revenue variance. Calculate client-level revenue per script to identify utilization pattern changes. Focus on actionable client relationship insights."
       },
 
       "carrier": {
         "table_reference": "claims_drivers",
         "dimensions": ["carrier_id", "line_of_business"],
         "metrics": ["revenue_amt", "unadjusted_script_count"],
-        "filters": {},
+        "filters": {
+          "product_category": "USER_INTENT_DRIVEN"
+        },
         "date_column": "submit_date", 
         "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit scope from parent analysis. If parent was LOB-scoped, analyze carriers within that LOB. If parent was client-scoped, analyze carriers for that specific client. If user question is purely carrier-focused ('Why did Carrier XYZ revenue drop?'), analyze that carrier only with no additional scoping. PRODUCT CATEGORY SCOPING: Inherit product category filter from parent analysis or detect from user question if standalone carrier analysis. DATE RANGE INTELLIGENCE: Apply same date range logic as parent analysis or detect from user question for period comparison and entity status determination. ANALYSIS TYPE: Carrier utilization change analysis - identify NEW, DROP, and EXISTING carriers and their operational impact on revenue. ENTITY STATUS DEFINITIONS: NEW carriers = zero revenue in prior period AND current revenue >$250K. DROP carriers = prior revenue >$250K AND zero current revenue. EXISTING carriers = presence in both periods with utilization variance analysis. SELECTION STRATEGY: Focus on significant carriers only - Top 20 revenue gainers, Bottom 20 losers, OR carriers contributing to 70% of variance. Apply carrier size tiers: Major carriers (>$5M annual) include if >$500K variance, Significant carriers ($1M-$5M) include if >$250K variance. UTILIZATION ANALYSIS: Calculate revenue per script and scripts per member to identify operational pattern changes. Look for shifts in carrier formulary preferences, prior authorization patterns, or network participation changes. EXPECTED INSIGHTS: Identify carrier behavior changes, network dynamics, or operational factors contributing to revenue variance that weren't explained by client portfolio changes."
       }
@@ -137,6 +148,10 @@
       "sql_generation_priorities": "Generate clean, efficient Databricks SQL with proper date filtering, variance calculations (amount and percentage), and entity status identification. Use window functions for period comparisons. Apply strategic filtering to focus on significant variance contributors. Include proper NULL handling and data quality filters. Calculate derived metrics like revenue per script, scripts per member for operational insights.",
       
       "business_context": "This is pharmacy benefits management (PBM) revenue analysis. Consider business seasonality: Q1 plan year changes, Q4 deductible exhaustion, mid-year formulary updates. Revenue variance can be driven by membership volume changes, per-member utilization changes, client portfolio shifts, or carrier network dynamics. Focus on actionable insights that explain operational drivers of revenue variance.",
+      
+      "data_filtering_business_rules": "CRITICAL: Do not apply implicit business exclusions unless explicitly configured. Include all line_of_business values unless specifically filtered by user question or configuration. Do not hard-code exclusions like 'Rev Reclass' or 'External' - these should only be excluded if specified in the configuration or user request. Let users see all data and make their own filtering decisions.",
+      
+      "entity_status_consistency": "For client and carrier analyses, ALWAYS implement entity status identification (NEW/DROP/EXISTING). This is mandatory for drill-through analysis to identify portfolio changes. Use consistent thresholds: NEW entities = zero prior period revenue AND current revenue above threshold, DROP entities = prior period revenue above threshold AND zero current revenue, EXISTING entities = presence in both periods with variance analysis.",
       
       "variance_explanation_target": "Aim to identify factors explaining at least 70% of total revenue variance across all analysis levels. Track variance attribution: Primary drivers (>30% of variance), Secondary drivers (10-30%), Minor factors (<10%). If strategic analysis explains <70% of variance, recommend tactical operational investigation for remaining unexplained variance."
     }

@@ -1,8 +1,6 @@
 perfect . I have idea and tell how we can do . say suppose if I want to make it as configuration as UI table in streamlit so that tomorrow if user wants to add another parameter then they can add and llm take care if merging to json and dynamically everything works . is it possible to do . if so how the config table structure should be designed based on this meta data.
 
-def create_strategic_sql_generation_prompt(current_question: str, investigation_config: Dict, query_key: str) -> str:
-    
-    prompt = f"""
+prompt = f"""
 You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
 
 USER QUESTION: {current_question}
@@ -13,127 +11,112 @@ INVESTIGATION CONFIGURATION:
 CURRENT QUERY: {query_key}
 
 ==============================
+DIMENSIONAL HIERARCHY INTERPRETATION
+==============================
+
+CRITICAL: Apply dimensional_relationships with CORRECT hierarchy direction (parent→child ONLY).
+
+HIERARCHY APPLICATION PROCESS:
+1. **Detect Focus Dimension**: Identify which dimension the user question targets
+2. **Determine Hierarchy Level**: Find the detected dimension's level in dimensional_relationships
+3. **Apply Scope Containment**: Stay within detected level and its children ONLY - never go up to parents
+4. **Assess Query Relevance**: Use query_dimension_mapping to determine if current query is relevant
+5. **Apply Execution Logic**: Use hierarchy_direction rule (parent_to_child_only_no_reverse_lookup)
+
+CORRECT DIMENSIONAL SCOPE EXAMPLES:
+- "Why did Carrier XYZ revenue drop?" → Focus: carrier_id (level 4) ONLY, no parent analysis
+- "Why did ABC Corp revenue decline?" → Focus: client_name (level 3) + children: carrier_id (level 4)  
+- "How did C&S perform?" → Focus: line_of_business (level 1) + children: product_category, client_name, carrier_id
+- "Why did PBM revenue drop?" → Focus: product_category (level 2) + children: client_name, carrier_id
+
+HIERARCHY DIRECTION RULE:
+- Parent questions → investigate parent + children (comprehensive analysis)
+- Child questions → investigate child level ONLY (focused analysis)
+- NEVER investigate parent levels when child level is the focus
+
+==============================
+VARIANCE DIRECTION ANALYSIS
+==============================
+
+CRITICAL: Apply variance_direction_detection for new/drop/existing entity analysis.
+
+VARIANCE DIRECTION INTERPRETATION:
+1. **Detect Direction Signals**: Use triggers to identify if question implies increase/decrease/neutral variance
+2. **Apply Analysis Focus**: Use analysis_focus (top_performers, bottom_performers, top_and_bottom_performers)
+3. **Implement Mandatory Inclusions**: Always analyze entities specified in mandatory_inclusions
+4. **Entity Status Analysis**: For detected scope level, always identify:
+   - NEW entities (zero prior period presence, current period presence)
+   - DROP entities (prior period presence, zero current period presence)  
+   - EXISTING entities (presence in both periods with variance)
+
+VARIANCE DIRECTION EXAMPLES:
+- "Revenue spike" → Focus: top_performers + mandatory: ["new", "existing_expansions"]
+- "Revenue drop" → Focus: bottom_performers + mandatory: ["drop", "existing_contractions"]
+- "Revenue variance" → Focus: top_and_bottom_performers + mandatory: ["new", "drop", "existing"]
+
+ENTITY STATUS IMPLEMENTATION:
+- Always include entity status identification in SQL (NEW/DROP/EXISTING)
+- Prioritize entities contributing to variance direction (spike = top gainers, drop = biggest losers)
+- Apply mandatory_inclusions regardless of magnitude (always show new additions and departures)
+
+==============================
 CONFIGURATION INTERPRETATION INSTRUCTIONS
 ==============================
 
-1. Read investigation_hierarchy for question_scope_detection and variance_direction_detection signals
-2. Extract domain_specific_prompts for business intelligence context
-3. Locate the specified query in strategic_queries section using table_reference for shared_table_metadata
-4. Apply the query-specific llm_instructions for strategic focus and SQL guidance
-5. Use analysis_requirements (required_filters, key_dimensions, focus_metrics, analysis_type)
-6. Follow output_requirements (calculations, ordering, filtering specifications)
-7. Consider analysis_type_guidance for domain-specific implementation approaches
-8. Apply strategic_filtering_rules from the specific query for significance filtering
+1. Apply dimensional_relationships with correct hierarchy direction (parent→child only)
+2. Apply variance_direction_detection for new/drop/existing analysis approach
+3. Extract domain_specific_prompts for business intelligence context
+4. Locate the specified query in strategic_queries section using table_reference
+5. Use query_dimension_mapping to assess query relevance to detected dimensional scope
+6. Apply the query-specific llm_instructions for strategic focus and SQL guidance
+7. Use analysis_requirements with hierarchy and variance direction considerations
+8. Apply strategic_filtering_rules from the specific query
 9. Consider variance_explanation_requirements for completeness tracking
-
-SHARED METADATA INTERPRETATION:
-1. Use table_reference field to locate table information in shared_table_metadata section
-2. Extract table_name and column definitions from the referenced shared metadata
-3. Apply table-specific column descriptions and constraints from shared metadata
-
-INVESTIGATION HIERARCHY APPLICATION:
-1. Apply question_scope_detection to determine analysis grain (overall/lob/client/carrier level)
-2. Use variance_direction_detection to focus on appropriate performers (top/bottom/both)
-3. Consider mandatory_inclusions based on detected variance direction
-
-VARIANCE EXPLANATION TRACKING:
-1. Track contribution of this query to overall variance explanation
-2. Prioritize factors contributing to 70% variance explanation target
-3. Focus on primary drivers (>30% variance contribution) over minor factors (<10%)
+10. Use execution_logic scope_containment rule to stay within appropriate hierarchy level
 
 ==============================
 DATABRICKS SQL GENERATION REQUIREMENTS
 ==============================
 
-1. MEANINGFUL COLUMN NAMES
-- Use business-relevant column names that align with the query purpose and domain context
-- Include period identifiers in variance calculations (current_period, prior_period, variance_amount, variance_pct)
-- Use domain-appropriate terminology from the configuration business context
+[Previous SQL requirements remain the same]
 
-2. COMPLETE TRANSPARENCY - SHOW ALL COMPONENTS
-- MANDATORY: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in SELECT output
-- If calculating variance, include: current_period_value, prior_period_value, absolute_variance, percentage_variance
-- If filtering by any dimension, include that dimension in SELECT for verification
-- If grouping by business dimensions, include all grouping dimensions in output
-
-3. SHARED METADATA APPLICATION
-- Use exact table_name from shared_table_metadata via table_reference
-- Apply column names exactly as specified in shared metadata
-- Use column descriptions for appropriate business context in SQL comments
-
-4. DATA QUALITY AND FILTERING
-- Use UPPER() for all text filtering: WHERE UPPER(column_name) = UPPER('filter_value')
-- Handle NULL values appropriately: COALESCE(amount_or_count, 0)
-- Apply ALL required_filters from analysis_requirements exactly as specified
-- Apply strategic_filtering_rules data_quality_filters from the specific query
-
-5. VARIANCE ANALYSIS CALCULATIONS
-- Calculate both absolute ($) and percentage (%) variance for all metrics
-- Include current period, comparison period, and variance calculations
-- Apply significance filtering based on strategic_filtering_rules from the query
-- Focus on variance contributors that help achieve 70% explanation target
-
-6. BUSINESS CONTEXT APPLICATION
-- Extract time periods from user question context (Q3 vs Q2, month over month, etc.)
-- Apply domain seasonality considerations from domain_specific_prompts
-- Focus on key_dimensions and focus_metrics as specified in analysis_requirements
-- Consider depends_on_query relationships for focus area determination
-
-7. INVESTIGATION HIERARCHY INTEGRATION
-- Apply question_scope_detection results to emphasize appropriate dimensions
-- Use variance_direction_detection to focus on top/bottom performers as appropriate
-- Include mandatory_inclusions (new, drop, existing) based on detected direction
-
-8. STRATEGIC FOCUS MAINTENANCE
-- Maintain HIGH-LEVEL perspective appropriate for strategic investigation
-- Focus on business segment and portfolio-level patterns as guided by llm_instructions
-- Prioritize factors contributing to majority of variance explanation
-- Each query should support the overall variance_explanation_requirements
-
-9. CROSS-QUERY INTELLIGENCE
-- Consider depends_on_query specifications for focus inheritance
-- Build upon investigation sequence as defined in query_sequence
-- Prepare results to inform variance explanation completeness assessment
-
-10. DATABRICKS SQL OPTIMIZATION
-- Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN, COALESCE
-- Use date functions: date_trunc(), year(), month(), quarter(), DATEDIFF
-- Use CTEs (WITH clauses) for complex period comparisons and multi-step calculations
-- Use CASE WHEN for conditional logic and status categorization
-
-11. OUTPUT FORMATTING AND ORDERING
-- Show whole numbers for financial metrics (no decimals for dollar amounts)
-- Round percentages to two decimal places: ROUND(percentage, 2)
-- Order by significance as specified in output_requirements
-- Include ranking information where appropriate for variance contribution tracking
+HIERARCHY-SPECIFIC SQL REQUIREMENTS:
+1. SCOPE CONTAINMENT: Only filter and analyze dimensions within detected hierarchy level and children
+2. ENTITY STATUS IDENTIFICATION: Always identify NEW/DROP/EXISTING status for entities at focus level
+3. VARIANCE DIRECTION ALIGNMENT: Focus SQL results on direction-appropriate performers (top/bottom/both)
+4. MANDATORY INCLUSION LOGIC: Ensure new additions and departures are always shown regardless of magnitude
 
 ==============================
 REASONING REQUIREMENT
 ==============================
 
 Provide detailed reasoning covering these aspects:
-1. **Investigation Hierarchy Application**: How you applied question_scope_detection and variance_direction_detection
-2. **Shared Metadata Utilization**: How you used table_reference to access shared_table_metadata
-3. **Time Period Extraction**: How you extracted and applied comparison periods from user question
-4. **Configuration Implementation**: How you interpreted and applied the specific query's JSON configuration
-5. **Business Logic Application**: How you applied domain-specific business intelligence
-6. **Variance Explanation Focus**: How you prioritized factors contributing to 70% variance explanation target
-7. **SQL Construction Decisions**: Key decisions in query structure, filters, calculations, and ordering
+1. **Dimensional Hierarchy Analysis**: How you detected focus dimension, determined level, and applied parent→child direction rule
+2. **Scope Containment Logic**: How you ensured analysis stays within detected level and children only (no parent lookup)
+3. **Variance Direction Application**: How you applied variance_direction_detection triggers and mandatory_inclusions
+4. **Entity Status Strategy**: How you plan to identify NEW/DROP/EXISTING entities at the focus level
+5. **Query Relevance Assessment**: How you evaluated this query's relevance using dimensional hierarchy
+6. **Shared Metadata Utilization**: How you used table_reference to access shared_table_metadata
+7. **Time Period Extraction**: How you extracted and applied comparison periods from user question
+8. **Configuration Implementation**: How you interpreted and applied the specific query's JSON configuration
+9. **Variance Explanation Focus**: How you prioritized factors contributing to 70% variance explanation target
 
 ==============================
 RESPONSE FORMAT
 ==============================
 
 <reasoning>
-[Provide comprehensive reasoning following the 7-point structure above, explaining your interpretation of the hierarchy, shared metadata, and variance explanation approach]
+[Provide comprehensive reasoning following the 9-point structure above, with special emphasis on correct hierarchy direction and variance direction analysis]
 </reasoning>
 
 <sql>
-[Complete, executable Databricks SQL query implementing all configuration requirements and business intelligence guidance]
+[Complete, executable Databricks SQL query implementing hierarchy scope containment and variance direction logic]
 </sql>
 
 Generate the strategic SQL query with detailed reasoning now.
 """
+    
+    return prompt
     
     return prompt
 "intelligence_synthesis": {

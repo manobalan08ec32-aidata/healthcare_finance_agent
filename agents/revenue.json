@@ -1,1 +1,144 @@
-{"revenue_investigation_config":{"version":"1.0","investigation_type":"revenue_variance_analysis","description":"Complete revenue investigation pattern with 4-query structure and shared table metadata","shared_table_metadata":{"ledger_overview":{"table_name":"prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis","description":"High-level monthly or quarterly performance by LOB and product category","columns":[{"name":"ledger","description":"Ledger type for the record","distinct_values":["GAAP","BUDGET","8+4","2+10","5+7"]},{"name":"metric_type","description":"Type of metric captured in amount_or_count","sample_values":["Revenues","Adjusted Scripts","Unadjusted Scripts","COGS Post Reclass","SG&A Post Reclass","IOI","Total Membership"]},{"name":"line_of_business","description":"Business segment for the revenue record","sample_values":["C&S","E&I","M&R","Rev Reclass","Optum","External"]},{"name":"product_category","description":"High-level product or service grouping.","sample_values":["PBM","Specialty","HDP"]},{"name":"transaction_date","description":"Transaction date (yyyy-MM-dd)"},{"name":"quarter","description":"Quarter (Q1–Q4) derived from transaction_date"},{"name":"amount_or_count","description":"Value for the record (amount or count depending on metric_type)"}]},"claims_drivers":{"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm","description":"Operational revenue drivers from pharmacy claims","columns":[{"name":"line_of_business","description":"Business segment for the claim"},{"name":"client_id","description":"Client identifier"},{"name":"carrier_id","description":"Insurance carrier identifier"},{"name":"submit_date","description":"Claim submission date (yyyy-MM-dd)"},{"name":"revenue_amt","description":"Revenue amount for the claim"},{"name":"unadjusted_script_count","description":"Actual script count for each claim"},{"name":"member_id","description":"Individual member identifier for utilization analysis"}]}},"investigation_hierarchy":{"dimensional_relationships":{"line_of_business":{"level":1,"children":["product_category","client_name","carrier_id"],"analysis_scope":"business_segment_level"},"client_name":{"level":3,"parents":["line_of_business","product_category"],"children":["carrier_id"],"analysis_scope":"client_level"},"carrier_id":{"level":4,"parents":["line_of_business","product_category","client_name"],"children":[],"analysis_scope":"carrier_level"}},"execution_logic":{"include_query_if":"query_dimensions_intersect_with_scope_hierarchy","focus_adjustment":"emphasize_queries_matching_detected_scope","context_queries":"include_parent_level_queries_for_context"},"variance_direction_detection":{"explicit_increase":{"triggers":["increase","spike","growth","rise","up","improved","better"],"analysis_focus":"top_performers","mandatory_inclusions":["new","existing_expansions"]},"explicit_decrease":{"triggers":["decrease","drop","decline","fall","down","worse","deteriorated"],"analysis_focus":"bottom_performers","mandatory_inclusions":["drop","existing_contractions"]},"neutral_variance":{"triggers":["variance","change","difference","compare","vs","versus"],"analysis_focus":"top_and_bottom_performers","mandatory_inclusions":["new","drop","existing"]}}},"question_classification":{"trigger_keywords":[["revenue","drop|decrease|decline|fall"],["revenue","increase|growth|rise|up"],["revenue","vs|versus|compared","previous|last|prior"],["why","revenue"]],"time_pattern_keywords":["month over month|mom|m-o-m","quarter over quarter|qoq|q-o-q","year over year|yoy|y-o-y","vs previous|vs last|compared to"]},"investigation_framework":{"query_sequence":["lob_variance_detection","membership_analysis","client_portfolio_analysis","carrier_analysis"],"max_queries":4,"expected_investigation_depth":"high"},"strategic_queries":{"query_1_lob_variance":{"purpose":"Identify primary revenue variance areas by LOB and product","sequence_order":1,"table_reference":"ledger_overview","analysis_requirements":{"required_filters":["metric_type = 'Revenues'","ledger = 'GAAP'","product_category = 'user mentioned product category'"],"key_dimensions":["line_of_business","product_category"],"focus_metrics":["amount_or_count"],"analysis_type":"period_comparison_with_variance","variance_threshold":"$1M absolute OR 5% percentage"},"output_requirements":{"include_variance_calculation":true,"include_percentage_change":true,"order_by":"absolute_variance_impact_desc","filter_significant_only":true},"strategic_filtering_rules":{"minimum_significance":"$1M absolute OR 5% relative variance","focus_criteria":"variance exceeding strategic thresholds"},"llm_instructions":{"strategic_focus":"Apply investigation_hierarchy to determine analysis grain. Use variance_direction_detection from hierarchy to focus on appropriate performers.","business_context":"PBM revenue analysis using ledger table for high-level LOB and product variance detection.","sql_generation_guidance":"Use primary_dimensions for main analysis. Apply strategic_filtering_rules for significance filtering.","result_interpretation":"Identify variance direction and magnitude. Focus on LOBs/products exceeding $1M variance threshold.","success_criteria":"Identify primary revenue variance areas for subsequent query focus."}},"query_2_membership_analysis":{"purpose":"Analyze membership changes driving revenue variance","sequence_order":2,"table_reference":"ledger_overview","analysis_requirements":{"required_filters":["metric_type = 'Total Membership'","ledger = 'GAAP'","product_category = 'user mentioned product category'"],"key_dimensions":["line_of_business"],"focus_metrics":["amount_or_count"],"analysis_type":"membership_variance_analysis","membership_change_threshold":"5% OR 1000+ member change","depends_on_query":"query_1_lob_variance"},"output_requirements":{"include_variance_calculation":true,"include_percentage_change":true,"order_by":"absolute_membership_impact_desc","filter_significant_only":true},"strategic_filtering_rules":{"minimum_significance":"5% membership change OR 1000+ member variance","data_quality_filters":["line_of_business IS NOT NULL","amount_or_count > 0"],"focus_criteria":"membership changes in LOBs with revenue variance"},"llm_instructions":{"strategic_focus":"Analyze membership changes in LOBs identified from Query 1. Focus only on line_of_business dimension - no secondary dimensions.","business_context":"Membership analysis using ledger Total Membership metric. Correlate membership changes with revenue variance patterns.","sql_generation_guidance":"Use only line_of_business dimension. Apply membership_change_threshold for significance filtering.","result_interpretation":"Identify membership variance correlation with revenue changes from Query 1.","cross_query_validation":"Membership changes should correlate with LOB revenue variance patterns.","success_criteria":"Identify membership changes that explain or correlate with revenue variance."}},"query_3_client_portfolio":{"purpose":"Analyze client portfolio changes driving revenue variance","sequence_order":3,"table_reference":"claims_drivers","analysis_requirements":{"required_filters":["product_category = 'user mentioned product category'"],"key_dimensions":["client_id","line_of_business"],"focus_metrics":["revenue_amt","unadjusted_script_count","unique_member_count"],"analysis_type":"client_churn_and_acquisition_detection","client_change_threshold":"$1M revenue impact","depends_on_query":"query_1_lob_variance"},"output_requirements":{"identify_client_status":["Lost","New","Existing"],"calculate_client_variance":true,"focus_on_significant_lobs":"from_query_1_results","order_by":"absolute_client_impact_desc"},"strategic_filtering_rules":{"minimum_significance":"$1M client revenue variance","client_size_tiers":{"large_clients":">$10M annual revenue - always include if changing >$500K","medium_clients":"$1M-$10M annual - include if >$1M variance","small_clients":"<$1M annual - aggregate analysis only unless >$500K variance"},"churn_detection_mandatory":{"new_clients":"zero_prior_period_revenue AND current_revenue > $500K","lost_clients":"prior_revenue > $500K AND zero_current_revenue","major_changes":"abs(variance) > $1M regardless_of_client_size"},"data_quality_filters":["client_id IS NOT NULL","line_of_business IS NOT NULL","revenue_amt > 0","unadjusted_script_count > 0"]},"llm_instructions":{"strategic_focus":"Focus on client portfolio changes within LOBs showing revenue variance from Query 1. Use client_name/client_id as primary analysis dimensions.","business_context":"Client portfolio analysis using claims data. Identify new, lost, and changing clients. Use member_id for utilization analysis.","sql_generation_guidance":"Apply churn_detection_mandatory logic. Use client_size_tiers for appropriate inclusion criteria.","result_interpretation":"Identify client status changes and quantify revenue impact using $1M threshold.","cross_query_validation":"Client changes should help explain revenue variance identified in Query 1.","success_criteria":"Identify specific clients driving significant portion of revenue variance."}},"query_4_carrier_analysis":{"purpose":"Identify carrier utilization changes affecting revenue","sequence_order":4,"table_reference":"claims_drivers","analysis_requirements":{"required_filters":["product_category = 'user mentioned product category'"],"key_dimensions":["carrier_id","line_of_business"],"focus_metrics":["revenue_amt","unadjusted_script_count","unique_member_count"],"analysis_type":"carrier_utilization_variance","depends_on_query":"query_1_lob_variance","conditional_execution":"if_client_changes_insufficient_to_explain_variance"},"output_requirements":{"calculate_utilization_changes":true,"identify_significant_carrier_changes":true,"focus_on_significant_lobs":"from_query_1_results","order_by":"carrier_impact_significance"},"strategic_filtering_rules":{"minimum_significance":"$500K carrier revenue variance OR 20% utilization change","carrier_impact_thresholds":{"major_carriers":">$5M annual revenue - include if >$500K variance","significant_carriers":"$1M-$5M annual - include if >$250K variance","minor_carriers":"<$1M annual - aggregate unless >$500K variance"},"data_quality_filters":["carrier_id IS NOT NULL","line_of_business IS NOT NULL","revenue_amt > 0","unadjusted_script_count > 0","member_id IS NOT NULL"]},"llm_instructions":{"strategic_focus":"Analyze carrier behavior changes in LOBs with unexplained variance after client analysis. Focus on carrier_id as primary dimension.","business_context":"Carrier utilization analysis to identify operational drivers of revenue variance. Use member_id counts for utilization intensity analysis.","sql_generation_guidance":"Apply carrier_impact_thresholds for inclusion criteria. Focus on carriers in significant LOBs from Query 1.","result_interpretation":"Identify carrier behavior changes that contribute to revenue variance patterns.","cross_query_validation":"Carrier changes should help explain remaining variance not accounted for by client changes.","success_criteria":"Complete strategic picture by identifying operational factors contributing to revenue variance."}}},"domain_specific_prompts":{"business_intelligence_context":"You are analyzing pharmacy benefits management (PBM) revenue using a 4-query strategic framework: (1) LOB variance detection, (2) Membership analysis, (3) Client portfolio changes, (4) Carrier utilization patterns. Apply investigation_hierarchy rules for scope and direction detection.","variance_interpretation_logic":"Revenue variance significance determined by query-specific strategic_filtering_rules. Use variance_direction_detection to focus on appropriate performers across all 4 analysis areas.","investigation_priorities":"Execute 4-query sequence systematically. Use question_scope_detection to emphasize appropriate analysis area while maintaining comprehensive coverage.","business_seasonality":"Consider PBM patterns across all 4 queries: Q1 (plan year changes), Q4 (deductible exhaustion), mid-year (formulary updates).","strategic_correlation_patterns":"Expected relationships: LOB revenue changes ↔ membership changes ↔ client portfolio changes ↔ carrier utilization patterns. Validate correlations across all 4 queries."},"analysis_type_guidance":{"period_comparison_with_variance":"Apply variance_direction_detection from hierarchy. Use strategic_filtering_rules for significance determination.","membership_variance_analysis":"Focus on membership changes within LOBs showing revenue variance. Use only line_of_business dimension for membership analysis.","client_churn_and_acquisition_detection":"Use churn_detection_mandatory rules and client_size_tiers. Apply variance_direction_handling for appropriate focus.","carrier_utilization_variance":"Apply carrier_impact_thresholds. Focus on carriers within significant LOBs using conditional_execution logic."},"variance_explanation_requirements":{"target_explanation_coverage":"70% of total variance","success_criteria":{"strategic_investigation_complete":"identified_factors_explaining_majority_of_variance","tactical_investigation_needed":"variance_explanation_below_70_percent","high_confidence_threshold":"explanation_above_80_percent"},"variance_attribution_logic":{"primary_drivers":"factors_contributing_>30%_of_total_variance","secondary_drivers":"factors_contributing_10-30%_of_total_variance","minor_factors":"factors_contributing_<10%_of_total_variance"},"explanation_completeness_assessment":{"methodology":"sum_quantified_impacts_across_all_queries","required_quantification":"dollar_amounts_and_percentages_for_all_significant_factors","unexplained_variance_threshold":"flag_if_unexplained_variance_>30%","cross_query_validation":"ensure_no_double_counting_across_queries"},"investigation_continuation_logic":{"sufficient_explanation":"if_explanation_>=70%_proceed_to_tactical_direction","insufficient_explanation":"if_explanation_<70%_flag_additional_investigation_needed","conflicting_findings":"if_cross_query_inconsistencies_require_resolution"},"llm_guidance":{"variance_tracking_instruction":"Track and quantify variance contribution from each query. Maintain running total of explained variance percentage.","prioritization_mandate":"Always prioritize factors contributing largest portions of total variance regardless of query sequence.","completeness_validation":"Before concluding strategic analysis, verify that identified factors explain at least 70% of total variance.","tactical_handoff_criteria":"Only recommend tactical investigation if strategic analysis explains <70% of variance or reveals need for operational detail."}}}}
+{
+  "revenue_investigation_config": {
+    "version": "2.0",
+    "investigation_type": "revenue_variance_drill_through",
+    "description": "Simplified drill-through configuration with LLM-driven intelligence",
+    
+    "shared_table_metadata": {
+      "ledger_overview": {
+        "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
+        "description": "High-level monthly or quarterly performance by LOB and product category",
+        "columns": [
+          {
+            "name": "ledger",
+            "description": "Ledger type for the record",
+            "distinct_values": ["GAAP", "BUDGET", "8+4", "2+10", "5+7"]
+          },
+          {
+            "name": "metric_type",
+            "description": "Type of metric captured in amount_or_count",
+            "sample_values": ["Revenues", "Adjusted Scripts", "Unadjusted Scripts", "COGS Post Reclass", "SG&A Post Reclass", "IOI", "Total Membership"]
+          },
+          {
+            "name": "line_of_business",
+            "description": "Business segment for the revenue record",
+            "sample_values": ["C&S", "E&I", "M&R", "Rev Reclass", "Optum", "External"]
+          },
+          {
+            "name": "product_category",
+            "description": "High-level product or service grouping",
+            "sample_values": ["PBM", "Specialty", "HDP"]
+          },
+          {
+            "name": "transaction_date",
+            "description": "Transaction date (yyyy-MM-dd)"
+          },
+          {
+            "name": "quarter",
+            "description": "Quarter (Q1–Q4) derived from transaction_date"
+          },
+          {
+            "name": "amount_or_count",
+            "description": "Value for the record (amount or count depending on metric_type)"
+          }
+        ]
+      },
+      "claims_drivers": {
+        "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+        "description": "Operational revenue drivers from pharmacy claims",
+        "columns": [
+          {
+            "name": "line_of_business",
+            "description": "Business segment for the claim"
+          },
+          {
+            "name": "client_id",
+            "description": "Client identifier"
+          },
+          {
+            "name": "carrier_id",
+            "description": "Insurance carrier identifier"
+          },
+          {
+            "name": "submit_date",
+            "description": "Claim submission date (yyyy-MM-dd)"
+          },
+          {
+            "name": "revenue_amt",
+            "description": "Revenue amount for the claim"
+          },
+          {
+            "name": "unadjusted_script_count",
+            "description": "Actual script count for each claim"
+          },
+          {
+            "name": "member_id",
+            "description": "Individual member identifier for utilization analysis"
+          }
+        ]
+      }
+    },
+
+    "investigation_hierarchy": {
+      "lob": ["client", "carrier", "membership"],
+      "client": ["carrier"],
+      "carrier": []
+    },
+
+    "analysis_templates": {
+      "lob": {
+        "table_reference": "ledger_overview",
+        "dimensions": ["line_of_business"],
+        "metrics": ["amount_or_count"],
+        "filters": {
+          "metric_type": "Revenues",
+          "ledger": "GAAP"
+        },
+        "date_column": "transaction_date",
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Detect the analysis level from user question. If user asks general LOB question ('Why did LOB revenue drop?'), analyze all LOBs globally. If user specifies a particular LOB ('Why did C&S revenue drop?'), focus only on that LOB. This LOB context MUST cascade to all child analyses (membership, client, carrier) - they should be scoped to the same LOB filter detected here. ANALYSIS TYPE: Pure variance analysis - calculate variance amount and variance percentage between comparison periods. Focus on Revenue metrics only. No NEW/DROP/EXISTING entity analysis needed. Calculate revenue per script by dividing revenue by script count. VARIANCE THRESHOLDS: Flag LOBs with significant variance (>$1M absolute or >5% relative). Always show variance direction (positive/negative) and magnitude. CHILD TRIGGER LOGIC: If significant variance detected at LOB level, trigger child analyses (membership, client, carrier) with the same LOB scope inherited. The goal is to identify which LOB segments show significant revenue variance to guide subsequent drill-through analyses."
+      },
+
+      "membership": {
+        "table_reference": "ledger_overview", 
+        "dimensions": ["line_of_business"],
+        "metrics": ["amount_or_count"],
+        "filters": {
+          "metric_type": "Total Membership",
+          "ledger": "GAAP"
+        },
+        "date_column": "transaction_date",
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB (e.g., 'C&S'), then membership analysis should ONLY analyze membership for that LOB. If parent was global LOB analysis, then analyze membership across all LOBs showing revenue variance. ANALYSIS TYPE: Membership variance analysis to identify membership changes that could explain revenue variance patterns. VARIANCE THRESHOLDS: Flag membership changes of 5% or more OR absolute change of 1000+ members. Focus on LOBs that showed significant revenue variance in parent analysis. CORRELATION LOGIC: Look for correlation patterns between membership changes and revenue variance direction. Growing membership with declining revenue suggests per-member revenue issues. Declining membership with stable revenue suggests member retention of high-value segments. EXPECTED INSIGHTS: Identify whether revenue variance is driven by membership volume changes or per-member utilization/pricing changes. This analysis helps distinguish between volume-driven vs. intensity-driven revenue variance."
+      },
+
+      "client": {
+        "table_reference": "claims_drivers",
+        "dimensions": ["client_id", "line_of_business"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {},
+        "date_column": "submit_date",
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit LOB scope from parent analysis. If parent LOB analysis was scoped to specific LOB, filter client analysis to that LOB only. If user question is purely client-focused ('Why did Client ABC revenue drop?'), then no LOB scope inheritance - analyze that specific client only. ANALYSIS TYPE: Client portfolio change analysis - identify NEW, DROP, and EXISTING clients and their revenue impact. ENTITY STATUS DEFINITIONS: NEW clients = zero revenue in prior period AND current revenue >$500K. DROP clients = prior revenue >$500K AND zero current revenue. EXISTING clients = revenue presence in both periods with variance analysis. SELECTION STRATEGY: Don't analyze all clients - select strategically: Top 20 revenue gainers, Bottom 20 revenue losers, OR clients contributing to 70% of total variance (whichever provides better insight). VARIANCE THRESHOLDS: Include clients with >$1M revenue impact for large clients (>$10M annual), >$500K impact for medium clients ($1M-$10M annual). EXPECTED INSIGHTS: Identify specific client additions, losses, or behavioral changes driving revenue variance. Calculate client-level revenue per script to identify utilization pattern changes. Focus on actionable client relationship insights."
+      },
+
+      "carrier": {
+        "table_reference": "claims_drivers",
+        "dimensions": ["carrier_id", "line_of_business"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {},
+        "date_column": "submit_date", 
+        "llm_instructions": "CONTEXTUAL SCOPING LOGIC: Inherit scope from parent analysis. If parent was LOB-scoped, analyze carriers within that LOB. If parent was client-scoped, analyze carriers for that specific client. If user question is purely carrier-focused ('Why did Carrier XYZ revenue drop?'), analyze that carrier only with no additional scoping. PRODUCT CATEGORY SCOPING: Inherit product category filter from parent analysis or detect from user question if standalone carrier analysis. DATE RANGE INTELLIGENCE: Apply same date range logic as parent analysis or detect from user question for period comparison and entity status determination. ANALYSIS TYPE: Carrier utilization change analysis - identify NEW, DROP, and EXISTING carriers and their operational impact on revenue. ENTITY STATUS DEFINITIONS: NEW carriers = zero revenue in prior period AND current revenue >$250K. DROP carriers = prior revenue >$250K AND zero current revenue. EXISTING carriers = presence in both periods with utilization variance analysis. SELECTION STRATEGY: Focus on significant carriers only - Top 20 revenue gainers, Bottom 20 losers, OR carriers contributing to 70% of variance. Apply carrier size tiers: Major carriers (>$5M annual) include if >$500K variance, Significant carriers ($1M-$5M) include if >$250K variance. UTILIZATION ANALYSIS: Calculate revenue per script and scripts per member to identify operational pattern changes. Look for shifts in carrier formulary preferences, prior authorization patterns, or network participation changes. EXPECTED INSIGHTS: Identify carrier behavior changes, network dynamics, or operational factors contributing to revenue variance that weren't explained by client portfolio changes."
+      }
+    },
+
+    "global_llm_instructions": {
+      "investigation_orchestration": "You are conducting strategic revenue variance investigation using a dynamic drill-through approach. The investigation adapts based on user question scope: LOB-level questions trigger comprehensive analysis (LOB + child analyses), Client-level questions focus on client + carriers, Carrier-level questions analyze carriers only. Always maintain contextual scoping - if user specifies particular entities, inherit that scope to child analyses.",
+      
+      "variance_direction_handling": "Detect variance direction from user question language: 'drop/decline/fall' = focus on bottom performers and revenue losers, 'spike/increase/growth' = focus on top performers and revenue gainers, 'variance/change/vs' = analyze both top and bottom performers. Always identify NEW additions, DROP departures, and EXISTING entity changes when analyzing client/carrier levels.",
+      
+      "sql_generation_priorities": "Generate clean, efficient Databricks SQL with proper date filtering, variance calculations (amount and percentage), and entity status identification. Use window functions for period comparisons. Apply strategic filtering to focus on significant variance contributors. Include proper NULL handling and data quality filters. Calculate derived metrics like revenue per script, scripts per member for operational insights.",
+      
+      "business_context": "This is pharmacy benefits management (PBM) revenue analysis. Consider business seasonality: Q1 plan year changes, Q4 deductible exhaustion, mid-year formulary updates. Revenue variance can be driven by membership volume changes, per-member utilization changes, client portfolio shifts, or carrier network dynamics. Focus on actionable insights that explain operational drivers of revenue variance.",
+      
+      "variance_explanation_target": "Aim to identify factors explaining at least 70% of total revenue variance across all analysis levels. Track variance attribution: Primary drivers (>30% of variance), Secondary drivers (10-30%), Minor factors (<10%). If strategic analysis explains <70% of variance, recommend tactical operational investigation for remaining unexplained variance."
+    }
+  }
+}

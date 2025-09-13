@@ -1,5 +1,35 @@
 perfect . I have idea and tell how we can do . say suppose if I want to make it as configuration as UI table in streamlit so that tomorrow if user wants to add another parameter then they can add and llm take care if merging to json and dynamically everything works . is it possible to do . if so how the config table structure should be designed based on this meta data.
 
+1. Confidence Scoring & Data Quality
+
+What: Add confidence indicators when variance explanation is incomplete
+Why: Helps users understand reliability of insights
+Example: "Revenue variance explained: 85% confidence" or "Data quality warning: 15% null values detected"
+
+2. Cross-Validation Logic
+
+What: Validate that child analysis variance sums align with parent variance
+Why: Ensures mathematical consistency across drill-through levels
+Example: If LOB shows -$5M variance, client+carrier analysis should sum to similar impact
+
+3. Seasonality Intelligence
+
+What: Consider PBM business seasonality when interpreting variance
+Why: Avoids false alarms from expected seasonal patterns
+Example: Q1 membership drops might be normal plan year transitions, not concerning churn
+
+4. Anomaly Detection
+
+What: Flag unusual patterns that might indicate data quality issues or exceptional events
+Why: Surfaces insights that pure variance analysis might miss
+Example: "Carrier XYZ revenue increased 500% - potential data anomaly or major contract change"
+
+5. Impact Prioritization Matrix
+
+What: Rank findings by both magnitude AND actionability
+Why: Helps users focus on changes they can actually influence
+Example: Client churn (actionable) vs regulatory changes (less actionable)
+
 prompt = f"""
 You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
 

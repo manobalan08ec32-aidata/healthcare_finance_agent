@@ -1,3 +1,35 @@
+"intelligence_synthesis": {
+            "variance_thresholds": {
+                "significant_lob_variance": "$1M",
+                "significant_membership_change": "5%",
+                "significant_client_change": "$1M", 
+                "significant_carrier_change": "20% utilization change"
+            },
+            
+            "correlation_analysis": [
+                "revenue_vs_membership",
+                "revenue_vs_client_churn",
+                "revenue_vs_carrier_changes",
+                "membership_vs_client_changes"
+            ],
+            
+            "tactical_direction_rules": {
+                "lob_driven_variance": "if_lob_variance_concentrated_in_specific_segments",
+                "membership_driven_variance": "if_membership_changes_correlate_with_revenue",
+                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
+                "operational_variance": "if_carrier_factors_drive_remaining_variance"
+            },
+            
+            "llm_synthesis_instructions": {
+                "strategic_intelligence_approach": "Synthesize findings from all 4 queries (LOB, membership, client, carrier) into comprehensive revenue variance explanation.",
+                "business_correlation_validation": "Validate correlations across all 4 analysis areas using variance_direction_detection results.",
+                "variance_explanation_completeness": "Quantify how much of total revenue variance is explained by each of the 4 analysis areas.",
+                "tactical_direction_formulation": "Recommend tactical approach based on primary variance drivers across LOB, membership, client, and carrier analysis.",
+                "strategic_insight_generation": "Generate insights connecting findings across all 4 queries using investigation_hierarchy context.",
+                "markdown_report_structure": "Structure report covering all 4 analysis areas with integrated findings and tactical recommendations."
+            }
+        },
+
 {
     "revenue_investigation_config": {
         "version": "1.0",

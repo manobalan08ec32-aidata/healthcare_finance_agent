@@ -1,3 +1,5 @@
+perfect . I have idea and tell how we can do . say suppose if I want to make it as configuration as UI table in streamlit so that tomorrow if user wants to add another parameter then they can add and llm take care if merging to json and dynamically everything works . is it possible to do . if so how the config table structure should be designed based on this meta data.
+
 "intelligence_synthesis": {
             "variance_thresholds": {
                 "significant_lob_variance": "$1M",

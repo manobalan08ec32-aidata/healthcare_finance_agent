@@ -1,275 +1,202 @@
 {
-    "tactical_planner_config": {
-        "version": "1.0",
-        "description": "Tactical investigation planner with guided discovery and comprehensive exploration",
-        
-        "investigation_philosophy": {
-            "primary_approach": "guided_discovery_with_open_exploration",
-            "constraint_level": "provide_guidance_not_restrictions",
-            "discovery_mandate": "explore_all_available_dimensions_for_unexpected_patterns",
-            "coverage_requirement": "systematic_exploration_of_all_table_attributes"
+  "second_pass_investigation_config": {
+    "version": "1.0",
+    "investigation_type": "granular_operational_analysis",
+    "description": "Multi-dimensional operational drill-through analysis building on first-pass strategic findings",
+    
+    "shared_table_metadata": {
+      "claims_operational": {
+        "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+        "description": "Claim-level operational data with therapeutic, demographic, geographic, and utilization details",
+        "columns": [
+          {
+            "name": "product_category",
+            "description": "Product category for each claim",
+            "distinct_values": ["PBM", "Home Delivery", "Specialty"]
+          },
+          {
+            "name": "line_of_business",
+            "description": "Line of business identifier",
+            "distinct_values": ["E&I FI", "E&I ASO", "C&S", "PDP", "MAPD", "E&I UMR", "External"]
+          },
+          {
+            "name": "client_id",
+            "description": "Unique client identifier"
+          },
+          {
+            "name": "carrier_id",
+            "description": "Insurance carrier identifier"
+          },
+          {
+            "name": "member_id",
+            "description": "Individual member identifier for utilization analysis"
+          },
+          {
+            "name": "submit_date",
+            "description": "Claim submission date (yyyy-MM-dd)"
+          },
+          {
+            "name": "therapy_class_name",
+            "description": "Therapeutic class of dispensed drug"
+          },
+          {
+            "name": "drug_name",
+            "description": "Name of dispensed drug"
+          },
+          {
+            "name": "brand_vs_generic_ind",
+            "description": "Brand or Generic indicator",
+            "distinct_values": ["Brand", "Generic"]
+          },
+          {
+            "name": "pharmacy_name",
+            "description": "Dispensing pharmacy name"
+          },
+          {
+            "name": "pharmacy_type",
+            "description": "Internal vs external pharmacy type",
+            "distinct_values": ["EXTERNAL-NON OPTUM OWNED", "INTERNAL OPTUM OWNED"]
+          },
+          {
+            "name": "state_cd",
+            "description": "Two-letter state code for geographic analysis"
+          },
+          {
+            "name": "mbr_dt_of_brth",
+            "description": "Member date of birth (yyyy-MM-dd) for age analysis"
+          },
+          {
+            "name": "mbr_sex",
+            "description": "Member gender",
+            "distinct_values": ["M", "F"]
+          },
+          {
+            "name": "revenue_amt",
+            "description": "Revenue amount per claim"
+          },
+          {
+            "name": "unadjusted_script_count",
+            "description": "Raw script count per claim"
+          },
+          {
+            "name": "revenue_per_script",
+            "description": "Revenue per script derived metric"
+          },
+          {
+            "name": "GDR_Ratio",
+            "description": "Generic Dispense Rate ratio"
+          }
+        ]
+      }
+    },
+
+    "investigation_dimensions": {
+      "therapeutic": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+      "brand_generic": ["brand_vs_generic_ind", "therapy_class_name"],
+      "operational": ["pharmacy_type", "pharmacy_name", "state_cd"],
+      "geographic": ["state_cd"],
+      "demographic": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+      "utilization": ["member_id", "unadjusted_script_count", "revenue_per_script"]
+    },
+
+    "analysis_templates": {
+      "therapeutic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 3,
+        "sql_breakdown": ["therapy_class_variance", "drug_specific_analysis", "brand_generic_mix"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings (specific clients/LOBs identified). If first-pass found 'MDOVA client declining', filter all therapeutic analysis to client_id='MDOVA' only. INTENT-BASED ROW SELECTION: Extract variance direction from first-pass findings. If first-pass identifies declining entities, use ORDER BY variance ASC LIMIT 15-20 for worst-performing therapy classes. If first-pass identifies growing entities, use ORDER BY variance DESC LIMIT 15-20 for best-performing therapy classes. For mixed patterns, analyze both top 10 gainers and bottom 10 decliners. ROW VOLUME CONTROL: Therapy class analysis limited to 15-20 classes, drug analysis to 15 drugs, brand/generic analysis to 10-15 categories for manageable operational insights. MULTI-SQL APPROACH: Generate 3 focused SQLs: (1) Therapy class level variance analysis with period comparison, (2) Drug-specific deep dive within top therapy classes showing variance, (3) Brand vs generic analysis within therapy classes comparing periods. THERAPEUTIC DEEP-DIVE ANALYSIS: Generate comparative analysis (current period vs previous period) for therapy classes within first-pass identified entities. Identify which therapy classes and specific drugs are driving the variance patterns identified in first-pass. Focus on therapeutic category shifts, drug mix changes, and formulary impacts. BRAND vs GENERIC INTEGRATION: For each therapy class, analyze brand vs generic distribution changes between periods. Look for brand-to-generic switches that could explain revenue per script variance. Calculate therapy class level GDR changes over comparison periods. ENTITY STATUS ANALYSIS: Identify NEW therapy classes (zero prior period, current presence), DROP therapy classes (prior presence, zero current), EXISTING therapy classes with significant variance. SELECTION STRATEGY: Apply intent-based ordering with row limits. Focus on directionally appropriate therapy classes for investigation context. EXPECTED INSIGHTS: Therapeutic category explanations for first-pass variance. Drug formulary or clinical protocol changes. Brand/generic therapeutic substitution patterns."
+      },
 
-        "investigation_framework": {
-            "three_layer_strategy": {
-                "layer_1_guided_investigation": {
-                    "percentage": "40%",
-                    "purpose": "Execute business intelligence patterns and validate strategic findings",
-                    "approach": "pattern_driven_analysis"
-                },
-                "layer_2_systematic_exploration": {
-                    "percentage": "40%", 
-                    "purpose": "Systematically analyze ALL table dimensions for hidden correlations",
-                    "approach": "comprehensive_dimensional_analysis"
-                },
-                "layer_3_anomaly_discovery": {
-                    "percentage": "20%",
-                    "purpose": "Investigate outliers and generate novel hypotheses",
-                    "approach": "data_driven_anomaly_investigation"
-                }
-            },
-            "user_approval_required": true,
-            "max_investigations": 8,
-            "output_format": "comprehensive_tactical_findings_report"
+      "brand_generic": {
+        "table_reference": "claims_operational", 
+        "dimensions": ["brand_vs_generic_ind", "therapy_class_name"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "GDR_Ratio", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["gdr_trend_analysis", "brand_switch_impact"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Apply same client/LOB filtering as identified in strategic analysis. INTENT-BASED ROW SELECTION: For declining revenue patterns, focus on therapy classes with increasing GDR (brand-to-generic switches causing revenue decline). For growing revenue patterns, focus on therapy classes maintaining brand utilization. Use ORDER BY based on investigation direction with LIMIT 10-15. ROW VOLUME CONTROL: Limit to 10-15 therapy classes for GDR analysis and top 15 brand-generic switches for impact analysis. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) GDR trend analysis by therapy class with period comparison, (2) Brand-to-generic switch revenue impact quantification comparing periods. GENERIC DISPENSE RATE FOCUS: Calculate GDR changes between comparison periods within the detected scope. Generate comparative analysis showing GDR shifts for therapy classes within first-pass identified entities. Identify therapy classes with significant GDR shifts (>5% change). BRAND TO GENERIC IMPACT ANALYSIS: Quantify revenue impact of brand-to-generic switches through period comparison. Calculate revenue per script differences between brand and generic within same therapy classes across periods. Identify high-impact brand switches contributing to overall variance. FORMULARY CHANGE DETECTION: Look for sudden GDR spikes indicating formulary or policy changes through period comparison analysis. Identify therapy classes where brand utilization dropped significantly. STRATEGIC INSIGHTS FOCUS: Which therapy classes show most significant brand-to-generic shifts between periods? Are generic switches volume-positive but revenue-negative? High-value brands being replaced by generics? SELECTION STRATEGY: Apply intent-based directional ordering with row limits focusing on therapy classes with significant GDR variance between periods."
+      },
 
-        "business_intelligence_guidance": {
-            "revenue_correlation_patterns": {
-                "membership_revenue_dynamics": {
-                    "description": "When membership changes, investigate revenue efficiency and member mix quality",
-                    "correlation_hypothesis": "Membership decline often correlates with revenue per script changes due to member value mix shifts",
-                    "investigation_chain": [
-                        "revenue_per_script_efficiency_analysis",
-                        "member_value_segmentation_analysis", 
-                        "high_value_member_retention_patterns"
-                    ],
-                    "hidden_gem_indicators": [
-                        "revenue_per_script_increases_despite_membership_decline",
-                        "high_revenue_therapy_classes_retain_members_better",
-                        "certain_demographics_show_different_departure_patterns",
-                        "member_utilization_intensity_changes_before_departure"
-                    ]
-                },
-                
-                "drug_mix_revenue_dynamics": {
-                    "description": "Revenue changes often hide in therapy and drug mix evolution patterns",
-                    "correlation_hypothesis": "Revenue shifts may be driven by migration between high-revenue specialty drugs and low-revenue generic drugs",
-                    "investigation_chain": [
-                        "high_revenue_drug_volume_trend_analysis",
-                        "therapy_class_revenue_concentration_analysis",
-                        "brand_to_generic_migration_financial_impact"
-                    ],
-                    "hidden_gem_indicators": [
-                        "high_revenue_drugs_losing_market_share_to_competitors",
-                        "therapy_class_cannibalization_within_portfolio",
-                        "client_specific_drug_preference_evolution",
-                        "manufacturer_consolidation_affecting_therapy_access"
-                    ]
-                },
-                
-                "client_utilization_behavior_dynamics": {
-                    "description": "Client revenue changes may reflect evolving utilization behaviors rather than simple client loss",
-                    "correlation_hypothesis": "Existing clients often show changing utilization patterns as early warning indicators before departure",
-                    "investigation_chain": [
-                        "client_utilization_intensity_evolution",
-                        "client_therapy_loyalty_and_switching_patterns",
-                        "client_early_warning_behavioral_indicators"
-                    ],
-                    "hidden_gem_indicators": [
-                        "gradual_utilization_decline_preceding_client_departure",
-                        "therapy_class_switching_within_existing_clients",
-                        "seasonal_utilization_pattern_shifts_indicating_client_stress",
-                        "sub_account_group_departure_patterns_within_clients"
-                    ]
-                },
-
-                "operational_efficiency_dynamics": {
-                    "description": "Operational changes create ripple effects across multiple business dimensions",
-                    "correlation_hypothesis": "Pharmacy network changes and carrier policies drive utilization and revenue efficiency patterns",
-                    "investigation_chain": [
-                        "internal_external_pharmacy_revenue_efficiency_comparison",
-                        "pharmacy_therapy_specialization_effectiveness",
-                        "carrier_induced_pharmacy_network_utilization_changes"
-                    ],
-                    "hidden_gem_indicators": [
-                        "internal_pharmacies_showing_different_revenue_patterns_by_therapy",
-                        "certain_therapy_classes_performing_better_in_specific_pharmacy_types",
-                        "geographic_pharmacy_density_affecting_member_utilization_loyalty",
-                        "carrier_policy_changes_driving_pharmacy_preference_shifts"
-                    ]
-                },
-
-                "market_dynamics_patterns": {
-                    "description": "Market forces create complex interactions across client, geographic, and therapy dimensions",
-                    "correlation_hypothesis": "Carrier policy changes, regulatory shifts, and competitive dynamics create multi-dimensional business impacts",
-                    "investigation_chain": [
-                        "carrier_therapy_class_policy_preference_analysis",
-                        "geographic_market_competitive_dynamics",
-                        "regulatory_or_seasonal_pattern_business_impacts"
-                    ],
-                    "hidden_gem_indicators": [
-                        "carriers_driving_specific_therapy_class_adoption_patterns",
-                        "geographic_carrier_dominance_affecting_local_utilization_patterns",
-                        "competitive_therapy_substitution_affecting_revenue_mix",
-                        "regulatory_changes_creating_geographic_utilization_disparities"
-                    ]
-                }
-            },
-
-            "exploration_beyond_patterns": {
-                "instruction": "These business patterns are starting points, not limitations. Explore ALL table dimensions for unexpected correlations and novel insights",
-                "discovery_mandate": "Generate investigations beyond predefined patterns if data suggests novel insights or anomalies",
-                "comprehensive_coverage_requirement": "Ensure every table dimension is explored for potential business insights"
-            }
+      "operational": {
+        "table_reference": "claims_operational",
+        "dimensions": ["pharmacy_type", "pharmacy_name", "state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["pharmacy_type_performance", "geographic_operational"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Focus operational analysis within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on worst-performing pharmacy types and states (ORDER BY variance ASC LIMIT 15-20). For growing entities, focus on best-performing operational areas (ORDER BY variance DESC LIMIT 15-20). For mixed patterns, analyze both top and bottom operational performers. ROW VOLUME CONTROL: Limit to 15 states for geographic analysis and 20 pharmacies for operational significance analysis. Balance internal vs external pharmacy representation. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Pharmacy type performance analysis with period comparison (internal vs external), (2) Geographic operational patterns by state and pharmacy with period comparison. PHARMACY TYPE PERFORMANCE: Generate comparative analysis (current vs previous period) for pharmacy types within first-pass identified entities. Compare internal Optum-owned vs external pharmacy performance within scope. Identify if variance is concentrated in specific pharmacy types. Calculate revenue per script and script volume trends by pharmacy type across periods. GEOGRAPHIC CONCENTRATION: Identify states/regions driving variance patterns within the entity scope through period comparison. Look for geographic clustering of performance issues or improvements. OPERATIONAL EFFICIENCY INSIGHTS: Compare pharmacy type efficiency metrics (revenue per script, script processing volume) across periods. Identify operational bottlenecks or performance advantages. NETWORK OPTIMIZATION SIGNALS: Are internal pharmacies outperforming external in certain regions? Should pharmacy network mix be optimized? SELECTION STRATEGY: Apply intent-based directional ordering with row limits. Top 15 states by variance impact, top 20 pharmacies by operational significance based on investigation direction."
+      },
 
-        "comprehensive_table_exploration": {
-            "all_available_dimensions": [
-                "client_name", "account_id", "group_id", "carrier_id",
-                "therapy_class_name", "drug_name", "DRUG_MANUFCTR_NM", "brand_vs_generic_ind",
-                "member_date_of_birth", "member_sex", "state_cd",
-                "pharmacy_name", "phrmacy_type", "submit_date", "quarter",
-                "revenue_amt", "unadjusted_script_count", "product_category", "line_of_business"
-            ],
-            
-            "systematic_exploration_instructions": {
-                "dimensional_correlation_analysis": "Systematically explore correlations across ALL dimensions, not just those mentioned in business patterns",
-                "cross_dimensional_pattern_discovery": "Generate correlation matrices and cross-tabulations to discover unexpected relationships",
-                "outlier_and_anomaly_investigation": "Identify and investigate outliers in any dimension that might reveal business insights",
-                "temporal_pattern_analysis": "Explore time-based patterns across all dimensions for seasonal, cyclical, or trend insights"
-            },
-            
-            "discovery_examples": [
-                "group_id sub-patterns within client departures revealing account consolidation trends",
-                "manufacturer concentration effects not captured in therapy class analysis",
-                "individual pharmacy performance anomalies suggesting operational optimization opportunities",
-                "member age and gender combinations showing unexpected therapy utilization patterns",
-                "carrier and state combinations revealing regional payer strategy impacts",
-                "temporal patterns beyond standard seasonality suggesting market disruption indicators"
-            ]
+      "geographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["state_variance_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze geographic patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on worst-performing states (ORDER BY variance ASC LIMIT 15). For growing entities, focus on best-performing states (ORDER BY variance DESC LIMIT 15). For mixed patterns, include both top 8 and bottom 8 states. ROW VOLUME CONTROL: Limit to 15 states maximum for focused geographic analysis with regional clustering capability. SINGLE-SQL APPROACH: Generate comprehensive state-level analysis with regional clustering in one query using CASE statements for regional groupings and period comparison. GEOGRAPHIC VARIANCE CONCENTRATION: Generate comparative analysis (current vs previous period) for states within first-pass identified entities. Identify which states contribute most to variance patterns identified in first-pass. Look for regional clustering of similar performance patterns. STATE-LEVEL MARKET DYNAMICS: Compare state-level performance trends within the entity scope across periods. Identify states with disproportionate variance contribution (>5% of total). REGIONAL PATTERN RECOGNITION: Are variance patterns concentrated in specific geographic regions (West Coast, Southeast, etc.)? Do certain states show opposite trends (some growing, others declining) through period comparison? MARKET SHARE IMPLICATIONS: Within entity scope, identify states where market position may be strengthening or weakening through period comparison. REGULATORY OR COMPETITIVE FACTORS: Flag states with unusual patterns that might indicate regulatory changes or competitive pressures through period analysis. SELECTION STRATEGY: Apply intent-based directional ordering with 15-state limit. Focus on states most relevant to investigation direction while including both high-performing and underperforming states for balanced analysis."
+      },
 
-        "investigation_methodology": {
-            "user_question_driven_parameters": {
-                "time_period_extraction": {
-                    "description": "Extract time periods and comparison baselines directly from user question context",
-                    "parameters": {
-                        "analysis_period": "derived_from_user_question",
-                        "comparison_baseline": "derived_from_user_question",
-                        "trend_analysis_window": "contextual_based_on_question_scope",
-                        "seasonal_adjustment": "based_on_user_question_timeframe"
-                    }
-                },
-                "scope_extraction": {
-                    "description": "Extract investigation scope and focus areas from user question and strategic findings",
-                    "parameters": {
-                        "geographic_scope": "derived_from_question_context",
-                        "business_segment_scope": "extracted_from_user_focus",
-                        "demographic_scope": "inferred_from_question_intent",
-                        "client_scope": "identified_from_strategic_findings"
-                    }
-                }
-            },
-            
-            "correlation_discovery_approach": {
-                "multi_dimensional_analysis": {
-                    "description": "Analyze findings across multiple dimensions simultaneously to discover hidden correlations",
-                    "methodology": "cross_dimensional_pattern_recognition_with_statistical_significance",
-                    "execution_strategy": "generate_comprehensive_correlation_matrices"
-                },
-                "temporal_pattern_analysis": {
-                    "description": "Analyze time-series patterns to identify leading and lagging indicators",
-                    "methodology": "sequential_time_period_correlation_analysis", 
-                    "execution_strategy": "multi_period_trend_and_seasonality_analysis"
-                },
-                "cohort_behavior_analysis": {
-                    "description": "Segment analysis to identify different behavior patterns within categories",
-                    "methodology": "behavioral_cohort_segmentation_and_comparative_analysis",
-                    "execution_strategy": "comparative_cohort_performance_and_evolution_analysis"
-                },
-                "anomaly_detection_analysis": {
-                    "description": "Identify and investigate statistical and business anomalies for insight discovery",
-                    "methodology": "statistical_outlier_detection_with_business_context_interpretation",
-                    "execution_strategy": "systematic_anomaly_investigation_across_all_dimensions"
-                }
-            }
+      "demographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["demographic_utilization_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze demographic patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on demographic segments showing worst performance (ORDER BY variance ASC LIMIT 10-15). For growing entities, focus on best-performing demographic segments (ORDER BY variance DESC LIMIT 10-15). For mixed patterns, analyze both top and bottom demographic segments. ROW VOLUME CONTROL: Limit to 10-15 demographic segments (age cohorts and gender combinations) for manageable analysis while ensuring significant coverage. SINGLE-SQL APPROACH: Generate comprehensive demographic analysis combining age cohorts and gender patterns in one query with member-level aggregations and period comparison. AGE SEGMENTATION ANALYSIS: Generate comparative analysis (current vs previous period) for age cohorts within first-pass identified entities. Create age cohorts (18-34, 35-54, 55-64, 65+) and analyze variance by age group. Identify which age segments driving variance patterns from first-pass. MEMBER STRENGTH AND CONCENTRATION: Calculate member counts and average revenue per member by demographic segments across periods. Identify high-value member segments showing variance patterns. MEMBER UTILIZATION INTENSITY: Analyze scripts per member and revenue per member trends by demographic groups across periods. Identify if variance is driven by member behavior changes or population mix shifts. GENDER-BASED UTILIZATION PATTERNS: Compare male vs female utilization patterns within entity scope across periods. Identify gender-specific therapeutic or utilization trends contributing to variance. DEMOGRAPHIC RISK ASSESSMENT: Which demographic segments show concerning utilization or revenue trends based on investigation direction through period comparison? SELECTION STRATEGY: Apply intent-based directional ordering with demographic segment limits. Focus on age segments with significant variance impact based on investigation direction."
+      },
 
-        "llm_autonomy_instructions": {
-            "exploration_mandate": "You have full authority to investigate any dimension or correlation that might yield business insights, regardless of predefined patterns",
-            "pattern_transcendence": "Business patterns are guides, not constraints. Explore beyond them when data suggests additional value or unexpected insights",
-            "comprehensive_coverage": "Ensure no table dimension is unexplored if it might contribute to understanding the business variance or opportunity",
-            "novel_discovery_emphasis": "Prioritize discovering insights not obvious from predefined patterns. Look for unexpected correlations and business anomalies",
-            "statistical_rigor": "Apply appropriate statistical analysis to validate correlation significance and avoid false pattern recognition",
-            "business_context_integration": "Always interpret statistical findings within healthcare finance business context for actionable insights"
+      "utilization": {
+        "table_reference": "claims_operational",
+        "dimensions": ["member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["volume_price_decomposition", "member_utilization_patterns"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze utilization patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining revenue entities, focus on members with largest utilization drops or concerning patterns (ORDER BY variance ASC LIMIT 20). For growing entities, focus on members with highest utilization increases (ORDER BY variance DESC LIMIT 20). For mixed patterns, analyze both high-growth and declining utilization members. ROW VOLUME CONTROL: Limit to 20 high-impact members for utilization pattern analysis and focus on member segments representing significant utilization variance. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Volume vs price variance decomposition with period comparison, (2) Member-level utilization pattern analysis with period comparison. VOLUME vs PRICE VARIANCE DECOMPOSITION: Generate comparative analysis (current vs previous period) separating variance into script volume changes vs revenue per script changes within first-pass identified entities. Identify whether variance is primarily volume-driven or price-driven within entity scope. MEMBER-LEVEL UTILIZATION INTENSITY: Calculate scripts per member and revenue per member trends across periods within first-pass identified entities. Identify high-utilization members driving variance patterns. UTILIZATION PATTERN SEGMENTATION: Segment members by utilization intensity (low, medium, high utilizers) and analyze variance contribution by utilization segment across periods. HIGH-VALUE MEMBER ANALYSIS: Identify members with annual pharmaceutical spend >$10K within first-pass entities. Analyze retention, churn, and utilization changes among high-value members based on investigation direction through period comparison. MEMBER UTILIZATION LIFECYCLE: Track member utilization intensity changes between periods within first-pass identified entities. Identify members moving between utilization tiers. UTILIZATION-BASED TARGETING: Which utilization segments require clinical intervention based on investigation direction through period analysis? Members showing concerning utilization spikes or drops? SELECTION STRATEGY: Apply intent-based directional ordering with member limits. Focus on members with significant annual spend variance or utilization change based on investigation direction."
+      }
+    },
 
-        "investigation_execution": {
-            "query_generation_approach": "llm_generated_sql_based_on_investigation_requirements",
-            "max_queries_per_investigation_category": 2,
-            "cross_validation_queries": "generated_as_needed_for_consistency_verification",
-            "query_timeout": 300,
-            "findings_synthesis_approach": "comprehensive_business_intelligence_report"
-        },
-
-        "user_approval_workflow": {
-            "investigation_menu_format": {
-                "show_recommended_investigations": true,
-                "include_strategic_rationale": true,
-                "show_available_metrics_and_dimensions": true,
-                "include_exploration_scope": true,
-                "allow_custom_investigation_selection": true
-            },
-            "approval_options": {
-                "approve_all_recommended": "Execute all recommended investigations across three layers",
-                "select_by_layer": "Choose specific investigation layers (guided, systematic, anomaly)",
-                "select_specific_categories": "Choose specific investigation categories to execute",
-                "modify_investigation_scope": "Modify investigation parameters or add custom investigations"
-            }
-        },
-
-        "output_format": {
-            "tactical_findings_report": {
-                "sections": [
-                    "Investigation Summary and Approach",
-                    "Business Intelligence Pattern Findings", 
-                    "Systematic Exploration Discoveries",
-                    "Anomaly Investigation Results",
-                    "Cross-Validation and Consistency Analysis",
-                    "Hidden Gems and Novel Insights",
-                    "Recommendations and Next Steps"
-                ],
-                "include_sql_queries": true,
-                "include_statistical_significance": true,
-                "include_confidence_levels": true,
-                "include_business_impact_quantification": true
-            }
-        },
-
-        "claims_drivers_table_metadata": {
-            "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-            "description": "Operational revenue drivers from pharmacy claims - comprehensive source for multi-dimensional correlation discovery",
-            "correlation_rich_columns": [
-                {"name": "client_name", "type": "string", "correlation_potential": "client_behavior_patterns_and_portfolio_evolution"},
-                {"name": "account_id", "type": "string", "correlation_potential": "account_level_consolidation_and_utilization_patterns"},
-                {"name": "group_id", "type": "string", "correlation_potential": "sub_account_group_behavior_and_departure_patterns"},
-                {"name": "carrier_id", "type": "string", "correlation_potential": "payer_behavior_influence_and_policy_impact_patterns"},
-                {"name": "revenue_amt", "type": "numeric", "correlation_potential": "financial_efficiency_and_pricing_patterns"},
-                {"name": "unadjusted_script_count", "type": "numeric", "correlation_potential": "utilization_intensity_and_volume_patterns"},
-                {"name": "therapy_class_name", "type": "string", "correlation_potential": "therapy_mix_evolution_and_clinical_preference_patterns"},
-                {"name": "drug_name", "type": "string", "correlation_potential": "specific_drug_adoption_and_competitive_substitution_patterns"},
-                {"name": "DRUG_MANUFCTR_NM", "type": "string", "correlation_potential": "manufacturer_market_dynamics_and_supply_chain_patterns"},
-                {"name": "brand_vs_generic_ind", "type": "string", "correlation_potential": "drug_preference_shift_and_cost_optimization_patterns"},
-                {"name": "member_date_of_birth", "type": "date", "correlation_potential": "demographic_utilization_and_age_cohort_patterns"},
-                {"name": "member_sex", "type": "string", "correlation_potential": "gender_therapy_preference_and_utilization_patterns"},
-                {"name": "state_cd", "type": "string", "correlation_potential": "geographic_market_dynamics_and_regulatory_impact_patterns"},
-                {"name": "pharmacy_name", "type": "string", "correlation_potential": "individual_pharmacy_performance_and_network_optimization_patterns"},
-                {"name": "phrmacy_type", "type": "string", "correlation_potential": "pharmacy_network_efficiency_and_operational_strategy_patterns"},
-                {"name": "submit_date", "type": "date", "correlation_potential": "temporal_trend_seasonality_and_market_timing_patterns"},
-                {"name": "quarter", "type": "string", "correlation_potential": "quarterly_business_cycle_and_planning_patterns"},
-                {"name": "product_category", "type": "string", "correlation_potential": "product_portfolio_performance_and_strategic_focus_patterns"},
-                {"name": "line_of_business", "type": "string", "correlation_potential": "business_segment_performance_and_strategic_alignment_patterns"}
-            ]
-        }
+    "global_llm_instructions": {
+      "second_pass_orchestration": "You are conducting SECOND-PASS granular operational analysis building on first-pass strategic findings. The investigation scope is inherited from first-pass entity identification (specific clients/LOBs/carriers). Focus on operational and behavioral drivers that explain WHY the strategic variance occurred through comparative period analysis. Use multi-dimensional analysis to provide actionable operational insights.",
+      
+      "dimensional_intelligence": "Select analysis dimensions based on user intent and first-pass findings. If user requests specific dimension (therapeutic, geographic, etc.), focus on that dimension plus 1-2 complementary dimensions. If user requests comprehensive analysis, analyze all relevant dimensions but prioritize based on first-pass variance patterns.",
+      
+      "operational_focus": "Second-pass analysis should explain operational drivers behind first-pass strategic findings through comparative period analysis. Focus on controllable business levers: therapeutic mix optimization, pharmacy network performance, member utilization management, geographic market strategies, brand/generic formulary decisions.",
+      
+      "cross_dimensional_correlation": "Look for correlations across dimensions: Do certain therapy classes concentrate in specific geographies? Are demographic segments driving brand vs generic preferences? Do pharmacy types serve different utilization patterns? Identify multi-dimensional insights that provide comprehensive operational understanding.",
+      
+      "actionable_insight_prioritization": "Prioritize insights that suggest clear business actions through period comparison analysis. Therapeutic formulary adjustments, pharmacy network optimization, member clinical interventions, geographic market strategies, brand/generic policy changes. Focus on insights that operations teams can act upon.",
+      
+      "variance_continuation_logic": "Build narrative continuity with first-pass findings. Use phrases like 'Building on the finding that Client X declined...', 'Drilling deeper into the MAPD LOB variance...', 'Operational analysis reveals that...'. Connect operational insights back to strategic variance patterns through comparative analysis."
     }
+  }
 }

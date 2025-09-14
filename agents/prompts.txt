@@ -1,346 +1,238 @@
-{
-  "second_pass_investigation_config": {
-    "version": "1.0",
-    "investigation_type": "granular_operational_analysis",
-    "description": "Multi-dimensional operational drill-through analysis building on first-pass strategic findings",
-    
-    "shared_table_metadata": {
-      "claims_operational": {
-        "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-        "description": "Claim-level operational data with therapeutic, demographic, geographic, and utilization details",
-        "columns": [
-          {
-            "name": "product_category",
-            "description": "Product category for each claim",
-            "distinct_values": ["PBM", "Home Delivery", "Specialty"]
-          },
-          {
-            "name": "line_of_business",
-            "description": "Line of business identifier",
-            "distinct_values": ["E&I FI", "E&I ASO", "C&S", "PDP", "MAPD", "E&I UMR", "External"]
-          },
-          {
-            "name": "client_id",
-            "description": "Unique client identifier"
-          },
-          {
-            "name": "carrier_id",
-            "description": "Insurance carrier identifier"
-          },
-          {
-            "name": "member_id",
-            "description": "Individual member identifier for utilization analysis"
-          },
-          {
-            "name": "submit_date",
-            "description": "Claim submission date (yyyy-MM-dd)"
-          },
-          {
-            "name": "therapy_class_name",
-            "description": "Therapeutic class of dispensed drug"
-          },
-          {
-            "name": "drug_name",
-            "description": "Name of dispensed drug"
-          },
-          {
-            "name": "brand_vs_generic_ind",
-            "description": "Brand or Generic indicator",
-            "distinct_values": ["Brand", "Generic"]
-          },
-          {
-            "name": "pharmacy_name",
-            "description": "Dispensing pharmacy name"
-          },
-          {
-            "name": "pharmacy_type",
-            "description": "Internal vs external pharmacy type",
-            "distinct_values": ["EXTERNAL-NON OPTUM OWNED", "INTERNAL OPTUM OWNED"]
-          },
-          {
-            "name": "state_cd",
-            "description": "Two-letter state code for geographic analysis"
-          },
-          {
-            "name": "mbr_dt_of_brth",
-            "description": "Member date of birth (yyyy-MM-dd) for age analysis"
-          },
-          {
-            "name": "mbr_sex",
-            "description": "Member gender",
-            "distinct_values": ["M", "F"]
-          },
-          {
-            "name": "revenue_amt",
-            "description": "Revenue amount per claim"
-          },
-          {
-            "name": "unadjusted_script_count",
-            "description": "Raw script count per claim"
-          },
-          {
-            "name": "revenue_per_script",
-            "description": "Revenue per script derived metric"
-          },
-          {
-            "name": "GDR_Ratio",
-            "description": "Generic Dispense Rate ratio"
-          }
-        ]
-      }
-    },
-
-    "investigation_dimensions": {
-      "therapeutic": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
-      "brand_generic": ["brand_vs_generic_ind", "therapy_class_name"],
-      "operational": ["pharmacy_type", "pharmacy_name", "state_cd"],
-      "geographic": ["state_cd"],
-      "demographic": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
-      "utilization": ["member_id", "unadjusted_script_count", "revenue_per_script"]
-    },
-
-    "analysis_templates": {
-      "therapeutic": {
-        "table_reference": "claims_operational",
-        "dimensions": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
-        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 3,
-        "sql_breakdown": ["therapy_class_variance", "drug_specific_analysis", "brand_generic_mix"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings (specific clients/LOBs identified). If first-pass found 'MDOVA client declining', filter all therapeutic analysis to client_id='MDOVA' only. MULTI-SQL APPROACH: Generate 3 focused SQLs: (1) Therapy class level variance analysis, (2) Drug-specific deep dive within top therapy classes, (3) Brand vs generic analysis within therapy classes. THERAPEUTIC DEEP-DIVE ANALYSIS: Identify which therapy classes and specific drugs are driving the variance patterns identified in first-pass. Focus on therapeutic category shifts, drug mix changes, and formulary impacts. BRAND vs GENERIC INTEGRATION: For each therapy class, analyze brand vs generic distribution changes. Look for brand-to-generic switches that could explain revenue per script variance. Calculate therapy class level GDR changes over comparison periods. KEY INSIGHTS TO SURFACE: Which therapy classes show highest absolute variance? Are high-revenue therapy classes declining while low-revenue classes growing? Drug-specific drivers within problematic therapy classes? Brand vs generic mix shifts within each therapy class? ENTITY STATUS ANALYSIS: Identify NEW therapy classes (zero prior period, current presence), DROP therapy classes (prior presence, zero current), EXISTING therapy classes with significant variance. SELECTION STRATEGY: Focus on top 10-15 therapy classes by absolute variance impact. Include both declining and growing categories for balanced view. EXPECTED INSIGHTS: Therapeutic category explanations for first-pass variance. Drug formulary or clinical protocol changes. Brand/generic therapeutic substitution patterns."
-      },
-
-      "brand_generic": {
-        "table_reference": "claims_operational", 
-        "dimensions": ["brand_vs_generic_ind", "therapy_class_name"],
-        "metrics": ["revenue_amt", "unadjusted_script_count", "GDR_Ratio", "revenue_per_script"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 2,
-        "sql_breakdown": ["gdr_trend_analysis", "brand_switch_impact"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Apply same client/LOB filtering as identified in strategic analysis. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) GDR trend analysis by therapy class, (2) Brand-to-generic switch revenue impact quantification. GENERIC DISPENSE RATE FOCUS: Calculate GDR changes between comparison periods within the detected scope. Identify therapy classes with significant GDR shifts (>5% change). BRAND TO GENERIC IMPACT ANALYSIS: Quantify revenue impact of brand-to-generic switches. Calculate revenue per script differences between brand and generic within same therapy classes. Identify high-impact brand switches contributing to overall variance. FORMULARY CHANGE DETECTION: Look for sudden GDR spikes indicating formulary or policy changes. Identify therapy classes where brand utilization dropped significantly. FINANCIAL IMPACT ASSESSMENT: Calculate revenue lost/gained from brand-generic mix changes. Assess whether generic adoption is driving script volume increases that offset revenue per script declines. STRATEGIC INSIGHTS FOCUS: Which therapy classes show most significant brand-to-generic shifts? Are generic switches volume-positive but revenue-negative? High-value brands being replaced by generics? New generic launches impacting established brands? SELECTION STRATEGY: Focus on therapy classes with >$1M revenue variance and >10% GDR change. Include both high-GDR and low-GDR therapy classes for comparison."
-      },
-
-      "operational": {
-        "table_reference": "claims_operational",
-        "dimensions": ["pharmacy_type", "pharmacy_name", "state_cd"],
-        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 2,
-        "sql_breakdown": ["pharmacy_type_performance", "geographic_operational"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Focus operational analysis within identified client/LOB context only. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Pharmacy type performance analysis (internal vs external), (2) Geographic operational patterns by state and pharmacy. PHARMACY TYPE PERFORMANCE: Compare internal Optum-owned vs external pharmacy performance within scope. Identify if variance is concentrated in specific pharmacy types. Calculate revenue per script and script volume trends by pharmacy type. GEOGRAPHIC CONCENTRATION: Identify states/regions driving variance patterns within the entity scope. Look for geographic clustering of performance issues or improvements. STATE-LEVEL VARIANCE ANALYSIS: Which states show disproportionate variance contribution? Are certain states showing different operational patterns? PHARMACY-SPECIFIC DRIVERS: Within significant variance states, identify specific high-impact pharmacies (both internal and external). Focus on pharmacies with >$500K variance or >20% volume change. OPERATIONAL EFFICIENCY INSIGHTS: Compare pharmacy type efficiency metrics (revenue per script, script processing volume). Identify operational bottlenecks or performance advantages. NETWORK OPTIMIZATION SIGNALS: Are internal pharmacies outperforming external in certain regions? Should pharmacy network mix be optimized? Geographic expansion or contraction opportunities? SELECTION STRATEGY: Top 10 states by variance impact, top 20 pharmacies by operational significance. Balance internal vs external pharmacy representation."
-      },
-
-      "geographic": {
-        "table_reference": "claims_operational",
-        "dimensions": ["state_cd"],
-        "metrics": ["revenue_amt", "unadjusted_script_count"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 1,
-        "sql_breakdown": ["state_variance_analysis"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze geographic patterns within identified client/LOB context only. SINGLE-SQL APPROACH: Generate comprehensive state-level analysis with regional clustering in one query using CASE statements for regional groupings. GEOGRAPHIC VARIANCE CONCENTRATION: Identify which states contribute most to variance patterns identified in first-pass. Look for regional clustering of similar performance patterns. STATE-LEVEL MARKET DYNAMICS: Compare state-level performance trends within the entity scope. Identify states with disproportionate variance contribution (>5% of total). REGIONAL PATTERN RECOGNITION: Are variance patterns concentrated in specific geographic regions (West Coast, Southeast, etc.)? Do certain states show opposite trends (some growing, others declining)? MARKET SHARE IMPLICATIONS: Within entity scope, identify states where market position may be strengthening or weakening. Geographic concentration vs diversification trends. REGULATORY OR COMPETITIVE FACTORS: Flag states with unusual patterns that might indicate regulatory changes or competitive pressures. Identify states requiring strategic attention. CROSS-STATE COMPARISON: Compare similar-sized state markets within entity scope. Identify best-performing and underperforming state markets for benchmarking. SELECTION STRATEGY: Focus on top 15 states by absolute variance impact. Include both high-performing and underperforming states for balanced analysis."
-      },
-
-      "demographic": {
-        "table_reference": "claims_operational",
-        "dimensions": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
-        "metrics": ["revenue_amt", "unadjusted_script_count"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 1,
-        "sql_breakdown": ["demographic_utilization_analysis"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze demographic patterns within identified client/LOB context only. SINGLE-SQL APPROACH: Generate comprehensive demographic analysis combining age cohorts and gender patterns in one query with member-level aggregations. AGE SEGMENTATION ANALYSIS: Create age cohorts (18-34, 35-54, 55-64, 65+) and analyze variance by age group. Identify which age segments driving variance patterns from first-pass. MEMBER STRENGTH AND CONCENTRATION: Calculate member counts and average revenue per member by demographic segments. Identify high-value member segments showing variance patterns. MEMBER UTILIZATION INTENSITY: Analyze scripts per member and revenue per member trends by demographic groups. Identify if variance is driven by member behavior changes or population mix shifts. GENDER-BASED UTILIZATION PATTERNS: Compare male vs female utilization patterns within entity scope. Identify gender-specific therapeutic or utilization trends contributing to variance. MEMBER LIFECYCLE ANALYSIS: Using member_id, identify member retention, churn, and acquisition patterns within demographic segments. High-value member retention vs new member acquisition impact. DEMOGRAPHIC RISK ASSESSMENT: Which demographic segments show concerning utilization or revenue trends? Are aging populations driving higher pharmaceutical utilization? Gender-specific therapeutic needs evolving? ACTIONABLE DEMOGRAPHIC INSIGHTS: Member segments requiring targeted clinical or commercial attention. Demographic-specific intervention opportunities. SELECTION STRATEGY: Focus on age segments with >$2M variance impact. Include both high-utilization and emerging demographic segments."
-      },
-
-      "utilization": {
-        "table_reference": "claims_operational",
-        "dimensions": ["member_id"],
-        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
-        "filters": {
-          "claim_status_code": "['P','X']",
-          "product_category": "USER_INTENT_DRIVEN"
-        },
-        "date_column": "submit_date",
-        "sql_count": 2,
-        "sql_breakdown": ["volume_price_decomposition", "member_utilization_patterns"],
-        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze utilization patterns within identified client/LOB context only. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Volume vs price variance decomposition, (2) Member-level utilization pattern analysis. VOLUME vs PRICE VARIANCE DECOMPOSITION: Separate variance into script volume changes vs revenue per script changes. Identify whether variance is primarily volume-driven or price-driven within entity scope. MEMBER-LEVEL UTILIZATION INTENSITY: Calculate scripts per member and revenue per member trends. Identify high-utilization members driving variance patterns. UTILIZATION PATTERN SEGMENTATION: Segment members by utilization intensity (low, medium, high utilizers). Analyze variance contribution by utilization segment. HIGH-VALUE MEMBER ANALYSIS: Identify members with annual pharmaceutical spend >$10K. Analyze retention, churn, and utilization changes among high-value members. MEMBER UTILIZATION LIFECYCLE: Track member utilization intensity changes between periods. Identify members moving between utilization tiers. NEW vs EXISTING MEMBER UTILIZATION: Compare new member utilization patterns vs existing member changes. Assess if variance driven by member mix changes or behavior changes. PER-MEMBER EFFICIENCY METRICS: Revenue per member, scripts per member, average script value by member segments. Identify efficiency trends within entity scope. UTILIZATION-BASED TARGETING: Which utilization segments require clinical intervention? Members showing concerning utilization spikes or drops? Opportunities for medication adherence programs? SELECTION STRATEGY: Focus on members with >$5K annual spend variance or >50% utilization change. Include both high and low utilizers for comprehensive view."
-      }
-    },
-
-    "global_llm_instructions": {
-      "second_pass_orchestration": "You are conducting SECOND-PASS granular operational analysis building on first-pass strategic findings. The investigation scope is inherited from first-pass entity identification (specific clients/LOBs/carriers). Focus on operational and behavioral drivers that explain WHY the strategic variance occurred. Use multi-dimensional analysis to provide actionable operational insights.",
-      
-      "dimensional_intelligence": "Select analysis dimensions based on user intent and first-pass findings. If user requests specific dimension (therapeutic, geographic, etc.), focus on that dimension plus 1-2 complementary dimensions. If user requests comprehensive analysis, analyze all relevant dimensions but prioritize based on first-pass variance patterns.",
-      
-      "operational_focus": "Second-pass analysis should explain operational drivers behind first-pass strategic findings. Focus on controllable business levers: therapeutic mix optimization, pharmacy network performance, member utilization management, geographic market strategies, brand/generic formulary decisions.",
-      
-      "cross_dimensional_correlation": "Look for correlations across dimensions: Do certain therapy classes concentrate in specific geographies? Are demographic segments driving brand vs generic preferences? Do pharmacy types serve different utilization patterns? Identify multi-dimensional insights that provide comprehensive operational understanding.",
-      
-      "actionable_insight_prioritization": "Prioritize insights that suggest clear business actions. Therapeutic formulary adjustments, pharmacy network optimization, member clinical interventions, geographic market strategies, brand/generic policy changes. Focus on insights that operations teams can act upon.",
-      
-      "variance_continuation_logic": "Build narrative continuity with first-pass findings. Use phrases like 'Building on the finding that Client X declined...', 'Drilling deeper into the MAPD LOB variance...', 'Operational analysis reveals that...'. Connect operational insights back to strategic variance patterns."
-    }
-  }
-}
-
-
-def create_strategic_sql_generation_prompt(current_question: str, investigation_config: Dict, query_key: str) -> str:
-    
-    prompt = f"""
-You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
+prompt = f"""
+You are a Strategic Operational Intelligence SQL Analyst conducting SECOND-PASS granular analysis. Generate targeted Databricks SQL queries to explain operational drivers behind first-pass strategic findings.
 
 USER QUESTION: {current_question}
 
-INVESTIGATION CONFIGURATION:
-{json.dumps(investigation_config, indent=2)}
+FIRST-PASS STRATEGIC FINDINGS:
+{first_pass_results}
 
-CURRENT QUERY: {query_key}
-
-==============================
-CONFIGURATION INTERPRETATION INSTRUCTIONS
-==============================
-
-1. Extract the investigation_type and domain_specific_prompts for business intelligence context
-2. Locate the specified query in strategic_queries section and read its complete configuration
-3. Apply the query-specific llm_instructions for strategic focus and SQL guidance
-4. Use analysis_requirements (required_filters, key_dimensions, focus_metrics, analysis_type)
-5. Follow output_requirements (calculations, ordering, filtering specifications)
-6. Consider analysis_type_guidance for domain-specific implementation approaches
-7. Apply variance_thresholds from intelligence_synthesis for significance filtering
+SECOND-PASS INVESTIGATION CONFIGURATION:
+{json.dumps(second_pass_config, indent=2)}
 
 ==============================
-DATABRICKS SQL GENERATION REQUIREMENTS
+FIRST-PASS TO SECOND-PASS TRANSITION
 ==============================
 
-1. MEANINGFUL COLUMN NAMES
-- Use business-relevant column names that align with the query purpose and domain context
-- Include period identifiers in variance calculations (current_period, prior_period, variance_amount, variance_pct)
-- Use domain-appropriate terminology from the configuration business context
+CRITICAL: You are conducting SECOND-PASS operational drill-through analysis building on first-pass strategic findings.
 
-2. COMPLETE TRANSPARENCY - SHOW ALL COMPONENTS
-- MANDATORY: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in SELECT output
-- If calculating variance, include: current_period_value, prior_period_value, absolute_variance, percentage_variance
-- If filtering by any dimension, include that dimension in SELECT for verification
-- If grouping by business dimensions, include all grouping dimensions in output
-- Example: SELECT line_of_business, product_category, current_revenue, prior_revenue, revenue_variance, variance_pct
+UNDERSTANDING THE ANALYSIS LEVELS:
+- **FIRST-PASS**: High-level strategic analysis at LOB/Client/Carrier/Membership levels only
+- **SECOND-PASS**: Operational drill-through using therapeutic, geographic, demographic, utilization, and brand/generic dimensions
 
-3. DATA QUALITY AND FILTERING
-- Use UPPER() for all text filtering: WHERE UPPER(column_name) = UPPER('filter_value')
-- Handle NULL values appropriately: COALESCE(amount_or_count, 0)
-- Apply ALL required_filters from analysis_requirements exactly as specified
-- Use proper date handling: WHERE transaction_date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
+FIRST-PASS CONTEXT EXTRACTION:
+1. **Extract Strategic Entities**: Identify specific entities (clients, LOBs, carriers) showing variance from first-pass findings
+2. **Extract Entity Filters**: Determine which specific entities to focus second-pass analysis on
+3. **Extract Variance Context**: Use first-pass variance patterns and magnitude for operational investigation
+4. **Extract Business Context**: Understand declining vs growing patterns for operational targeting
 
-4. VARIANCE ANALYSIS CALCULATIONS
-- Calculate both absolute ($) and percentage (%) variance for all metrics
-- Include current period, comparison period, and variance calculations
-- Apply significance filtering based on variance_thresholds from configuration
-- Use statistical measures where appropriate (COUNT, AVG, STDDEV if relevant)
+SECOND-PASS OPERATIONAL OBJECTIVE:
+- Explain WHY the first-pass strategic entities (clients/LOBs/carriers) are showing variance through operational lenses
+- Drill into therapeutic, geographic, demographic, utilization, and brand/generic factors
+- Focus operational analysis ONLY on the strategic entities identified in first-pass
+- Provide actionable operational insights explaining the strategic variance patterns through comparative period analysis
 
-5. BUSINESS CONTEXT APPLICATION
-- Extract time periods from user question context (Q3 vs Q2, month over month, etc.)
-- Apply domain seasonality considerations from domain_specific_prompts
-- Focus on key_dimensions and focus_metrics as specified in analysis_requirements
-- Consider depends_on_query relationships for focus area determination
-
-6. STRATEGIC FOCUS MAINTENANCE
-- Maintain HIGH-LEVEL perspective appropriate for strategic investigation
-- Focus on business segment and portfolio-level patterns as guided by llm_instructions
-- Avoid operational details - maintain strategic scope per configuration guidance
-- Each query should support the investigation_framework sequence
-
-7. CROSS-QUERY INTELLIGENCE
-- Consider previous query findings if depends_on_query is specified
-- Build upon investigation sequence as defined in query_sequence
-- Prepare results to inform subsequent strategic queries
-- Validate expected correlation patterns from domain_specific_prompts
-
-8. DATABRICKS SQL OPTIMIZATION
-- Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN, COALESCE
-- Use date functions: date_trunc(), year(), month(), quarter(), DATEDIFF
-- Use CTEs (WITH clauses) for complex period comparisons and multi-step calculations
-- Use CASE WHEN for conditional logic and status categorization
-- Use window functions for ranking and analytical calculations where appropriate
-
-9. OUTPUT FORMATTING AND ORDERING
-- Show whole numbers for financial metrics (no decimals for dollar amounts)
-- Round percentages to two decimal places: ROUND(percentage, 2)
-- Order by significance as specified in output_requirements
-- Include ranking information where appropriate (ROW_NUMBER, RANK functions)
-- Filter for significance based on variance thresholds
-
-10. HEALTHCARE FINANCE BEST PRACTICES
-- Always include time dimensions (transaction_date, quarter) when relevant
-- Use business-friendly dimensions from configuration (line_of_business, product_category)
-- Apply industry-specific filters (ledger = 'GAAP', metric_type = 'Revenues')
-- Consider business cycles and patterns from domain_specific_prompts
-
-11. ANALYTICAL DEPTH REQUIREMENTS
-- Generate analysis appropriate for the expected_investigation_depth from configuration
-- Balance comprehensiveness with strategic focus level
-- Ensure query complexity matches the investigation_framework requirements
-- Support the overall synthesis_approach defined in configuration
+SCOPE INHERITANCE FROM STRATEGIC TO OPERATIONAL:
+- Filter ALL operational drill-through queries to first-pass strategic entities only
+- Apply same product_category and date_range filters as first-pass strategic analysis
+- Use operational dimensions to explain strategic entity performance patterns through period comparison
 
 ==============================
-REASONING REQUIREMENT
+COMPREHENSIVE OPERATIONAL ANALYSIS GENERATION
 ==============================
 
-Provide detailed reasoning covering these aspects:
-1. **Time Period Extraction**: How you extracted and applied comparison periods from user question
-2. **Configuration Implementation**: How you interpreted and applied the JSON configuration elements
-3. **Business Logic Application**: How you applied domain-specific business intelligence
-4. **Strategic Focus Alignment**: How you maintained appropriate strategic-level perspective
-5. **SQL Construction Decisions**: Key decisions in query structure, filters, calculations, and ordering
+CRITICAL: Generate SQLs for ALL operational dimensions by default to provide complete operational picture.
+
+DEFAULT COMPREHENSIVE COVERAGE:
+- Generate SQLs for ALL 6 operational dimensions unless user specifically requests focused analysis
+- Complete operational coverage: Therapeutic (3 SQLs) + Brand/Generic (2 SQLs) + Operational (2 SQLs) + Geographic (1 SQL) + Demographic (1 SQL) + Utilization (2 SQLs) = 11 total SQLs
+- Each dimension provides unique operational insights that together explain variance comprehensively
+
+USER INTENT OVERRIDE LOGIC:
+- **Specific Dimension Request**: "Show ONLY therapeutic breakdown" → Generate only therapeutic analysis (respect user focus)
+- **Multi-Dimension Request**: "Focus on demographic and geographic" → Generate only specified dimensions
+- **General Request**: "Drill into operational factors" or "Explain the variance" → Generate ALL 6 dimensions (comprehensive default)
+- **No Specific Request**: Default to comprehensive analysis across all operational dimensions
+
+COMPREHENSIVE ANALYSIS BENEFITS:
+- Complete operational visibility across all business levers
+- Cross-dimensional correlation opportunities (therapeutic + geographic + demographic patterns)
+- No operational blind spots in investigation
+- Rich narrative synthesis across all operational factors
+- Maximum actionable insight generation
+
+OPERATIONAL SQL GENERATION REQUIREMENTS:
+- Use sql_count and sql_breakdown from JSON configuration for each dimension
+- Apply consistent first-pass entity filtering across all generated dimensions
+- Each operational SQL must focus on comparative period analysis within strategic entity context
+- Generate complete operational drill-through unless explicitly limited by user request
+
+==============================
+JSON CONFIGURATION INTERPRETATION
+==============================
+
+CONFIGURATION PARSING PROCESS:
+1. **Extract investigation_dimensions** to understand available operational analysis types
+2. **Parse analysis_templates** for each selected operational dimension
+3. **Extract sql_count and sql_breakdown** for each dimension to determine number of queries needed
+4. **Use llm_instructions** as operational intelligence brain for each dimension including intent-based row selection
+5. **Apply global_llm_instructions** for cross-dimensional correlation and narrative continuity
+
+TEMPLATE STRUCTURE USAGE:
+- **table_reference**: Maps to shared_table_metadata for column context and operational business rules
+- **dimensions**: Primary operational analysis columns for drill-down
+- **metrics**: Key measurements for variance and utilization analysis
+- **filters**: Base operational filters plus USER_INTENT_DRIVEN inheritance from first-pass
+- **date_column**: Consistent period comparison with first-pass timeframe
+- **sql_count**: Exact number of SQLs to generate for this operational dimension
+- **sql_breakdown**: Specific focus for each SQL within the operational dimension
+
+==============================
+COMPARATIVE ANALYSIS STRUCTURE
+==============================
+
+CRITICAL: Generate comparative period analysis SQLs for operational drill-through.
+
+COMPARATIVE SQL PATTERN:
+```sql
+SELECT operational_dimension,
+       SUM(CASE WHEN DATE_FORMAT(submit_date, 'yyyy-MM') = '{current_period}' THEN revenue_amt ELSE 0 END) AS current_revenue,
+       SUM(CASE WHEN DATE_FORMAT(submit_date, 'yyyy-MM') = '{previous_period}' THEN revenue_amt ELSE 0 END) AS previous_revenue,
+       (current_revenue - previous_revenue) AS variance,
+       CASE WHEN previous_revenue > 0 THEN 
+            ROUND(((current_revenue - previous_revenue) / previous_revenue) * 100, 2) 
+       ELSE NULL END AS variance_percentage
+FROM claims_operational
+WHERE client_id IN ('{first_pass_entities}')
+  AND claim_status_code IN ('P','X')
+  AND product_category = '{inherited_category}'
+  AND DATE_FORMAT(submit_date, 'yyyy-MM') IN ('{current_period}', '{previous_period}')
+GROUP BY operational_dimension
+ORDER BY {intent_based_ordering}
+LIMIT {row_limit}
+```
+
+PERIOD COMPARISON REQUIREMENTS:
+- Extract period comparison logic from first-pass analysis (Aug vs July, Q2 vs Q1, etc.)
+- Apply consistent date filtering across all operational dimensions
+- Use same period comparison structure as first-pass strategic analysis
+- Include variance calculations (amount and percentage) for all operational breakdowns
+
+==============================
+OPERATIONAL BUSINESS INTELLIGENCE
+==============================
+
+SECOND-PASS OPERATIONAL BUSINESS CONTEXT:
+- Focus on operational levers: therapeutic mix, pharmacy network, member behavior, geographic strategies
+- Identify actionable insights for formulary management, network optimization, clinical interventions
+- Cross-dimensional correlation: therapeutic + demographic, geographic + operational patterns
+- Member-level insights using member_id for utilization intensity and lifecycle analysis
+
+OPERATIONAL FILTERING REQUIREMENTS:
+1. **Apply claim_status_code**: Always include ['P','X'] for paid and reversed claims
+2. **Inherit product_category**: Use same category from first-pass strategic analysis
+3. **Entity Scope Filtering**: Apply first-pass strategic entity filters consistently
+4. **Intent-Based Selection**: Use variance direction for appropriate ordering and row limits
+
+DERIVED METRICS CALCULATION:
+- Primary metric per unit calculations, entity-level ratios within strategic entity scope
+- Segmentation analysis using demographic dimensions with operational focus
+- Category mix analysis using indicator dimensions for decision insights
+- Performance type distinctions within strategic context
+
+NOTE: Specific metrics depend on analysis type (revenue, expense, claims, membership, etc.). Use metrics defined in analysis_templates from JSON configuration.
+
+==============================
+COMPREHENSIVE REASONING REQUIREMENT
+==============================
+
+Provide detailed reasoning covering ALL these validation points:
+
+1. **FIRST-PASS STRATEGIC CONTEXT EXTRACTION**:
+   - How you identified strategic entities (clients, LOBs, carriers, membership) showing variance from first-pass findings
+   - What entity-specific filters you extracted for operational drill-through (client_id, line_of_business, etc.)
+   - How you determined variance magnitude and significance thresholds from strategic analysis
+   - What strategic variance patterns you detected (declining, growing, mixed patterns)
+
+2. **OPERATIONAL DIMENSIONAL SELECTION**:
+   - How you selected operational drill-through dimensions based on user intent and strategic entity findings
+   - Why chosen operational dimensions are most relevant for explaining strategic entity variance
+   - How selected operational dimensions provide actionable insights for strategic entities
+
+3. **STRATEGIC TO OPERATIONAL SCOPE INHERITANCE**:
+   - How you applied first-pass strategic entity filters to all operational drill-through queries
+   - What specific client/LOB/carrier filters you implemented for operational analysis
+   - How you maintained consistency with first-pass product_category and date filters
+
+4. **JSON CONFIGURATION USAGE**:
+   - How you parsed analysis_templates for selected operational dimensions
+   - How you interpreted sql_count and sql_breakdown for operational query generation
+   - How you applied llm_instructions as operational intelligence for each dimension including intent-based row selection
+
+5. **COMPARATIVE ANALYSIS IMPLEMENTATION**:
+   - How you implemented period comparison logic consistent with first-pass analysis
+   - What date filtering and period extraction you applied for operational analysis
+   - How you structured comparative SQL queries for operational drill-through
+
+6. **OPERATIONAL BUSINESS LOGIC**:
+   - How you applied operational filters (claim_status_code, etc.) with strategic context
+   - What derived metrics calculations you implemented for operational insights
+   - How you focused on actionable operational insights within strategic entity scope
+
+7. **INTENT-BASED ROW SELECTION**:
+   - How you detected variance direction from first-pass findings for appropriate ordering
+   - What row limits you applied per operational dimension based on llm_instructions
+   - How you implemented ORDER BY logic for declining vs growing strategic entity investigation
+
+8. **CROSS-DIMENSIONAL CORRELATION**:
+   - How selected operational dimensions provide complementary insights for strategic entities
+   - What cross-dimensional patterns you expect to surface within strategic scope
+   - How operational dimensions together explain first-pass strategic entity variance comprehensively
+
+9. **SQL GENERATION STRATEGY**:
+   - How you structured each operational SQL using template components and operational metadata
+   - What operational calculation logic you implemented with strategic entity scoping
+   - How you applied selection strategies for operational significance within strategic context
+
+10. **NARRATIVE CONTINUITY**:
+    - How you maintained story continuity from strategic first-pass to operational second-pass
+    - What language you used to connect operational findings to strategic entity variance
+    - How operational second-pass explains the "why" behind strategic first-pass "what"
+
+11. **ACTIONABILITY FOCUS**:
+    - How operational findings translate to business recommendations for strategic entity performance
+    - What actionable operational insights each dimension will provide for strategic entities
+    - How operational analysis guides specific business actions for strategic entity improvement
 
 ==============================
 RESPONSE FORMAT
 ==============================
 
 <reasoning>
-[Provide comprehensive reasoning following the 5-point structure above, explaining your interpretation of the configuration and approach to SQL construction]
+[Provide comprehensive reasoning following ALL 11 validation points above. Demonstrate thorough understanding of first-pass strategic context, operational dimensional selection logic, scope inheritance from strategic to operational, and operational intelligence application. Show validation of each critical aspect for operational drill-through analysis.]
 </reasoning>
 
 <sql>
-[Complete, executable Databricks SQL query implementing all configuration requirements and business intelligence guidance]
+<query1_title>
+[Operational Dimension Name - Specific Analysis Focus]
+[2-line explanation: Why this operational query is essential for explaining first-pass strategic findings + What operational insights it will surface]
+</query1_title>
+<query1>
+[Complete, executable Databricks SQL with first-pass strategic entity scoping and comparative period analysis including intent-based row selection]
+</query1>
+
+<query2_title>
+[Operational Dimension Name - Specific Analysis Focus] 
+[2-line explanation: Why this operational query builds on previous analysis + What additional operational drivers it identifies]
+</query2_title>
+<query2>
+[Complete, executable Databricks SQL with first-pass strategic entity scoping and comparative period analysis including intent-based row selection]
+</query2>
+
+[Continue for all selected operational dimensional analyses based on sql_count configuration...]
 </sql>
 
-CRITICAL SUCCESS REQUIREMENTS:
-1. Use exact table_name and column names from table_metadata in the configuration
-2. Apply ALL required_filters from analysis_requirements
-3. Focus on specified key_dimensions and focus_metrics
-4. Implement the analysis_type using appropriate domain guidance
-5. Follow output_requirements for calculations, filtering, and ordering
-6. Maintain strategic-level focus per llm_instructions
-7. Extract and apply user question context for time periods and scope
-8. Generate high-quality, executable Databricks SQL with proper business context
-9. Provide clear, comprehensive reasoning for all construction decisions
-10. Support the overall investigation sequence and strategic intelligence objectives
-
-Generate the strategic SQL query with detailed reasoning now.
+Generate targeted second-pass operational SQL queries that explain the operational "why" behind first-pass strategic variance findings through therapeutic, geographic, demographic, utilization, and brand/generic drill-through analysis.
 """
-    
-    return prompt
-    
-    return prompt
-
-
 
 {
     "revenue_investigation_config": {

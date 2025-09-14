@@ -1,1233 +1,202 @@
-from typing import Dict, List, Optional, Tuple
-import json
-import asyncio
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from core.state_schema import AgentState
-from core.databricks_client import DatabricksClient
-
-class RootCauseAnalysisAgent:
-    """Root Cause Analysis Agent that processes knowledge graphs and generates insights"""
+{
+  "second_pass_investigation_config": {
+    "version": "1.0",
+    "investigation_type": "granular_operational_analysis",
+    "description": "Multi-dimensional operational drill-through analysis building on first-pass strategic findings",
     
-    def __init__(self, databricks_client: DatabricksClient):
-        self.db_client = databricks_client
-        
-    def analyze_root_cause(self, state: AgentState) -> Dict[str, any]:
-        """Main function to perform root cause analysis with enhanced knowledge graph selection"""
-        
-        user_question = state.get('current_question', state.get('original_question', ''))
-        question_type = state.get('question_type', ' ')
+    "shared_table_metadata": {
+      "claims_operational": {
+        "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+        "description": "Claim-level operational data with therapeutic, demographic, geographic, and utilization details",
+        "columns": [
+          {
+            "name": "product_category",
+            "description": "Product category for each claim",
+            "distinct_values": ["PBM", "Home Delivery", "Specialty"]
+          },
+          {
+            "name": "line_of_business",
+            "description": "Line of business identifier",
+            "distinct_values": ["E&I FI", "E&I ASO", "C&S", "PDP", "MAPD", "E&I UMR", "External"]
+          },
+          {
+            "name": "client_id",
+            "description": "Unique client identifier"
+          },
+          {
+            "name": "carrier_id",
+            "description": "Insurance carrier identifier"
+          },
+          {
+            "name": "member_id",
+            "description": "Individual member identifier for utilization analysis"
+          },
+          {
+            "name": "submit_date",
+            "description": "Claim submission date (yyyy-MM-dd)"
+          },
+          {
+            "name": "therapy_class_name",
+            "description": "Therapeutic class of dispensed drug"
+          },
+          {
+            "name": "drug_name",
+            "description": "Name of dispensed drug"
+          },
+          {
+            "name": "brand_vs_generic_ind",
+            "description": "Brand or Generic indicator",
+            "distinct_values": ["Brand", "Generic"]
+          },
+          {
+            "name": "pharmacy_name",
+            "description": "Dispensing pharmacy name"
+          },
+          {
+            "name": "pharmacy_type",
+            "description": "Internal vs external pharmacy type",
+            "distinct_values": ["EXTERNAL-NON OPTUM OWNED", "INTERNAL OPTUM OWNED"]
+          },
+          {
+            "name": "state_cd",
+            "description": "Two-letter state code for geographic analysis"
+          },
+          {
+            "name": "mbr_dt_of_brth",
+            "description": "Member date of birth (yyyy-MM-dd) for age analysis"
+          },
+          {
+            "name": "mbr_sex",
+            "description": "Member gender",
+            "distinct_values": ["M", "F"]
+          },
+          {
+            "name": "revenue_amt",
+            "description": "Revenue amount per claim"
+          },
+          {
+            "name": "unadjusted_script_count",
+            "description": "Raw script count per claim"
+          },
+          {
+            "name": "revenue_per_script",
+            "description": "Revenue per script derived metric"
+          },
+          {
+            "name": "GDR_Ratio",
+            "description": "Generic Dispense Rate ratio"
+          }
+        ]
+      }
+    },
 
-        
-        if not user_question:
-            raise Exception("No user question found in state")
-        
-        print(f"🔍 Starting enhanced root cause analysis for: '{user_question}'")
-        
-        # 1. Get knowledge graph with LLM selection and merging
-        knowledge_graph = self._get_knowledge_graph(user_question)
-        
-        if not knowledge_graph:
-            raise Exception("No knowledge graph found for root cause analysis")
+    "investigation_dimensions": {
+      "therapeutic": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+      "brand_generic": ["brand_vs_generic_ind", "therapy_class_name"],
+      "operational": ["pharmacy_type", "pharmacy_name", "state_cd"],
+      "geographic": ["state_cd"],
+      "demographic": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+      "utilization": ["member_id", "unadjusted_script_count", "revenue_per_script"]
+    },
 
-        # 2. Generate ALL SQL queries at once
-        all_sql_queries = self._generate_all_sql_queries(knowledge_graph, user_question,question_type)
-        #3. Execute queries in parallel with retry mechanism
-        print('all queries',all_sql_queries)
-        query_results = self._execute_queries_parallel_with_retry(all_sql_queries, knowledge_graph)
+    "analysis_templates": {
+      "therapeutic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 3,
+        "sql_breakdown": ["therapy_class_variance", "drug_specific_analysis", "brand_generic_mix"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings (specific clients/LOBs identified). If first-pass found 'MDOVA client declining', filter all therapeutic analysis to client_id='MDOVA' only. INTENT-BASED ROW SELECTION: Extract variance direction from first-pass findings. If first-pass identifies declining entities, use ORDER BY variance ASC LIMIT 15-20 for worst-performing therapy classes. If first-pass identifies growing entities, use ORDER BY variance DESC LIMIT 15-20 for best-performing therapy classes. For mixed patterns, analyze both top 10 gainers and bottom 10 decliners. ROW VOLUME CONTROL: Therapy class analysis limited to 15-20 classes, drug analysis to 15 drugs, brand/generic analysis to 10-15 categories for manageable operational insights. MULTI-SQL APPROACH: Generate 3 focused SQLs: (1) Therapy class level variance analysis with period comparison, (2) Drug-specific deep dive within top therapy classes showing variance, (3) Brand vs generic analysis within therapy classes comparing periods. THERAPEUTIC DEEP-DIVE ANALYSIS: Generate comparative analysis (current period vs previous period) for therapy classes within first-pass identified entities. Identify which therapy classes and specific drugs are driving the variance patterns identified in first-pass. Focus on therapeutic category shifts, drug mix changes, and formulary impacts. BRAND vs GENERIC INTEGRATION: For each therapy class, analyze brand vs generic distribution changes between periods. Look for brand-to-generic switches that could explain revenue per script variance. Calculate therapy class level GDR changes over comparison periods. ENTITY STATUS ANALYSIS: Identify NEW therapy classes (zero prior period, current presence), DROP therapy classes (prior presence, zero current), EXISTING therapy classes with significant variance. SELECTION STRATEGY: Apply intent-based ordering with row limits. Focus on directionally appropriate therapy classes for investigation context. EXPECTED INSIGHTS: Therapeutic category explanations for first-pass variance. Drug formulary or clinical protocol changes. Brand/generic therapeutic substitution patterns."
+      },
 
-        # # 4. Generate individual insights for each query result (with chart recommendations)
-        individual_insights = self._generate_individual_insights(query_results, user_question)        
-        # # 5. Create consolidated query details for UI display
-        consolidated_query_details = self._create_consolidated_query_details(query_results, individual_insights)
-        
-        # 6. Create SQL summary for UI display
-        sql_summary = self._create_sql_summary(query_results)
-        
-        # 7. Consolidate all SQL-related information (keeping your existing structure)
-        consolidated_sql_info = self._consolidate_sql_information(query_results, individual_insights, user_question)
-        
-        # 8. Generate consolidated narrative using all insights
-        consolidated_narrative = self._generate_consolidated_narrative(
-            individual_insights, 
-            query_results, 
-            user_question
-        )
-        print('consolidated_narrative',consolidated_narrative)
-        
-        return {
-            'knowledge_graph': knowledge_graph,
-            'query_results': query_results,
-            'individual_insights': individual_insights,
-            'narrative_response': consolidated_narrative,
-            'analysis_complete': True,
-            
-            # NEW: UI-friendly structured data
-            'consolidated_query_details': consolidated_query_details,  # Each SQL with all its info
-            'sql_summary': sql_summary,  # Just SQL + purpose summary
-            
-            # Consolidated SQL information for future use (keeping your structure)
-            'sql_queries': consolidated_sql_info['all_sql_queries'],
-            'query_results_consolidated': consolidated_sql_info['all_query_results'],
-            'sql_execution_summary': consolidated_sql_info['execution_summary'],
-            'failed_queries': consolidated_sql_info['failed_queries'],
-            'successful_queries': consolidated_sql_info['successful_queries'],
-            'total_queries_executed': consolidated_sql_info['total_queries'],
-            'total_rows_returned': consolidated_sql_info['total_rows']
-        }
-    
-    def _create_consolidated_query_details(self, query_results: List[Dict], individual_insights: List[Dict]) -> List[Dict]:
-        """Create consolidated details for each query with all associated information"""
-        
-        print(f"🔄 Creating consolidated query details for {len(query_results)} queries")
-        
-        consolidated_details = []
-        
-        for i, result in enumerate(query_results):
-            # Find matching insight
-            matching_insight = None
-            if i < len(individual_insights):
-                matching_insight = individual_insights[i]
-            
-            # Create consolidated entry
-            query_detail = {
-                # Basic query info
-                'query_id': result.get('query_id'),
-                'table': result.get('table'),
-                'purpose': result.get('purpose'),
-                'sql': result.get('sql'),
-                'narrative': result.get('narrative', ''),
-                
-                # Execution info
-                'success': result.get('success', False),
-                'execution_time': result.get('execution_time', 'N/A'),
-                'retry_count': result.get('retry_count', 0),
-                'error': result.get('error') if not result.get('success') else None,
-                
-                # Results data
-                'sql_results': result.get('result', []),
-                'row_count': result.get('row_count', 0),
-                'has_data': result.get('row_count', 0) > 0,
-                
-                # Insights and visualization
-                'insight_text': matching_insight.get('insight_text', '') if matching_insight else '',
-                'chart_recommendation': matching_insight.get('chart_recommendation', {}) if matching_insight else {},
-                
-                # Metadata
-                'kg_row_id': result.get('kg_row_id'),
-                'kg_row_index': result.get('kg_row_index'),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            consolidated_details.append(query_detail)
-    
-        print(f"✅ Created {len(consolidated_details)} consolidated query details")
-        return consolidated_details
+      "brand_generic": {
+        "table_reference": "claims_operational", 
+        "dimensions": ["brand_vs_generic_ind", "therapy_class_name"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "GDR_Ratio", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["gdr_trend_analysis", "brand_switch_impact"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Apply same client/LOB filtering as identified in strategic analysis. INTENT-BASED ROW SELECTION: For declining revenue patterns, focus on therapy classes with increasing GDR (brand-to-generic switches causing revenue decline). For growing revenue patterns, focus on therapy classes maintaining brand utilization. Use ORDER BY based on investigation direction with LIMIT 10-15. ROW VOLUME CONTROL: Limit to 10-15 therapy classes for GDR analysis and top 15 brand-generic switches for impact analysis. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) GDR trend analysis by therapy class with period comparison, (2) Brand-to-generic switch revenue impact quantification comparing periods. GENERIC DISPENSE RATE FOCUS: Calculate GDR changes between comparison periods within the detected scope. Generate comparative analysis showing GDR shifts for therapy classes within first-pass identified entities. Identify therapy classes with significant GDR shifts (>5% change). BRAND TO GENERIC IMPACT ANALYSIS: Quantify revenue impact of brand-to-generic switches through period comparison. Calculate revenue per script differences between brand and generic within same therapy classes across periods. Identify high-impact brand switches contributing to overall variance. FORMULARY CHANGE DETECTION: Look for sudden GDR spikes indicating formulary or policy changes through period comparison analysis. Identify therapy classes where brand utilization dropped significantly. STRATEGIC INSIGHTS FOCUS: Which therapy classes show most significant brand-to-generic shifts between periods? Are generic switches volume-positive but revenue-negative? High-value brands being replaced by generics? SELECTION STRATEGY: Apply intent-based directional ordering with row limits focusing on therapy classes with significant GDR variance between periods."
+      },
 
-    def _create_sql_summary(self, query_results: List[Dict]) -> Dict[str, str]:
-        """Create a simple summary of all SQL queries with their purposes"""
-        
-        print(f"📋 Creating SQL summary for {len(query_results)} queries")
-        
-        sql_summary = {}
-        
-        for result in query_results:
-            query_id = result.get('query_id')
-            sql_summary[query_id] = {
-                'sql': result.get('sql', ''),
-                'purpose': result.get('purpose', ''),
-                'table': result.get('table', ''),
-                'success': result.get('success', False),
-                'row_count': result.get('row_count', 0)
-            }
-        
-        print(f"✅ Created SQL summary with {len(sql_summary)} entries")
-        return sql_summary
+      "operational": {
+        "table_reference": "claims_operational",
+        "dimensions": ["pharmacy_type", "pharmacy_name", "state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["pharmacy_type_performance", "geographic_operational"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Focus operational analysis within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on worst-performing pharmacy types and states (ORDER BY variance ASC LIMIT 15-20). For growing entities, focus on best-performing operational areas (ORDER BY variance DESC LIMIT 15-20). For mixed patterns, analyze both top and bottom operational performers. ROW VOLUME CONTROL: Limit to 15 states for geographic analysis and 20 pharmacies for operational significance analysis. Balance internal vs external pharmacy representation. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Pharmacy type performance analysis with period comparison (internal vs external), (2) Geographic operational patterns by state and pharmacy with period comparison. PHARMACY TYPE PERFORMANCE: Generate comparative analysis (current vs previous period) for pharmacy types within first-pass identified entities. Compare internal Optum-owned vs external pharmacy performance within scope. Identify if variance is concentrated in specific pharmacy types. Calculate revenue per script and script volume trends by pharmacy type across periods. GEOGRAPHIC CONCENTRATION: Identify states/regions driving variance patterns within the entity scope through period comparison. Look for geographic clustering of performance issues or improvements. OPERATIONAL EFFICIENCY INSIGHTS: Compare pharmacy type efficiency metrics (revenue per script, script processing volume) across periods. Identify operational bottlenecks or performance advantages. NETWORK OPTIMIZATION SIGNALS: Are internal pharmacies outperforming external in certain regions? Should pharmacy network mix be optimized? SELECTION STRATEGY: Apply intent-based directional ordering with row limits. Top 15 states by variance impact, top 20 pharmacies by operational significance based on investigation direction."
+      },
 
-    def _consolidate_sql_information(self, query_results: List[Dict], individual_insights: List[Dict], user_question: str) -> Dict:
-        """Consolidate all SQL queries, results, and execution metadata - keeping your existing structure"""
-        
-        print(f"🔍 Consolidating SQL information from {len(query_results)} queries")
-        
-        all_sql_queries = {}
-        all_query_results = {}
-        successful_queries = {}
-        failed_queries = {}
-        execution_summary = []
-        total_rows = 0
-        total_queries = 0
-        
-        for i, result in enumerate(query_results):
-            query_id = result.get('query_id', f'query_{i}')
-            sql_query = result.get('sql', '')
-            success = result.get('success', False)
-            
-            # Store queries with full context
-            all_sql_queries[query_id] = {
-                'query_id': query_id,
-                'table': result.get('table', 'unknown'),
-                'purpose': result.get('purpose', ''),
-                'sql': sql_query,
-                'user_question': user_question,
-                'timestamp': datetime.now().isoformat(),
-                'retry_count': result.get('retry_count', 0)
-            }
-            total_queries += 1
-            
-            # Store results with metadata
-            query_data = result.get('result', [])
-            result_count = len(query_data) if query_data else 0
-            total_rows += result_count
-            
-            all_query_results[query_id] = {
-                'query_id': query_id,
-                'table': result.get('table', 'unknown'),
-                'results': query_data,
-                'row_count': result_count,
-                'has_data': result_count > 0,
-                'insight': individual_insights[i].get('insight', '') if i < len(individual_insights) else '',
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            # Categorize successful vs failed queries
-            if success:
-                successful_queries[query_id] = {
-                    'query_id': query_id,
-                    'table': result.get('table', 'unknown'),
-                    'row_count': result_count,
-                    'sql': sql_query,
-                    'retry_count': result.get('retry_count', 0)
-                }
-            else:
-                failed_queries[query_id] = {
-                    'query_id': query_id,
-                    'table': result.get('table', 'unknown'),
-                    'error': result.get('error', 'Unknown error'),
-                    'sql': sql_query,
-                    'retry_history': result.get('retry_history', [])
-                }
-            
-            # Create execution summary for this query
-            query_summary = {
-                'query_id': query_id,
-                'table': result.get('table', 'unknown'),
-                'success': success,
-                'rows_returned': result_count,
-                'retry_count': result.get('retry_count', 0),
-                'execution_time': result.get('execution_time', 'N/A'),
-                'error': result.get('error') if not success else None
-            }
-            execution_summary.append(query_summary)
-        
-        consolidated_info = {
-            'all_sql_queries': all_sql_queries,
-            'all_query_results': all_query_results,
-            'successful_queries': successful_queries,
-            'failed_queries': failed_queries,
-            'execution_summary': execution_summary,
-            'total_queries': total_queries,
-            'total_rows': total_rows,
-            'successful_query_count': len(successful_queries),
-            'failed_query_count': len(failed_queries)
-        }
-        
-        # Log summary
-        print(f"📊 SQL Consolidation Summary:")
-        print(f"  📝 Total queries: {total_queries}")
-        print(f"  ✅ Successful: {len(successful_queries)}")
-        print(f"  ❌ Failed: {len(failed_queries)}")
-        print(f"  📈 Total rows: {total_rows}")
-        
-        return consolidated_info
-    
-    def _generate_all_sql_queries(self, knowledge_graph_rows: List[Dict], user_question: str,question_type:str) -> List[Dict]:
-        """Generate SQL queries from multiple knowledge graph rows"""
-        
-        print(f"🔍 Processing {len(knowledge_graph_rows)} knowledge graph rows for SQL generation")
-        
-        all_queries = []
-        
-        for i, kg_row in enumerate(knowledge_graph_rows):
-            row_id = kg_row.get('id', f'row_{i}')
-            root_cause_kg = kg_row.get('root_cause_kg', {})
-            
-            # No need to parse JSON - it's already structured
-            if not root_cause_kg:
-                print(f"⚠️ No root_cause_kg data for row {row_id}")
-                continue
-            
-            print(f"🔍 Generating SQL queries for knowledge graph row: {row_id}")
-            
-            # Generate SQL queries for this knowledge graph (pass structured data directly)
-            row_queries = self._generate_sql_queries_for_single_kg(root_cause_kg, user_question, row_id,question_type)
-            print('row_queries',row_queries)
-            # Add row identifier to each query
-            for query in row_queries:
-                query['kg_row_id'] = row_id
-                query['kg_row_index'] = i
-            
-            all_queries.extend(row_queries)
-        
-        print(f"✅ Generated total {len(all_queries)} SQL queries from {len(knowledge_graph_rows)} knowledge graph rows")
-        
-        return all_queries
+      "geographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["state_variance_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze geographic patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on worst-performing states (ORDER BY variance ASC LIMIT 15). For growing entities, focus on best-performing states (ORDER BY variance DESC LIMIT 15). For mixed patterns, include both top 8 and bottom 8 states. ROW VOLUME CONTROL: Limit to 15 states maximum for focused geographic analysis with regional clustering capability. SINGLE-SQL APPROACH: Generate comprehensive state-level analysis with regional clustering in one query using CASE statements for regional groupings and period comparison. GEOGRAPHIC VARIANCE CONCENTRATION: Generate comparative analysis (current vs previous period) for states within first-pass identified entities. Identify which states contribute most to variance patterns identified in first-pass. Look for regional clustering of similar performance patterns. STATE-LEVEL MARKET DYNAMICS: Compare state-level performance trends within the entity scope across periods. Identify states with disproportionate variance contribution (>5% of total). REGIONAL PATTERN RECOGNITION: Are variance patterns concentrated in specific geographic regions (West Coast, Southeast, etc.)? Do certain states show opposite trends (some growing, others declining) through period comparison? MARKET SHARE IMPLICATIONS: Within entity scope, identify states where market position may be strengthening or weakening through period comparison. REGULATORY OR COMPETITIVE FACTORS: Flag states with unusual patterns that might indicate regulatory changes or competitive pressures through period analysis. SELECTION STRATEGY: Apply intent-based directional ordering with 15-state limit. Focus on states most relevant to investigation direction while including both high-performing and underperforming states for balanced analysis."
+      },
 
+      "demographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["demographic_utilization_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze demographic patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining entities, focus on demographic segments showing worst performance (ORDER BY variance ASC LIMIT 10-15). For growing entities, focus on best-performing demographic segments (ORDER BY variance DESC LIMIT 10-15). For mixed patterns, analyze both top and bottom demographic segments. ROW VOLUME CONTROL: Limit to 10-15 demographic segments (age cohorts and gender combinations) for manageable analysis while ensuring significant coverage. SINGLE-SQL APPROACH: Generate comprehensive demographic analysis combining age cohorts and gender patterns in one query with member-level aggregations and period comparison. AGE SEGMENTATION ANALYSIS: Generate comparative analysis (current vs previous period) for age cohorts within first-pass identified entities. Create age cohorts (18-34, 35-54, 55-64, 65+) and analyze variance by age group. Identify which age segments driving variance patterns from first-pass. MEMBER STRENGTH AND CONCENTRATION: Calculate member counts and average revenue per member by demographic segments across periods. Identify high-value member segments showing variance patterns. MEMBER UTILIZATION INTENSITY: Analyze scripts per member and revenue per member trends by demographic groups across periods. Identify if variance is driven by member behavior changes or population mix shifts. GENDER-BASED UTILIZATION PATTERNS: Compare male vs female utilization patterns within entity scope across periods. Identify gender-specific therapeutic or utilization trends contributing to variance. DEMOGRAPHIC RISK ASSESSMENT: Which demographic segments show concerning utilization or revenue trends based on investigation direction through period comparison? SELECTION STRATEGY: Apply intent-based directional ordering with demographic segment limits. Focus on age segments with significant variance impact based on investigation direction."
+      },
 
-    def _generate_sql_queries_for_single_kg(self, knowledge_graph: Dict, user_question: str, kg_id: str, question_type: str) -> List[Dict]:
-        """Generate SQL queries for a single knowledge graph - your existing logic"""
-        
-        sql_generation_prompt = f"""
-                You are Databricks SQL Expert Agent and your objective Build SQL queries to support Healthcare Finance Deep Analysis using Databricks
+      "utilization": {
+        "table_reference": "claims_operational",
+        "dimensions": ["member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["volume_price_decomposition", "member_utilization_patterns"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze utilization patterns within identified client/LOB context only. INTENT-BASED ROW SELECTION: For declining revenue entities, focus on members with largest utilization drops or concerning patterns (ORDER BY variance ASC LIMIT 20). For growing entities, focus on members with highest utilization increases (ORDER BY variance DESC LIMIT 20). For mixed patterns, analyze both high-growth and declining utilization members. ROW VOLUME CONTROL: Limit to 20 high-impact members for utilization pattern analysis and focus on member segments representing significant utilization variance. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Volume vs price variance decomposition with period comparison, (2) Member-level utilization pattern analysis with period comparison. VOLUME vs PRICE VARIANCE DECOMPOSITION: Generate comparative analysis (current vs previous period) separating variance into script volume changes vs revenue per script changes within first-pass identified entities. Identify whether variance is primarily volume-driven or price-driven within entity scope. MEMBER-LEVEL UTILIZATION INTENSITY: Calculate scripts per member and revenue per member trends across periods within first-pass identified entities. Identify high-utilization members driving variance patterns. UTILIZATION PATTERN SEGMENTATION: Segment members by utilization intensity (low, medium, high utilizers) and analyze variance contribution by utilization segment across periods. HIGH-VALUE MEMBER ANALYSIS: Identify members with annual pharmaceutical spend >$10K within first-pass entities. Analyze retention, churn, and utilization changes among high-value members based on investigation direction through period comparison. MEMBER UTILIZATION LIFECYCLE: Track member utilization intensity changes between periods within first-pass identified entities. Identify members moving between utilization tiers. UTILIZATION-BASED TARGETING: Which utilization segments require clinical intervention based on investigation direction through period analysis? Members showing concerning utilization spikes or drops? SELECTION STRATEGY: Apply intent-based directional ordering with member limits. Focus on members with significant annual spend variance or utilization change based on investigation direction."
+      }
+    },
 
-                
-                User Question: "{user_question}"
-                Knowledge Graph ID: {kg_id}
-                
-                Available metadata information:
-                {json.dumps(knowledge_graph, indent=2)}
-                
-
-                =============================
-                SYSTEM PROMPT - Databricks SQL Agent
-                =============================
-
-                [ROLE & PURPOSE]
-                - Generate **multiple Databricks SQL queries** aligned with the user's intent and metadata.
-                - Follow all rules, recipes, and ranking logic from metadata (including llm_instructions).
-
-                [RULES]
-                1. **Understand intent**:
-                - Detect if the question is about single period, MoM, QoQ, YoY, growth, or decline.
-                - Use llm_instructions.comparison_modes and parameters for time windows and thresholds.
-                2.**METADATA COVERAGE & VALIDATION**
-                - Before generating SQL, parse the metadata JSON and build an internal index of:
-                (a) datasets (id, table, columns, date, metrics),
-                (b) all group_set entries and each group_set's query_hint,
-                (c) llm_instructions (parameters, comparison_modes, ranking_policy, growth/decline recipes),
-                (d) sample_questions (for intent steering; do not copy verbatim).
-                - Coverage policy:
-                * General questions → produce 5-8 meaningful queries that collectively cover every group_set in each relevant dataset (ledger and/or claims), unless the user explicitly restricts scope.
-                * Attribute-specific questions → focus on the attribute but still pair it with 4–5 other group_sets to surface drivers.
-                * Always apply dataset default filters from metadata.
-                * Always respect group_set.query_hint to determine ORDER BY and LIMIT semantics.
-                - Comparison & time grain:
-                * Select comparison_mode from llm_instructions.comparison_modes: single_period, MoM, QoQ, YoY_month, YoY_quarter.
-                * Use dataset.date.default_grain unless the user specifies month/quarter explicitly.
-                * Follow llm_instructions.parameters for recent/baseline windows, thresholds, seasonality, and date_alignment_policy (MTD/QTD vs prior MTD/QTD if current period incomplete).
-                - Growth vs Decline:
-                * Growth → rank by positive pct_change (tie-break abs_change) after applying baseline thresholds from parameters.
-                * Decline → rank by negative pct_change (tie-break abs_change) and require baseline strength (baseline_avg >= threshold) to exclude chronic underperformers; optionally check moving-average slope and, in claims, delta_rev_per_script if applicable.
-                - Query hint application:
-                * 'top_10' → ORDER BY primary metric (single_period) or pct_change (comparative) DESC LIMIT 10.
-                * 'bottom_10' → ORDER BY primary metric or pct_change ASC LIMIT 10.
-                * 'All' → return all groups sorted by primary metric DESC unless user specifies otherwise.
-                6. **Output format**:
-                - Return queries wrapped in XML tags with proper structure
-                7. **Databricks SQL rules**:
-                - Use exact table and column names from metadata.
-                - Apply DATE_TRUNC for month/quarter.
-                - Return YYYY-MM for monthly analysis.
-                - Round percentages to 2 decimals.
-                - Always include overall totals in attribute-level queries.
-                        
-                =============================
-                RESPONSE FORMAT
-                =============================
-                Return the SQL queries wrapped in XML tags. You can use proper SQL formatting with line breaks.
-
-                <queries>
-                <query>
-                    <query_id>title_of_query_1</query_id>
-                    <table>ledger</table>
-                    <purpose>Monthly revenue trend analysis</purpose>
-                    <sql>
-                    SELECT line_of_business, 
-                        DATE_TRUNC('month', fscl_date) AS month, 
-                        SUM(amount) AS revenue 
-                    FROM table_name 
-                    WHERE conditions 
-                    GROUP BY line_of_business, month 
-                    ORDER BY month
-                    </sql>
-                    <narrative>Analyzes monthly revenue trends by business line to identify growth patterns.</narrative>
-                </query>
-                <query>
-                    <query_id>title_of_query_2</query_id>
-                    <table>claims</table>
-                    <purpose>Top performing regions</purpose>
-                    <sql>
-                    SELECT region,
-                        SUM(revenue_amt) as total_revenue,
-                        COUNT(*) as script_count
-                    FROM claims_table
-                    WHERE year = 2025
-                    GROUP BY region
-                    ORDER BY total_revenue DESC
-                    LIMIT 10
-                    </sql>
-                    <narrative>Identifies top 10 regions by total revenue for current year analysis.</narrative>
-                </query>
-                </queries>
-
-                IMPORTANT: You can use proper SQL formatting with indentation and line breaks inside the <sql> tags.
-                """
-        
-        
-        try:
-            # Generate queries for this specific knowledge graph
-            llm_response = self.db_client.call_claude_api_endpoint([
-                {"role": "user", "content": sql_generation_prompt}
-            ])
-            print('drill through response',llm_response)
-            # Parse XML response
-            queries = self._parse_xml_queries(llm_response)
-            print('root cause sql response', queries)
-            print(f"✅ Generated {len(queries)} SQL queries for KG {kg_id}")
-            print('queries inside llm',queries)
-            return queries
-            
-        except Exception as e:
-            print(f"❌ SQL generation failed for KG {kg_id}: {str(e)}")
-            return []
-
-    def _parse_xml_queries(self, xml_response: str) -> List[Dict]:
-        """Parse XML response to extract multiple SQL queries"""
-        import re
-
-        queries = []
-
-        try:
-            # Debug: Print the response to see what we're working with
-            print("XML Response length:", len(xml_response))
-            print("XML Response preview:", xml_response[:500] + "..." if len(xml_response) > 500 else xml_response)
-
-            # Find all query blocks
-            query_blocks = re.findall(r'<query>(.*?)</query>', xml_response, re.DOTALL)
-            print(f"Found {len(query_blocks)} query blocks")
-
-            for i, block in enumerate(query_blocks):
-                try:
-                    print(f"Processing block {i+1}")
-
-                    # Extract individual fields with more robust regex
-                    query_id = re.search(r'<query_id>\s*(.*?)\s*</query_id>', block, re.DOTALL)
-                    table = re.search(r'<table>\s*(.*?)\s*</table>', block, re.DOTALL)
-                    purpose = re.search(r'<purpose>\s*(.*?)\s*</purpose>', block, re.DOTALL)
-                    sql = re.search(r'<sql>\s*(.*?)\s*</sql>', block, re.DOTALL)
-                    narrative = re.search(r'<narrative>\s*(.*?)\s*</narrative>', block, re.DOTALL)
-
-                    if query_id and table and purpose and sql and narrative:
-                        query_dict = {
-                            "query_id": query_id.group(1).strip(),
-                            "table": table.group(1).strip(),
-                            "purpose": purpose.group(1).strip(),
-                            "sql": sql.group(1).strip().replace('`', ''),  # Remove backticks, keep formatting
-                            "narrative": narrative.group(1).strip()
-                        }
-                        queries.append(query_dict)
-                        print(f"✅ Successfully parsed query: {query_dict['query_id']}")
-                    else:
-                        print(f"❌ Missing fields in block {i+1}")
-                        print(f" query_id: {'✓' if query_id else '✗'}")
-                        print(f" table: {'✓' if table else '✗'}")
-                        print(f" purpose: {'✓' if purpose else '✗'}")
-                        print(f" sql: {'✓' if sql else '✗'}")
-                        print(f" narrative: {'✓' if narrative else '✗'}")
-
-                except Exception as e:
-                    print(f"⚠️ Failed to parse query block {i+1}: {str(e)}")
-                    continue
-
-        except Exception as e:
-            print(f"❌ Critical error in XML parsing: {str(e)}")
-            return []  # Return empty list instead of None
-
-        print(f"Final result: {len(queries)} queries parsed successfully")
-        return queries
-    
-
-
-    def select_and_merge_rootcause_matches(self, search_results: List[Dict], user_question: str) -> List[Dict]:
-        """Use LLM to select the SINGLE best match by ID based on keyword relevance and question context"""
-        
-        if not search_results:
-            raise Exception("No search results provided for root cause selection")
-        
-        # DEBUG: Print all search results with their IDs
-        print(f"🔍 DEBUG - Available search results:")
-        for result in search_results:
-            print(f"  ID={result.get('id')}, Description={result.get('description', 'N/A')}")
-        
-        # Prepare options for LLM selection - focus on IDs and descriptions
-        options_text = []
-        available_ids = []
-        for result in search_results:
-            result_id = result.get('id')
-            description = result.get('description', 'N/A')
-            available_ids.append(result_id)
-            options_text.append(f"""
-                ID: {result_id}
-                Description: {description}
-            """)
-        
-        selection_prompt = f"""
-        Healthcare Finance Root Cause Analysis - Knowledge Graph Selection by ID:
-        
-        User Question: "{user_question}"
-        
-        Available Knowledge Graphs:
-        {chr(10).join(options_text)}
-        
-        SELECTION CRITERIA:
-        1. KEYWORD MATCHING: Match user question keywords with knowledge graph descriptions
-        - "claims" keyword → choose claims-focused knowledge graph
-        - "ledger" keyword → choose ledger-focused knowledge graph
-        - "revenue" keyword → relevant to both, use other context
-        
-        2. SPECIFIC vs HOLISTIC: 
-        - If question mentions specific topics (claims, drugs, pharmacy) → choose the specific match
-        - If question is general → choose the broader knowledge graph
-        
-        3. RELEVANCE: Focus on which knowledge graph BEST addresses the user's specific question
-        
-        CRITICAL INSTRUCTIONS:
-        - Analyze the user question: "{user_question}"
-        - Select the SINGLE most relevant knowledge graph ID
-        - Available IDs: {', '.join(map(str, available_ids))}
-        - Return ONLY the ID (no option numbers, no index conversion needed)
-        
-        Response format (return EXACTLY this JSON structure):
-        {{
-            "selected_id": "the_actual_id_here",
-            "reasoning": "Explanation of why this knowledge graph ID was selected based on keyword matching between user question and description"
-        }}
-        
-        Analyze the user question "{user_question}" and select the best knowledge graph ID:
-        """
-        
-        try:
-            # Call LLM to select best match by ID
-            llm_response = self.db_client.call_claude_api_endpoint([
-                {"role": "user", "content": selection_prompt}
-            ])
-            
-            selection_result = json.loads(llm_response)
-            selected_id = selection_result.get('selected_id')
-            reasoning = selection_result.get('reasoning', '')
-            
-            print(f"🎯 LLM selected knowledge graph ID: {selected_id}")
-            print(f"📝 Selection reasoning: {reasoning}")
-            
-            # Validate that the selected ID exists in our search results
-            valid_ids = [str(result.get('id')) for result in search_results]
-            if str(selected_id) not in valid_ids:
-                print(f"⚠️ Invalid ID selected: {selected_id}")
-                print(f"⚠️ Valid IDs are: {valid_ids}")
-                print("⚠️ Using first result as fallback")
-                selected_id = search_results[0].get('id')
-            
-            print(f"✅ Final selected knowledge graph ID: {selected_id}")
-            
-            # Now call SQL to get the complete knowledge graph data
-            return self._get_knowledge_graph_by_sql(selected_id)
-            
-        except Exception as e:
-            print(f"❌ LLM selection failed: {str(e)}")
-            # Fallback: use first result
-            if search_results:
-                fallback_id = search_results[0].get('id')
-                print(f"🔍 DEBUG - Exception fallback ID: {fallback_id}")
-                return self._get_knowledge_graph_by_sql(fallback_id)
-            else:
-                raise Exception("No fallback option available")
-
-    def _get_knowledge_graph_by_sql(self, root_id: int) -> List[Dict]:
-        """Execute SQL template to get knowledge graph data for the selected ID"""
-        
-        sql_template = """
-        select group_id as id, merged_datasets_json as root_cause_kg from (
-        WITH root AS (
-        SELECT *
-        FROM prd_optumrx_orxfdmprdsa.rag.knowledge_unit
-        WHERE unit_id = :id AND status = 'active'
-        ),
-        rels AS (   -- only composed_of
-        SELECT dst_unit_id, ordinal, merge_with_parent
-        FROM prd_optumrx_orxfdmprdsa.rag.unit_relationship
-        WHERE src_unit_id = :id
-            AND is_enabled = true
-            AND rel_type = 'composed_of'
-        ),
-        all_nodes AS (   -- parent + children
-        SELECT 'self' AS relation, 0 AS ordinal, r.unit_id AS unit_id, TRUE AS merge_with_parent
-        FROM root r
-        UNION ALL
-        SELECT 'composed_of' AS relation, ordinal, dst_unit_id AS unit_id, merge_with_parent
-        FROM rels
-        ),
-        joined AS (   -- attach JSON and extract datasets array as raw JSON string
-        SELECT
-            a.relation,
-            a.ordinal,
-            a.unit_id,
-            a.merge_with_parent,
-            get_json_object(ku.root_cause_kg, '$.analysis_config.datasets') AS ds_json
-        FROM all_nodes a
-        JOIN prd_optumrx_orxfdmprdsa.rag.knowledge_unit ku
-            ON ku.unit_id = a.unit_id AND ku.status = 'active'
-        WHERE ku.root_cause_kg IS NOT NULL
-            -- drop null/empty/[] datasets (keep as-is per your version)
-        ),
-        grp AS (   -- decide grouping: parent group vs separate child group
-        SELECT
-            CASE WHEN relation='self' OR merge_with_parent THEN :id ELSE unit_id END AS group_id,
-            /* TWEAK: put parent last so child (dst) comes first in merged JSON */
-            CASE WHEN relation='self' THEN 999999 ELSE ordinal END AS seq,
-            ds_json
-        FROM joined
-        ),
-        agg AS (   -- keep order: children by ordinal, then parent
-        SELECT
-            group_id,
-            sort_array(collect_list(named_struct('seq', seq, 'ds', ds_json))) AS parts
-        FROM grp
-        GROUP BY group_id
-        )
-        SELECT
-        group_id,
-        -- Append arrays by stripping each outer [ ] and concatenating with commas
-        concat(
-            '[',
-            concat_ws(',', transform(parts, p -> regexp_replace(p.ds, '(^\\\\[)|(\\\\]$)', ''))),
-            ']'
-        ) AS merged_datasets_json
-        FROM agg
-        ORDER BY CASE WHEN group_id = :id THEN 0 ELSE 1 END, group_id)
-        order by group_id
-        """
-        
-        try:
-            print(f"🔍 Executing SQL query for knowledge graph ID: {root_id}")
-            
-            # Replace the parameter in SQL
-            final_sql = sql_template.replace(':id', f"{root_id}")
-            
-            # Execute SQL
-            matched_graph_rows = self.db_client.execute_sql(final_sql)
-            
-            if not matched_graph_rows:
-                raise Exception(f"No knowledge graph data found for ID: {root_id}")
-            
-            print(f"✅ Retrieved {len(matched_graph_rows)} knowledge graph rows")
-            
-            # Return the raw results (multiple rows with id and root_cause_kg)
-            return matched_graph_rows
-            
-        except Exception as e:
-            print(f"❌ SQL execution failed for ID {root_id}: {str(e)}")
-            raise Exception(f"Failed to retrieve knowledge graph data: {str(e)}")
-        
-    def _get_knowledge_graph(self, user_question: str) -> List[Dict]:
-        """Get knowledge graph from vector embeddings with improved single selection and SQL retrieval"""
-    
-        try:
-            print(f"🔍 Step 1.1: Vector search for root cause knowledge graphs")
-            
-            # Vector search to get root cause knowledge graphs (only id and description)
-            search_results = self.db_client.vector_search_rootcause(
-                query_text=user_question,
-                num_results=5  # Get options for LLM to choose from
-            )
-            print('search results',search_results)
-            if not search_results:
-                raise Exception("No search results found for root cause analysis")
-            
-            print(f"🔍 Step 1.2: LLM single selection and SQL-based retrieval")
-            
-            # Use improved selection function that returns multiple rows from SQL
-            knowledge_graph_rows = self.select_and_merge_rootcause_matches(
-                search_results=search_results,
-                user_question=user_question
-            )
-            
-            if not knowledge_graph_rows:
-                raise Exception("No knowledge graph data retrieved")
-                
-            print(f"✅ Retrieved {len(knowledge_graph_rows)} knowledge graph rows")
-            return knowledge_graph_rows
-            
-        except Exception as e:
-            raise Exception(f"Knowledge graph retrieval failed: {str(e)}")
-
-
-    def _clean_llm_json_response(self, response: str) -> str:
-        """Clean LLM response to extract pure JSON"""
-        
-        # Remove leading/trailing whitespace
-        cleaned = response.strip()
-        
-        # Remove markdown code blocks if present
-        if cleaned.startswith('```json'):
-            cleaned = cleaned[7:]  # Remove ```json
-        elif cleaned.startswith('```'):
-            cleaned = cleaned[3:]   # Remove ```
-        
-        if cleaned.endswith('```'):
-            cleaned = cleaned[:-3]  # Remove closing ```
-        
-        # Remove any leading/trailing whitespace after markdown removal
-        cleaned = cleaned.strip()
-        
-        # Check if it starts with [ (JSON array)
-        if not cleaned.startswith('['):
-            # Try to find the JSON array in the response
-            import re
-            json_match = re.search(r'\[.*\]', cleaned, re.DOTALL)
-            if json_match:
-                cleaned = json_match.group(0)
-            else:
-                raise Exception("No valid JSON array found in LLM response")
-        
-        return cleaned
-    
-    def _execute_queries_parallel_with_retry(self, queries: List[Dict], knowledge_graph: Dict) -> List[Dict]:
-        """Execute all queries in parallel with retry mechanism"""
-        print('inside sql call', queries)
-        if not queries:
-            raise Exception("No queries to execute")
-        
-        print(f"🔄 Step 3: Executing {len(queries)} queries in parallel with retry mechanism")
-        
-        # Get config for retry context
-        config = knowledge_graph
-        
-        # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            # Submit all tasks
-            future_to_query = {
-                executor.submit(self._execute_single_query_with_retry, query, config): query 
-                for query in queries
-            }
-            
-            # Collect results
-            query_results = []
-            for future in concurrent.futures.as_completed(future_to_query):
-                query = future_to_query[future]
-                try:
-                    result = future.result()
-                    query_results.append(result)
-                    if result.get('success'):
-                        print(f"✅ Completed query: {query.get('query_id')} (Rows: {result.get('row_count', 0)}, Retries: {result.get('retry_count', 0)})")
-                    else:
-                        print(f"❌ Failed query: {query.get('query_id')} after all retries")
-                except Exception as e:
-                    print(f"❌ Unexpected error for query {query.get('query_id')}: {str(e)}")
-                    query_results.append({
-                        'query_id': query.get('query_id'),
-                        'table': query.get('table'),
-                        'purpose': query.get('purpose'),
-                        'sql': query.get('sql'),
-                        'narrative': query.get('narrative', ''),
-                        'error': str(e),
-                        'success': False,
-                        'retry_count': 0,
-                        'row_count': 0
-                    })
-        
-        print(f"✅ Completed executing {len(query_results)} queries")
-        successful = len([r for r in query_results if r.get('success')])
-        print(f"📊 Success rate: {successful}/{len(query_results)} queries")
-        
-        return query_results
-
-    def _execute_single_query_with_retry(self, query: Dict, config: Dict, max_retries: int = 2) -> Dict:
-        """Execute a single query with retry mechanism"""
-        
-        query_id = query.get('query_id')
-        original_sql = query.get('sql')  # Extract SQL from query dict
-        table = query.get('table')
-        purpose = query.get('purpose')
-        narrative = query.get('narrative', '')
-        retry_history = []
-        
-        current_sql = original_sql
-        retry_count = 0
-        
-        while retry_count <= max_retries:
-            try:
-                # Execute the SQL string (not the full query dict)
-                start_time = datetime.now()
-                result_data = self.db_client.execute_sql(current_sql)  # Pass only SQL string
-                execution_time = (datetime.now() - start_time).total_seconds()
-                
-                # Success!
-                return {
-                    'query_id': query_id,
-                    'table': table,
-                    'purpose': purpose,
-                    'narrative': narrative,
-                    'sql': current_sql,
-                    'original_sql': original_sql if retry_count > 0 else None,
-                    'result': result_data,
-                    'row_count': len(result_data) if result_data else 0,
-                    'success': True,
-                    'retry_count': retry_count,
-                    'retry_history': retry_history,
-                    'execution_time': f"{execution_time:.2f}s"
-                }
-                
-            except Exception as e:
-                error_msg = str(e)
-                retry_history.append({
-                    'attempt': retry_count + 1,
-                    'sql': current_sql,
-                    'error': error_msg
-                })
-                
-                print(f"⚠️ Query {query_id} failed (attempt {retry_count + 1}): {error_msg}")
-                
-                if retry_count < max_retries:
-                    # Try to fix the SQL using LLM
-                    retry_count += 1
-                    print(f"🔧 Attempting to fix SQL (retry {retry_count}/{max_retries})")
-                    
-                    fixed_sql = self._fix_sql_with_llm(
-                        current_sql, 
-                        error_msg, 
-                        table,
-                        config
-                    )
-                    
-                    if fixed_sql and fixed_sql != current_sql:
-                        current_sql = fixed_sql
-                        print(f"🔄 Retrying with fixed SQL for query {query_id}")
-                    else:
-                        # LLM couldn't fix it or returned same SQL
-                        break
-                else:
-                    # Max retries reached
-                    break
-        
-        # All retries failed
-        return {
-            'query_id': query_id,
-            'table': table,
-            'purpose': purpose,
-            'narrative': narrative,
-            'sql': original_sql,
-            'result': None,
-            'error': retry_history[-1]['error'] if retry_history else 'Unknown error',
-            'success': False,
-            'retry_count': retry_count,
-            'retry_history': retry_history,
-            'row_count': 0
-        }
-
-    def _fix_sql_with_llm(self, failed_sql: str, error_message: str, table_name: str, config: Dict) -> str:
-        """Use LLM to fix SQL based on error message with XML response"""
-
-        fix_prompt = f"""
-            You are an expert Databricks SQL developer. A SQL query has **FAILED** and needs to be **FIXED or REWRITTEN**.
-
-            ==============================
-            CONTEXT
-            ==============================
-            Failed SQL:
-            {failed_sql}
-            
-            Error Message:
-            {error_message}
-            
-            Table: {table_name}
-            
-            Table Configuration:
-            {json.dumps(config, indent=2)}
-
-            ============================== INSTRUCTIONS
-            Identify the issue based on the error message and metadata.
-            Fix the SQL syntax or rewrite the query if needed.
-            Ensure the corrected query answers the original user question.
-            Use only valid column names and Databricks-compatible SQL.
-            ============================== RESPONSE FORMAT
-            Return ONLY the fixed SQL query wrapped in XML tags. No other text, explanations, or formatting.
-
-            <sql>
-            SELECT ...your fixed SQL here...
-            </sql>
-
-            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the <sql> tags. This makes the SQL readable and maintainable.
-            """                   
-
-        try:
-            llm_response = self.db_client.call_claude_api_endpoint([
-                {"role": "user", "content": fix_prompt}
-            ])
-            
-            print(f"🔍 Raw LLM fix response: {repr(llm_response)}")
-            
-            # Extract SQL from XML tags
-            import re
-            match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-            if match:
-                fixed_sql = match.group(1).strip()
-                fixed_sql = fixed_sql.replace('`', '')  # Remove backticks
-                return fixed_sql if fixed_sql else None
-            else:
-                print("❌ No SQL found in XML tags")
-                return None
-
-        except Exception as e:
-            print(f"❌ LLM SQL fix failed: {str(e)}")
-            return None
-
-    def _clean_llm_fix_response(self, response: str) -> str:
-        """Clean LLM response to extract JSON for SQL fix"""
-        
-        # Remove leading/trailing whitespace
-        cleaned = response.strip()
-        
-        # Remove markdown code blocks if present
-        if cleaned.startswith('```json'):
-            cleaned = cleaned[7:]  # Remove ```json
-        elif cleaned.startswith('```'):
-            cleaned = cleaned[3:]   # Remove ```
-        
-        if cleaned.endswith('```'):
-            cleaned = cleaned[:-3]  # Remove closing ```
-        
-        # Remove any leading/trailing whitespace after markdown removal
-        cleaned = cleaned.strip()
-        
-        # Check if it starts with { (JSON object)
-        if not cleaned.startswith('{'):
-            # Try to find the JSON object in the response
-            import re
-            json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-            if json_match:
-                cleaned = json_match.group(0)
-            else:
-                raise Exception("No valid JSON object found in LLM response")
-        
-        return cleaned
-    
-    def _generate_individual_insights(self, query_results: List[Dict], user_question: str) -> List[Dict]:
-        """Generate insights for each individual query result with chart recommendations"""
-        
-        print(f"💡 Step 4: Generating insights with chart recommendations for {len(query_results)} query results")
-        
-        insights = []
-        
-        for result in query_results:
-            if result.get('success') and result.get('result'):
-                # Generate insight with chart recommendation for successful query with data
-                insight_with_chart = self._generate_single_insight_with_chart(result, user_question)
-                insights.append({
-                    'query_id': result.get('query_id'),
-                    'table': result.get('table'),
-                    'purpose': result.get('purpose'),
-                    'row_count': result.get('row_count', 0),
-                    'insight_text': insight_with_chart.get('insight_text', ''),
-                    'chart_recommendation': insight_with_chart.get('chart_recommendation', {}),
-                    'has_data': True
-                })
-            elif result.get('success') and not result.get('result'):
-                # Successful query but no data
-                insights.append({
-                    'query_id': result.get('query_id'),
-                    'table': result.get('table'),
-                    'purpose': result.get('purpose'),
-                    'row_count': 0,
-                    'insight_text': f"No data found for {result.get('purpose', 'this query')}",
-                    'chart_recommendation': {},
-                    'has_data': False
-                })
-            else:
-                # Failed query
-                insights.append({
-                    'query_id': result.get('query_id'),
-                    'table': result.get('table'),
-                    'purpose': result.get('purpose'),
-                    'row_count': 0,
-                    'insight_text': f"Analysis failed: {result.get('error', 'Unknown error')}",
-                    'chart_recommendation': {},
-                    'has_data': False
-                })
-        
-        print(f"✅ Generated {len(insights)} individual insights with chart recommendations")
-        return insights
-
-    def _generate_single_insight_with_chart(self, query_result: Dict, user_question: str) -> Dict:
-        """Generate insight and chart recommendation for a single query result"""
-        
-        # Prepare data summary for LLM
-        result_data = query_result.get('result', [])
-        
-        # Limit data for prompt (top 10 rows for LLM analysis)
-        sample_data = result_data[:500] if len(result_data) > 10 else result_data
-        print('sample data',sample_data)
-        # Get column information from sample data
-        columns_info = []
-        if sample_data and len(sample_data) > 0:
-            first_row = sample_data[0]
-            for key, value in first_row.items():
-                # Determine data type
-                data_type = "numeric" if isinstance(value, (int, float)) else "categorical"
-                if "date" in key.lower() or "time" in key.lower() or "month" in key.lower():
-                    data_type = "temporal"
-                columns_info.append(f"- {key}: {data_type}")
-        
-        insight_prompt = f"""
-            Generate a concise, finance-ready insight and chart recommendation from this query result.
-            
-            User Question: "{user_question}"
-            Query Purpose: {query_result.get('purpose')}
-            Table: {query_result.get('table')}
-            Total Rows: {query_result.get('row_count')}
-            
-            Available Columns:
-            {chr(10).join(columns_info)}
-            
-            Sample Data (top rows):
-            {json.dumps(sample_data, indent=2)}
-            
-            ========================
-            GOAL & AUDIENCE
-            ========================
-            Goal: Turn SQL result tables into crisp, bullet-only insights for finance leaders.
-            Audience: FP&A and operations leaders; expect variance, drivers/suppressors, concentration, and trend callouts.
-            
-            ========================
-            INPUTS
-            ========================
-            User context: user_question, time_scope, time_grain, currency, primary_metric, top_n, comparison_scope.
-            Result tables: totals, top, bottom; optional attribution, notes.
-            Metadata: main_attribute, other_groupsets, date_format.
-            
-            ========================
-            CORE COMPUTATIONS (done silently, not shown in output)
-            ========================
-            - Totals & change: per period_key compute delta, pct_change (baseline=0 or missing → pct=null).
-            - Concentration: latest period top-N share; items to ~80% (Pareto).
-            - Drivers/Suppressors: rank by absolute delta (prefer attribution; else infer from top/bottom changes).
-            - Trend shape: compare last 2–3 periods’ growth rates; detect accelerations, slowdowns, reversals.
-            - Scope clarity: always state subset context (e.g., “within Client X”).
-            
-            ========================
-            NARRATIVE RULES
-            ========================
-            - Bullet points only inside "insight_text".
-            - No recommendations or actions—insights only.
-            - Use absolute dates from data; avoid “this month”.
-            - Auto-scale numbers:
-            - ≥1B → currency x.xB
-            - ≥1M → currency x.xM
-            - ≥1K → currency x.xK
-            - else → raw with thousands separators
-            - Percentages: 1 decimal place.
-            - Keep unit consistent in a section.
-            - Each bullet ≤ 22 words; lead with result, then cause.
-            
-            ========================
-            OUTPUT SECTIONS TO COVER IN BULLETS
-            ========================
-            1. Executive summary (2–3 bullets): direction, magnitude, key drivers/suppressors, scope.
-            2. Metric overview (2–3 bullets): latest value, comparison, delta, pct change, time grain.
-            3. Drivers (3-4 bullets): top contributors (↑) and suppressors (↓) with delta and share of total.
-            4. Concentration (1–3 bullets): top-N share, items to 80%, bottom-N risk.
-            5. Trend insights (2–3 bullets): MoM/DoD/QoQ/YoY changes, accelerations/slowdowns, reversals.
-
-            
-            ========================
-            CHART RECOMMENDATION RULES
-            ========================
-            - Choose from: line_chart (temporal), bar_chart (categorical), grouped_bar_chart (grouped comparisons).
-            - Identify x_axis, y_axis, and group_by (only for grouped_bar_chart).
-            - Give descriptive title and axis labels.
-            - Briefly explain why the chart type is suitable.
-            
-            ========================
-            RESPONSE FORMAT (must match exactly)
-            ========================
-            Return this JSON object only:
-            {{
-                "insight_text": "• Bullet 1\\n• Bullet 2\\n• Bullet 3",
-                "chart_recommendation": {{
-                    "chart_type": "line_chart|bar_chart|grouped_bar_chart",
-                    "x_axis": "column_name_for_x_axis",
-                    "y_axis": "column_name_for_y_axis",
-                    "group_by": "column_name_for_grouping (only for grouped_bar_chart)",
-                    "chart_title": "Descriptive chart title",
-                    "x_axis_label": "X-axis label",
-                    "y_axis_label": "Y-axis label",
-                    "recommended_because": "Brief explanation why this chart type is suitable"
-                }}
-            }}
-            
-            Only return the JSON object—no extra commentary, markdown, or code blocks.
-            """
-        try:
-            llm_response = self.db_client.call_claude_api_endpoint([
-                {"role": "user", "content": insight_prompt}
-            ])
-            
-            # Clean and parse the JSON response
-            cleaned_response = self._clean_llm_json_response_for_insight(llm_response)
-            insight_result = json.loads(cleaned_response)
-            
-            return {
-                'insight_text': insight_result.get('insight_text', ''),
-                'chart_recommendation': insight_result.get('chart_recommendation', {})
-            }
-            
-        except Exception as e:
-            print(f"⚠️ Insight generation failed: {str(e)}")
-            return {
-                'insight_text': f"Data retrieved successfully ({query_result.get('row_count')} rows) but insight generation failed.",
-                'chart_recommendation': {}
-            }
-
-    def _clean_llm_json_response_for_insight(self, response: str) -> str:
-        """Clean LLM response to extract JSON for insight generation"""
-        
-        # Remove leading/trailing whitespace
-        cleaned = response.strip()
-        
-        # Remove markdown code blocks if present
-        if cleaned.startswith('```json'):
-            cleaned = cleaned[7:]  # Remove ```json
-        elif cleaned.startswith('```'):
-            cleaned = cleaned[3:]   # Remove ```
-        
-        if cleaned.endswith('```'):
-            cleaned = cleaned[:-3]  # Remove closing ```
-        
-        # Remove any leading/trailing whitespace after markdown removal
-        cleaned = cleaned.strip()
-        
-        # Check if it starts with { (JSON object)
-        if not cleaned.startswith('{'):
-            # Try to find the JSON object in the response
-            import re
-            json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-            if json_match:
-                cleaned = json_match.group(0)
-            else:
-                raise Exception("No valid JSON object found in LLM response")
-        
-        return cleaned
-
-
-    def _generate_consolidated_narrative(self, individual_insights: List[Dict], query_results: List[Dict], user_question: str) -> str:
-        """Generate consolidated narrative using grouped insights by purpose"""
-        
-        print(f"💡 Step 8: Generating consolidated narrative from {len(individual_insights)} insights")
-        
-        # Group insights by purpose
-        insights_by_purpose = {}
-        
-        for i, insight in enumerate(individual_insights):
-            purpose = insight.get('purpose', 'Analysis')
-            
-            # Initialize purpose group if not exists
-            if purpose not in insights_by_purpose:
-                insights_by_purpose[purpose] = {
-                    'purpose': purpose,
-                    'insights': [],
-                    'total_rows': 0,
-                    'query_count': 0
-                }
-            
-            # Add insight data if it has meaningful content
-            if insight.get('has_data', False) and insight.get('insight_text'):
-                insights_by_purpose[purpose]['insights'].append({
-                    'insight_text': insight.get('insight_text', ''),
-                    'row_count': insight.get('row_count', 0),
-                    'table': insight.get('table', ''),
-                    'query_id': insight.get('query_id', '')
-                })
-                insights_by_purpose[purpose]['total_rows'] += insight.get('row_count', 0)
-            
-            insights_by_purpose[purpose]['query_count'] += 1
-        
-        # Generate consolidated narrative using LLM
-        consolidated_narrative = self._generate_consolidated_insights_and_recommendations(insights_by_purpose, user_question)
-        
-        return consolidated_narrative
-
-    def _generate_consolidated_insights_and_recommendations(self, insights_by_purpose: Dict, user_question: str) -> str:
-        """Generate overall narrative using LLM based on grouped insights"""
-        
-        print(f"💡 Generating consolidated narrative from {len(insights_by_purpose)} purpose groups")
-        
-        # Prepare grouped insights for LLM
-        grouped_insights_text = []
-        
-        for purpose, data in insights_by_purpose.items():
-            if data['insights']:  # Only include purposes with actual insights
-                insights_list = []
-                for insight in data['insights']:
-                    insights_list.append(f"• {insight['insight_text']} (Table: {insight['table']}, Rows: {insight['row_count']})")
-                
-                grouped_insights_text.append(f"""
-    **{purpose}** (Total Rows: {data['total_rows']}, Queries: {data['query_count']}):
-    {chr(10).join(insights_list)}
-                """)
-        
-        consolidation_prompt = f"""
-        Healthcare Finance Root Cause Analysis - Consolidated Narrative Generation
-        
-        User Question: "{user_question}"
-        
-        Grouped Analysis Results:
-        {chr(10).join(grouped_insights_text)}
-        
-        INSTRUCTIONS:
-        Generate a comprehensive consolidated narrative that synthesizes all the individual insights above.
-        
-        NARRATIVE STRUCTURE:
-        1. Start with an executive summary of key findings
-        2. Highlight cross-cutting themes and patterns
-        3. Identify the most significant business impacts
-        4. Connect insights between different analysis purposes
-        5. Conclude with overall assessment
-        
-        FORMATTING RULES:
-        - Write in clear, professional paragraphs (not bullet points)
-        - Use specific numbers and trends from the insights
-        - Focus on business impact and financial implications
-        - Keep it concise but comprehensive (4-6 paragraphs)
-        - Use data-driven language
-        
-        Generate a consolidated narrative that synthesizes all the insights:
-        """
-        
-        try:
-            llm_response = self.db_client.call_sonnet_3_api([
-                {"role": "user", "content": consolidation_prompt}
-            ])
-            
-            # Return the narrative directly (no JSON parsing needed)
-            consolidated_narrative = llm_response.strip()
-            
-            print(f"✅ Generated consolidated narrative ({len(consolidated_narrative)} characters)")
-            
-            return consolidated_narrative
-            
-        except Exception as e:
-            print(f"❌ Consolidated narrative generation failed: {str(e)}")
-            
-            # Fallback narrative
-            purposes_list = list(insights_by_purpose.keys())
-            fallback_narrative = f"""
-            Analysis completed across {len(purposes_list)} different analysis purposes for the question: "{user_question}".
-            
-            The investigation covered multiple data sources and generated insights across various business dimensions. 
-            Key findings were identified across {len([p for p in insights_by_purpose.values() if p['insights']])} analysis areas with meaningful data.
-            
-            The analysis processed a total of {sum(p['total_rows'] for p in insights_by_purpose.values())} rows of data 
-            across {sum(p['query_count'] for p in insights_by_purpose.values())} queries, providing comprehensive coverage 
-            of the requested analysis scope.
-            """
-            
-            return fallback_narrative
+    "global_llm_instructions": {
+      "second_pass_orchestration": "You are conducting SECOND-PASS granular operational analysis building on first-pass strategic findings. The investigation scope is inherited from first-pass entity identification (specific clients/LOBs/carriers). Focus on operational and behavioral drivers that explain WHY the strategic variance occurred through comparative period analysis. Use multi-dimensional analysis to provide actionable operational insights.",
+      
+      "dimensional_intelligence": "Select analysis dimensions based on user intent and first-pass findings. If user requests specific dimension (therapeutic, geographic, etc.), focus on that dimension plus 1-2 complementary dimensions. If user requests comprehensive analysis, analyze all relevant dimensions but prioritize based on first-pass variance patterns.",
+      
+      "operational_focus": "Second-pass analysis should explain operational drivers behind first-pass strategic findings through comparative period analysis. Focus on controllable business levers: therapeutic mix optimization, pharmacy network performance, member utilization management, geographic market strategies, brand/generic formulary decisions.",
+      
+      "cross_dimensional_correlation": "Look for correlations across dimensions: Do certain therapy classes concentrate in specific geographies? Are demographic segments driving brand vs generic preferences? Do pharmacy types serve different utilization patterns? Identify multi-dimensional insights that provide comprehensive operational understanding.",
+      
+      "actionable_insight_prioritization": "Prioritize insights that suggest clear business actions through period comparison analysis. Therapeutic formulary adjustments, pharmacy network optimization, member clinical interventions, geographic market strategies, brand/generic policy changes. Focus on insights that operations teams can act upon.",
+      
+      "variance_continuation_logic": "Build narrative continuity with first-pass findings. Use phrases like 'Building on the finding that Client X declined...', 'Drilling deeper into the MAPD LOB variance...', 'Operational analysis reveals that...'. Connect operational insights back to strategic variance patterns through comparative analysis."
+    }
+  }
+}

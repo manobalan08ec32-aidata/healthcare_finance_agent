@@ -4,9 +4,6 @@ You are a Strategic Financial Intelligence Analyst conducting FIRST-PASS analysi
 STRATEGIC CONTEXT:
 - Analysis Type: {investigation_config.get('investigation_type', 'variance_analysis')}
 - Query Level: {query_level}  # LOB/Client/Carrier/Membership
-- Analysis Scope: {analysis_scope}  # "Enterprise-wide" or "C&S LOB focused"
-- Baseline Variance: {baseline_variance}  # Primary scope variance
-- Enterprise Context: {enterprise_context}  # Total enterprise variance for perspective
 - Query Title: "{query_title}"
 
 SQL QUERY EXECUTED:
@@ -15,9 +12,11 @@ SQL QUERY EXECUTED:
 STRATEGIC QUERY RESULTS:
 {sql_data}
 
-DATA QUALITY METRICS:
-- Total Records: {total_records}
-- Record Selection: Top {record_limit} entities by variance impact
+RUNTIME COVERAGE CALCULATION REQUIREMENT:
+- SQL results contain total context columns (total amounts/counts) for coverage calculation
+- Calculate what percentage the individual records represent against total universe
+- Determine if top records explain 70-75% of total variance for strategic focus
+- Use this coverage assessment to guide second-pass investigation scope
 
 ========================
 FIRST-PASS BALANCED SYNTHESIS REQUIREMENTS
@@ -27,218 +26,65 @@ STRATEGIC OBJECTIVE: Generate high-level insights that identify TOP 3-4 variance
 
 AUDIENCE: Strategic analysts who will use these insights to determine balanced second-pass drill-through focus areas.
 
-BALANCED ANALYSIS CONSTRAINTS:
+COVERAGE-AWARE ANALYSIS CONSTRAINTS:
 - Generate exactly 3-4 strategic bullets covering multiple variance contributors
 - Each bullet ≤30 words maximum
+- Calculate coverage percentage from SQL results (individual amounts vs total amounts)
 - Focus on PORTFOLIO of drivers, not single dominant factor
 - Identify diverse contributing entities/patterns for comprehensive second-pass targeting
 - Ensure balanced coverage: positive AND negative contributors
-- Target cumulative explanation of 75-80% variance across multiple drivers
+- Target cumulative explanation using actual coverage percentage calculated from data
 
 STRATEGIC CONTENT STRUCTURE:
 
 1. **PRIMARY VARIANCE PORTFOLIO** (1 bullet):
-   - Top 2-3 entities contributing to variance with cumulative impact
+   - Top 2-3 entities contributing to variance with calculated coverage percentage
    - Use exact values with auto-scaling (≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK)
-   - Show balanced contributors: "Top 3 LOBs drive 78% of $12.3M variance"
+   - Include coverage context: "Top 3 entities represent X% of total variance"
 
 2. **DIRECTIONAL BALANCE PATTERN** (1 bullet):
    - Both positive and negative contributors identified
-   - Avoid single-direction bias: "2 LOBs declining ($8M), 1 LOB growing ($3M)"
+   - Avoid single-direction bias: "X entities declining ($YM), Z entities growing ($WM)"
    - Entity names for second-pass targeting
 
-3. **CONCENTRATION RISK ASSESSMENT** (1 bullet):
-   - Risk distribution across multiple entities/segments
-   - Identify if variance is concentrated or distributed
-   - Signal diversified investigation approach needed
+3. **COVERAGE ASSESSMENT** (1 bullet):
+   - Calculate and report actual coverage percentage from data
+   - If coverage >75%: "Analysis covers X% indicating comprehensive variance capture"
+   - If coverage <75%: "Top entities explain X%, suggesting distributed variance requiring broader investigation"
 
 4. **STRATEGIC DRILL-THROUGH PORTFOLIO** (1 bullet):
-   - Multiple investigation paths for second-pass analysis
-   - 3-4 specific targets that collectively explain majority variance
-   - Balanced focus areas to avoid investigation blind spots
+   - Multiple investigation paths for second-pass analysis based on coverage assessment
+   - 3-4 specific targets that collectively address variance patterns
+   - Balance focus areas based on actual coverage calculated
+
+COVERAGE-BASED TARGETING LOGIC:
+- High Coverage (>75%): Focus second-pass on top contributors identified
+- Medium Coverage (60-75%): Include mid-tier entities in second-pass scope  
+- Low Coverage (<60%): Recommend broader investigation across more entities
 
 BALANCED PORTFOLIO EXAMPLES:
-✓ "Top 3 LOBs (C&S -$7M, E&I -$3M, M&R +$2M) explain 73% of variance across mixed performance patterns"
-✓ "Variance distributed: 5 clients declining ($12M), 3 clients growing ($4M), requiring portfolio-wide investigation"
-✓ "Multi-factor drivers: membership decline (40%), client churn (25%), carrier shifts (15%) require parallel analysis"
+✓ "Top 5 clients represent 78% of variance: 3 declining ($7M), 2 growing ($3M), enabling focused portfolio investigation"
+✓ "LOB variance distributed across entities (coverage 65%), requiring comprehensive multi-LOB investigation approach"
+✓ "Concentrated variance: top 3 carriers drive 82% of impact, allowing targeted operational analysis"
 
-❌ Avoid single-focus bias:
-❌ "C&S LOB drives all variance" (ignores other contributors)
-❌ "Focus only on top declining client" (misses growth opportunities)
-
-CONFIDENCE SCORING FRAMEWORK:
-- High Confidence (>90%): "Analysis clearly shows balanced variance pattern..."
-- Medium Confidence (70-90%): "Data suggests diversified contributors..." 
-- Low Confidence (<70%): "Initial findings indicate multiple factors..." + data quality flag
-- Portfolio Coverage: Track if top contributors explain target 75-80% threshold
-
-SECOND-PASS TARGET DIVERSIFICATION:
-- Ensure 3-4 different investigation paths identified
-- Balance positive/negative variance contributors
-- Include different entity types (clients, carriers, segments)
-- Avoid over-concentration on single pattern
+❌ Avoid ignoring coverage context:
+❌ "Focus only on top entity" (without coverage consideration)
+❌ "Single investigation path" (ignoring coverage distribution)
 
 RESPONSE FORMAT:
-The response MUST be valid JSON with balanced analysis:
+The response MUST be valid JSON with coverage-aware analysis:
 
 {{
-  "narrative_response": "• Primary variance portfolio bullet\\n• Directional balance pattern bullet\\n• Concentration risk assessment bullet\\n• Strategic drill-through portfolio bullet",
-  "confidence_score": 85,
-  "data_quality_flags": ["15% null values in carrier data", "Incomplete membership records for External LOB"],
-  "second_pass_targets": ["Client portfolio analysis for C&S LOB", "Growth driver analysis for M&R LOB", "Carrier investigation for top 3 declining clients", "Membership correlation analysis"],
-  "variance_explanation_coverage": 78,
-  "balance_score": 92
+  "narrative_response": "• Primary variance portfolio with coverage bullet\\n• Directional balance pattern bullet\\n• Coverage assessment bullet\\n• Strategic drill-through portfolio bullet",
+  "confidence_score": [calculated based on coverage and data patterns],
+  "coverage_percentage": [calculated from SQL data],
+  "second_pass_targets": ["Target 1 based on coverage", "Target 2 for balanced analysis", "Target 3 for gaps", "Target 4 for completeness"],
+  "variance_explanation_coverage": [calculated from SQL data],
+  "balance_score": [calculated from data distribution],
+  "investigation_scope": "focused" if coverage > 75 else "comprehensive"
 }}
 
-Generate strategic first-pass insights that guide BALANCED second-pass investigation across multiple variance drivers.
-"""
-
-perfect . I have idea and tell how we can do . say suppose if I want to make it as configuration as UI table in streamlit so that tomorrow if user wants to add another parameter then they can add and llm take care if merging to json and dynamically everything works . is it possible to do . if so how the config table structure should be designed based on this meta data.
-
-1. Confidence Scoring & Data Quality
-
-What: Add confidence indicators when variance explanation is incomplete
-Why: Helps users understand reliability of insights
-Example: "Revenue variance explained: 85% confidence" or "Data quality warning: 15% null values detected"
-
-2. Cross-Validation Logic
-
-What: Validate that child analysis variance sums align with parent variance
-Why: Ensures mathematical consistency across drill-through levels
-Example: If LOB shows -$5M variance, client+carrier analysis should sum to similar impact
-
-3. Seasonality Intelligence
-
-What: Consider PBM business seasonality when interpreting variance
-Why: Avoids false alarms from expected seasonal patterns
-Example: Q1 membership drops might be normal plan year transitions, not concerning churn
-
-4. Anomaly Detection
-
-What: Flag unusual patterns that might indicate data quality issues or exceptional events
-Why: Surfaces insights that pure variance analysis might miss
-Example: "Carrier XYZ revenue increased 500% - potential data anomaly or major contract change"
-
-5. Impact Prioritization Matrix
-
-What: Rank findings by both magnitude AND actionability
-Why: Helps users focus on changes they can actually influence
-Example: Client churn (actionable) vs regulatory changes (less actionable)
-
-prompt = f"""
-You are a Strategic Financial Intelligence SQL Analyst. Generate high-quality Databricks SQL for strategic variance investigation.
-
-USER QUESTION: {current_question}
-
-INVESTIGATION CONFIGURATION:
-{json.dumps(investigation_config, indent=2)}
-
-CURRENT QUERY: {query_key}
-
-==============================
-DIMENSIONAL HIERARCHY INTERPRETATION
-==============================
-
-CRITICAL: Apply dimensional_relationships with CORRECT hierarchy direction (parent→child ONLY).
-
-HIERARCHY APPLICATION PROCESS:
-1. **Detect Focus Dimension**: Identify which dimension the user question targets
-2. **Determine Hierarchy Level**: Find the detected dimension's level in dimensional_relationships
-3. **Apply Scope Containment**: Stay within detected level and its children ONLY - never go up to parents
-4. **Assess Query Relevance**: Use query_dimension_mapping to determine if current query is relevant
-5. **Apply Execution Logic**: Use hierarchy_direction rule (parent_to_child_only_no_reverse_lookup)
-
-CORRECT DIMENSIONAL SCOPE EXAMPLES:
-- "Why did Carrier XYZ revenue drop?" → Focus: carrier_id (level 4) ONLY, no parent analysis
-- "Why did ABC Corp revenue decline?" → Focus: client_name (level 3) + children: carrier_id (level 4)  
-- "How did C&S perform?" → Focus: line_of_business (level 1) + children: product_category, client_name, carrier_id
-- "Why did PBM revenue drop?" → Focus: product_category (level 2) + children: client_name, carrier_id
-
-HIERARCHY DIRECTION RULE:
-- Parent questions → investigate parent + children (comprehensive analysis)
-- Child questions → investigate child level ONLY (focused analysis)
-- NEVER investigate parent levels when child level is the focus
-
-==============================
-VARIANCE DIRECTION ANALYSIS
-==============================
-
-CRITICAL: Apply variance_direction_detection for new/drop/existing entity analysis.
-
-VARIANCE DIRECTION INTERPRETATION:
-1. **Detect Direction Signals**: Use triggers to identify if question implies increase/decrease/neutral variance
-2. **Apply Analysis Focus**: Use analysis_focus (top_performers, bottom_performers, top_and_bottom_performers)
-3. **Implement Mandatory Inclusions**: Always analyze entities specified in mandatory_inclusions
-4. **Entity Status Analysis**: For detected scope level, always identify:
-   - NEW entities (zero prior period presence, current period presence)
-   - DROP entities (prior period presence, zero current period presence)  
-   - EXISTING entities (presence in both periods with variance)
-
-VARIANCE DIRECTION EXAMPLES:
-- "Revenue spike" → Focus: top_performers + mandatory: ["new", "existing_expansions"]
-- "Revenue drop" → Focus: bottom_performers + mandatory: ["drop", "existing_contractions"]
-- "Revenue variance" → Focus: top_and_bottom_performers + mandatory: ["new", "drop", "existing"]
-
-ENTITY STATUS IMPLEMENTATION:
-- Always include entity status identification in SQL (NEW/DROP/EXISTING)
-- Prioritize entities contributing to variance direction (spike = top gainers, drop = biggest losers)
-- Apply mandatory_inclusions regardless of magnitude (always show new additions and departures)
-
-==============================
-CONFIGURATION INTERPRETATION INSTRUCTIONS
-==============================
-
-1. Apply dimensional_relationships with correct hierarchy direction (parent→child only)
-2. Apply variance_direction_detection for new/drop/existing analysis approach
-3. Extract domain_specific_prompts for business intelligence context
-4. Locate the specified query in strategic_queries section using table_reference
-5. Use query_dimension_mapping to assess query relevance to detected dimensional scope
-6. Apply the query-specific llm_instructions for strategic focus and SQL guidance
-7. Use analysis_requirements with hierarchy and variance direction considerations
-8. Apply strategic_filtering_rules from the specific query
-9. Consider variance_explanation_requirements for completeness tracking
-10. Use execution_logic scope_containment rule to stay within appropriate hierarchy level
-
-==============================
-DATABRICKS SQL GENERATION REQUIREMENTS
-==============================
-
-[Previous SQL requirements remain the same]
-
-HIERARCHY-SPECIFIC SQL REQUIREMENTS:
-1. SCOPE CONTAINMENT: Only filter and analyze dimensions within detected hierarchy level and children
-2. ENTITY STATUS IDENTIFICATION: Always identify NEW/DROP/EXISTING status for entities at focus level
-3. VARIANCE DIRECTION ALIGNMENT: Focus SQL results on direction-appropriate performers (top/bottom/both)
-4. MANDATORY INCLUSION LOGIC: Ensure new additions and departures are always shown regardless of magnitude
-
-==============================
-REASONING REQUIREMENT
-==============================
-
-Provide detailed reasoning covering these aspects:
-1. **Dimensional Hierarchy Analysis**: How you detected focus dimension, determined level, and applied parent→child direction rule
-2. **Scope Containment Logic**: How you ensured analysis stays within detected level and children only (no parent lookup)
-3. **Variance Direction Application**: How you applied variance_direction_detection triggers and mandatory_inclusions
-4. **Entity Status Strategy**: How you plan to identify NEW/DROP/EXISTING entities at the focus level
-5. **Query Relevance Assessment**: How you evaluated this query's relevance using dimensional hierarchy
-6. **Shared Metadata Utilization**: How you used table_reference to access shared_table_metadata
-7. **Time Period Extraction**: How you extracted and applied comparison periods from user question
-8. **Configuration Implementation**: How you interpreted and applied the specific query's JSON configuration
-9. **Variance Explanation Focus**: How you prioritized factors contributing to 70% variance explanation target
-
-==============================
-RESPONSE FORMAT
-==============================
-
-<reasoning>
-[Provide comprehensive reasoning following the 9-point structure above, with special emphasis on correct hierarchy direction and variance direction analysis]
-</reasoning>
-
-<sql>
-[Complete, executable Databricks SQL query implementing hierarchy scope containment and variance direction logic]
-</sql>
-
-Generate the strategic SQL query with detailed reasoning now.
+Generate strategic first-pass insights by CALCULATING COVERAGE PERCENTAGE from SQL results to guide balanced second-pass investigation.
 """
     
     return prompt

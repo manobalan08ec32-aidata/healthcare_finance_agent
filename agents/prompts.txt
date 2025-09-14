@@ -1,125 +1,146 @@
-prompt = f"""
-You are a Strategic Operational Intelligence SQL Analyst conducting SECOND-PASS granular analysis. Generate targeted Databricks SQL queries to explain operational drivers behind first-pass strategic findings.
+individual_synthesizer_prompt = f"""
+You are a Strategic Operational Intelligence Analyst conducting focused analysis of a single operational dimension. Generate targeted insights from one SQL result that explain specific operational drivers behind strategic variance.
 
-USER QUESTION: {current_question}
+FIRST-PASS STRATEGIC CONTEXT:
+{first_pass_strategic_findings}
 
-FIRST-PASS STRATEGIC FINDINGS:
-{first_pass_results}
+OPERATIONAL DIMENSION CONTEXT:
+- Analysis Dimension: {operational_dimension}  # (therapeutic, geographic, demographic, etc.)
+- SQL Focus: {sql_breakdown_focus}  # (therapy_class_variance, geographic_patterns, etc.)
+- Strategic Entities: {strategic_entities_from_first_pass}
 
-SECOND-PASS INVESTIGATION CONFIGURATION:
-{json.dumps(second_pass_config, indent=2)}
+SQL QUERY EXECUTED:
+{sql_query}
 
-==============================
-FIRST-PASS TO SECOND-PASS TRANSITION
-==============================
-
-CRITICAL: You are conducting SECOND-PASS operational drill-through analysis building on first-pass strategic findings.
-
-UNDERSTANDING THE ANALYSIS LEVELS:
-- **FIRST-PASS**: High-level strategic analysis at LOB/Client/Carrier/Membership levels only
-- **SECOND-PASS**: Operational drill-through using therapeutic, geographic, demographic, utilization, and brand/generic dimensions
-
-FIRST-PASS CONTEXT EXTRACTION:
-1. **Extract Strategic Entities**: Identify specific entities (clients, LOBs, carriers) showing variance from first-pass findings
-2. **Extract Entity Filters**: Determine which specific entities to focus second-pass analysis on
-3. **Extract Variance Context**: Use first-pass variance patterns and magnitude for operational investigation
-4. **Extract Business Context**: Understand declining vs growing patterns for operational targeting
-
-SECOND-PASS OPERATIONAL OBJECTIVE:
-- Explain WHY the first-pass strategic entities (clients/LOBs/carriers) are showing variance through operational lenses
-- Drill into therapeutic, geographic, demographic, utilization, and brand/generic factors
-- Focus operational analysis ONLY on the strategic entities identified in first-pass
-- Provide actionable operational insights explaining the strategic variance patterns through comparative period analysis
-
-SCOPE INHERITANCE FROM STRATEGIC TO OPERATIONAL:
-- Filter ALL operational drill-through queries to first-pass strategic entities only
-- Apply same product_category and date_range filters as first-pass strategic analysis
-- Use operational dimensions to explain strategic entity performance patterns through period comparison
+OPERATIONAL QUERY RESULTS:
+{sql_results}
 
 ==============================
-COMPREHENSIVE OPERATIONAL ANALYSIS GENERATION
+FOCUSED OPERATIONAL SYNTHESIS REQUIREMENTS
 ==============================
 
-CRITICAL: Generate SQLs for ALL operational dimensions by default to provide complete operational picture.
+OBJECTIVE: Generate 5-6 insightful operational narratives that explain the specific causational drivers of variance within this operational dimension.
 
-DEFAULT COMPREHENSIVE COVERAGE:
-- Generate SQLs for ALL 6 operational dimensions unless user specifically requests focused analysis
-- Complete operational coverage: Therapeutic (3 SQLs) + Brand/Generic (2 SQLs) + Operational (2 SQLs) + Geographic (1 SQL) + Demographic (1 SQL) + Utilization (2 SQLs) = 11 total SQLs
-- Each dimension provides unique operational insights that together explain variance comprehensively
+CAUSATION-FOCUSED ANALYSIS CONSTRAINTS:
+- Generate exactly 5-6 insights focusing on WHY variance is occurring
+- Each insight ≤30 words for clarity and impact
+- Focus on causational analysis: what's driving the dip/growth patterns
+- Use exact values from SQL results with auto-scaling (≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK)
+- Connect findings directly to strategic entities from first-pass
+- Let data drive insight structure - if 3-4 drugs cause variance, capture all of them in insights
 
-USER INTENT OVERRIDE LOGIC:
-- **Specific Dimension Request**: "Show ONLY therapeutic breakdown" → Generate only therapeutic analysis (respect user focus)
-- **Multi-Dimension Request**: "Focus on demographic and geographic" → Generate only specified dimensions
-- **General Request**: "Drill into operational factors" or "Explain the variance" → Generate ALL 6 dimensions (comprehensive default)
-- **No Specific Request**: Default to comprehensive analysis across all operational dimensions
+CAUSATIONAL INSIGHT GUIDELINES:
 
-COMPREHENSIVE ANALYSIS BENEFITS:
-- Complete operational visibility across all business levers
-- Cross-dimensional correlation opportunities (therapeutic + geographic + demographic patterns)
-- No operational blind spots in investigation
-- Rich narrative synthesis across all operational factors
-- Maximum actionable insight generation
+1. **PRIMARY CAUSATIONAL DRIVERS**:
+   - Root cause factors driving the variance within this dimension
+   - Quantify the causational impact with specific values
+   - Include all major contributing entities (multiple drugs, states, segments, etc.)
 
-OPERATIONAL SQL GENERATION REQUIREMENTS:
-- Use sql_count and sql_breakdown from JSON configuration for each dimension
-- Apply consistent first-pass entity filtering across all generated dimensions
-- Each operational SQL must focus on comparative period analysis within strategic entity context
-- Generate complete operational drill-through unless explicitly limited by user request
+2. **BEHAVIORAL/STRUCTURAL SHIFTS**:
+   - Key behavioral changes or structural shifts causing variance
+   - Pattern changes that explain the underlying movement
+   - Operational mechanisms driving the change
 
-==============================
-JSON CONFIGURATION INTERPRETATION
-==============================
+3. **CONCENTRATION/DISTRIBUTION PATTERNS**:
+   - Where the causational factors are concentrated or distributed
+   - Geographic, demographic, or categorical concentration of causes
+   - Explains variance distribution patterns with specific entities
 
-CONFIGURATION PARSING PROCESS:
-1. **Extract investigation_dimensions** to understand available operational analysis types
-2. **Parse analysis_templates** for each selected operational dimension
-3. **Extract sql_count and sql_breakdown** for each dimension to determine number of queries needed
-4. **Use llm_instructions** as operational intelligence brain for each dimension including intent-based row selection
-5. **Apply global_llm_instructions** for cross-dimensional correlation and narrative continuity
+4. **COMPARATIVE CAUSATION**:
+   - What changed between periods that caused the variance
+   - Before vs after comparison showing causational shift
+   - Period-over-period causational analysis with specifics
 
-TEMPLATE STRUCTURE USAGE:
-- **table_reference**: Maps to shared_table_metadata for column context and operational business rules
-- **dimensions**: Primary operational analysis columns for drill-down
-- **metrics**: Key measurements for variance and utilization analysis
-- **filters**: Base operational filters plus USER_INTENT_DRIVEN inheritance from first-pass
-- **date_column**: Consistent period comparison with first-pass timeframe
-- **sql_count**: Exact number of SQLs to generate for this operational dimension
-- **sql_breakdown**: Specific focus for each SQL within the operational dimension
+5. **VOLUME/INTENSITY CAUSATION**:
+   - Whether variance is driven by volume changes or intensity changes
+   - Utilization vs pricing causational factors
+   - Quantity vs quality causational drivers
 
-==============================
-COMPARATIVE ANALYSIS STRUCTURE
-==============================
+6. **OPERATIONAL MECHANISM INSIGHTS**:
+   - Specific operational mechanisms or processes causing variance
+   - Business process or policy changes driving results
+   - Operational levers or system changes causation
 
-CRITICAL: Generate comparative period analysis SQLs for operational drill-through.
+DIMENSIONAL FOCUS REQUIREMENTS:
 
-COMPARATIVE SQL PATTERN:
-```sql
-SELECT operational_dimension,
-       SUM(CASE WHEN DATE_FORMAT(submit_date, 'yyyy-MM') = '{current_period}' THEN revenue_amt ELSE 0 END) AS current_revenue,
-       SUM(CASE WHEN DATE_FORMAT(submit_date, 'yyyy-MM') = '{previous_period}' THEN revenue_amt ELSE 0 END) AS previous_revenue,
-       (current_revenue - previous_revenue) AS variance,
-       CASE WHEN previous_revenue > 0 THEN 
-            ROUND(((current_revenue - previous_revenue) / previous_revenue) * 100, 2) 
-       ELSE NULL END AS variance_percentage
-FROM claims_operational
-WHERE client_id IN ('{first_pass_entities}')
-  AND claim_status_code IN ('P','X')
-  AND product_category = '{inherited_category}'
-  AND DATE_FORMAT(submit_date, 'yyyy-MM') IN ('{current_period}', '{previous_period}')
-GROUP BY operational_dimension
-ORDER BY {intent_based_ordering}
-LIMIT {row_limit}
-```
+THERAPEUTIC ANALYSIS:
+- Focus on specific therapy classes, drugs, and formulary impacts driving variance
+- Brand vs generic substitution patterns with named drugs and impact amounts
+- Clinical protocol or utilization changes affecting specific therapeutic areas
+- Include all significant contributing drugs/therapy classes, not just top 1
 
-PERIOD COMPARISON REQUIREMENTS:
-- Extract period comparison logic from first-pass analysis (Aug vs July, Q2 vs Q1, etc.)
-- Apply consistent date filtering across all operational dimensions
-- Use same period comparison structure as first-pass strategic analysis
-- Include variance calculations (amount and percentage) for all operational breakdowns
+GEOGRAPHIC ANALYSIS:
+- State/regional concentration patterns with specific states and variance amounts
+- Market-specific performance drivers with named locations
+- Geographic clustering of variance with quantified regional impacts
+- Include all significant contributing states/regions
 
-==============================
-OPERATIONAL BUSINESS INTELLIGENCE
-==============================
+DEMOGRAPHIC ANALYSIS:
+- Specific age segment utilization patterns with quantified impacts
+- Member strength and population shifts by demographic groups
+- Demographic-driven behavioral changes with segment-specific causation
+- Include all significant age/gender segments contributing to variance
+
+BRAND/GENERIC ANALYSIS:
+- Specific Generic Dispense Rate shifts by therapy class
+- Named brand-to-generic substitutions with financial impact
+- Formulary policy changes affecting specific drug categories
+- Include all significant therapy classes showing GDR changes
+
+OPERATIONAL ANALYSIS:
+- Specific pharmacy network performance differences with quantified impacts
+- Internal vs external operational efficiency by named performance metrics
+- Network optimization opportunities with specific operational levers
+- Include all significant pharmacy types/regions showing performance variance
+
+UTILIZATION ANALYSIS:
+- Volume vs price variance decomposition with specific contributing factors
+- Member utilization intensity changes by behavior type
+- High-value member behavior patterns with quantified member segments
+- Include all significant utilization patterns contributing to variance
+
+CAUSATIONAL LANGUAGE FRAMEWORK:
+- Use causational terms: "drives", "causes", "stems from", "results from", "due to"
+- Focus on mechanisms: "shift in", "change from", "movement toward"  
+- Explain causation: "because", "resulting in", "leading to"
+- Avoid correlation language - focus on causation
+- Be specific with entity names and quantified impacts
+
+CAUSATIONAL EXAMPLES BY DIMENSION:
+✓ Therapeutic: "Oncology revenue decline stems from 3 major drugs: Keytruda ($25M decline), Opdivo ($18M decline), Tecentriq ($12M decline) due to generic competition"
+✓ Geographic: "Southern market concentration drives 78% of variance: Texas ($31M decline), Florida ($22M decline), Georgia ($15M decline) due to regional formulary changes"
+✓ Demographic: "55-64 age segment causes $28M decline due to benefit design changes: 45% utilization drop in high-cost therapy access affecting 12K members"
+✓ Brand/Generic: "Generic substitution accelerates in 4 therapy classes: Oncology (23% GDR increase), Diabetes (18% increase), Cardiovascular (15% increase), causing $41M revenue shift"
+
+RESPONSE FORMAT:
+The response MUST be in XML format with only three required variables:
+
+<operational_causation_analysis>
+
+<causational_insights>
+- Primary causational driver insight explaining root causes with specific entities and quantification
+- Behavioral/structural shift insight showing what changed to cause variance with named factors
+- Concentration pattern insight explaining where causational factors concentrate with specific locations/segments
+- Comparative causation insight showing period-over-period causational changes with specific comparisons
+- Volume/intensity causation insight explaining variance mechanism type with quantified factors
+- Operational mechanism insight detailing specific business process causation with named operational changes
+</causational_insights>
+
+<key_causational_metrics>
+**Primary Cause Impact**: Quantified impact of main causational driver from SQL results
+**Causational Magnitude**: Scale of causational factor influence with specific amounts
+**Causational Direction**: Whether cause drives growth or decline with percentage/dollar impact
+</key_causational_metrics>
+
+<causational_confidence>High/Medium/Low based on clarity of causational relationships in data and strength of evidence for identified drivers</causational_confidence>
+
+</operational_causation_analysis>
+
+Generate focused causational insights that explain WHY this operational dimension is driving strategic variance patterns. Include all significant contributing entities and quantify their specific impacts rather than limiting to single examples.
+"""
+
+
+--------------------------
 
 SECOND-PASS OPERATIONAL BUSINESS CONTEXT:
 - Focus on operational levers: therapeutic mix, pharmacy network, member behavior, geographic strategies

@@ -1,378 +1,204 @@
-synthesis_prompt = f"""
-You are a Strategic Financial Intelligence Analyst conducting FIRST-PASS analysis for multi-level drill-through investigation.
-
-STRATEGIC CONTEXT:
-- Analysis Type: {investigation_config.get('investigation_type', 'variance_analysis')}
-- Query Level: {query_level}  # LOB/Client/Carrier/Membership
-- Query Title: "{query_title}"
-
-SQL QUERY EXECUTED:
-{sql_query}
-
-STRATEGIC QUERY RESULTS:
-{sql_data}
-
-RUNTIME COVERAGE CALCULATION REQUIREMENT:
-- SQL results contain total context columns (total amounts/counts) for coverage calculation
-- Calculate what percentage the individual records represent against total universe
-- Determine if top records explain 70-75% of total variance for strategic focus
-- Use this coverage assessment to guide second-pass investigation scope
-
-========================
-FIRST-PASS BALANCED SYNTHESIS REQUIREMENTS
-========================
-
-STRATEGIC OBJECTIVE: Generate high-level insights that identify TOP 3-4 variance drivers that collectively explain 75-80% of total variance. AVOID single-entity focus bias.
-
-AUDIENCE: Strategic analysts who will use these insights to determine balanced second-pass drill-through focus areas.
-
-COVERAGE-AWARE ANALYSIS CONSTRAINTS:
-- Generate exactly 3-4 strategic bullets covering multiple variance contributors
-- Each bullet ≤30 words maximum
-- Calculate coverage percentage from SQL results (individual amounts vs total amounts)
-- Focus on PORTFOLIO of drivers, not single dominant factor
-- Identify diverse contributing entities/patterns for comprehensive second-pass targeting
-- Ensure balanced coverage: positive AND negative contributors
-- Target cumulative explanation using actual coverage percentage calculated from data
-
-STRATEGIC CONTENT STRUCTURE:
-
-1. **PRIMARY VARIANCE PORTFOLIO** (1 bullet):
-   - Top 2-3 entities contributing to variance with calculated coverage percentage
-   - Use exact values with auto-scaling (≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK)
-   - Include coverage context: "Top 3 entities represent X% of total variance"
-
-2. **DIRECTIONAL BALANCE PATTERN** (1 bullet):
-   - Both positive and negative contributors identified
-   - Avoid single-direction bias: "X entities declining ($YM), Z entities growing ($WM)"
-   - Entity names for second-pass targeting
-
-3. **COVERAGE ASSESSMENT** (1 bullet):
-   - Calculate and report actual coverage percentage from data
-   - If coverage >75%: "Analysis covers X% indicating comprehensive variance capture"
-   - If coverage <75%: "Top entities explain X%, suggesting distributed variance requiring broader investigation"
-
-4. **STRATEGIC DRILL-THROUGH PORTFOLIO** (1 bullet):
-   - Multiple investigation paths for second-pass analysis based on coverage assessment
-   - 3-4 specific targets that collectively address variance patterns
-   - Balance focus areas based on actual coverage calculated
-
-COVERAGE-BASED TARGETING LOGIC:
-- High Coverage (>75%): Focus second-pass on top contributors identified
-- Medium Coverage (60-75%): Include mid-tier entities in second-pass scope  
-- Low Coverage (<60%): Recommend broader investigation across more entities
-
-BALANCED PORTFOLIO EXAMPLES:
-✓ "Top 5 clients represent 78% of variance: 3 declining ($7M), 2 growing ($3M), enabling focused portfolio investigation"
-✓ "LOB variance distributed across entities (coverage 65%), requiring comprehensive multi-LOB investigation approach"
-✓ "Concentrated variance: top 3 carriers drive 82% of impact, allowing targeted operational analysis"
-
-❌ Avoid ignoring coverage context:
-❌ "Focus only on top entity" (without coverage consideration)
-❌ "Single investigation path" (ignoring coverage distribution)
-
-RESPONSE FORMAT:
-The response MUST be valid JSON with coverage-aware analysis:
-
-{{
-  "narrative_response": "• Primary variance portfolio with coverage bullet\\n• Directional balance pattern bullet\\n• Coverage assessment bullet\\n• Strategic drill-through portfolio bullet",
-  "confidence_score": [calculated based on coverage and data patterns],
-  "coverage_percentage": [calculated from SQL data],
-  "second_pass_targets": ["Target 1 based on coverage", "Target 2 for balanced analysis", "Target 3 for gaps", "Target 4 for completeness"],
-  "variance_explanation_coverage": [calculated from SQL data],
-  "balance_score": [calculated from data distribution],
-  "investigation_scope": "focused" if coverage > 75 else "comprehensive"
-}}
-
-Generate strategic first-pass insights by CALCULATING COVERAGE PERCENTAGE from SQL results to guide balanced second-pass investigation.
-"""
-    
-    return prompt
-    
-    return prompt
-"intelligence_synthesis": {
-            "variance_thresholds": {
-                "significant_lob_variance": "$1M",
-                "significant_membership_change": "5%",
-                "significant_client_change": "$1M", 
-                "significant_carrier_change": "20% utilization change"
-            },
-            
-            "correlation_analysis": [
-                "revenue_vs_membership",
-                "revenue_vs_client_churn",
-                "revenue_vs_carrier_changes",
-                "membership_vs_client_changes"
-            ],
-            
-            "tactical_direction_rules": {
-                "lob_driven_variance": "if_lob_variance_concentrated_in_specific_segments",
-                "membership_driven_variance": "if_membership_changes_correlate_with_revenue",
-                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
-                "operational_variance": "if_carrier_factors_drive_remaining_variance"
-            },
-            
-            "llm_synthesis_instructions": {
-                "strategic_intelligence_approach": "Synthesize findings from all 4 queries (LOB, membership, client, carrier) into comprehensive revenue variance explanation.",
-                "business_correlation_validation": "Validate correlations across all 4 analysis areas using variance_direction_detection results.",
-                "variance_explanation_completeness": "Quantify how much of total revenue variance is explained by each of the 4 analysis areas.",
-                "tactical_direction_formulation": "Recommend tactical approach based on primary variance drivers across LOB, membership, client, and carrier analysis.",
-                "strategic_insight_generation": "Generate insights connecting findings across all 4 queries using investigation_hierarchy context.",
-                "markdown_report_structure": "Structure report covering all 4 analysis areas with integrated findings and tactical recommendations."
-            }
-        },
-
 {
-    "revenue_investigation_config": {
-        "version": "1.0",
-        "investigation_type": "revenue_variance_analysis",
-        "description": "Complete revenue investigation pattern with embedded metadata and framework",
-        
-        "question_classification": {
-            "trigger_keywords": [
-                ["revenue", "drop|decrease|decline|fall"],
-                ["revenue", "increase|growth|rise|up"],
-                ["revenue", "vs|versus|compared", "previous|last|prior"],
-                ["why", "revenue"]
-            ],
-            "time_pattern_keywords": [
-                "month over month|mom|m-o-m",
-                "quarter over quarter|qoq|q-o-q", 
-                "year over year|yoy|y-o-y",
-                "vs previous|vs last|compared to"
-            ]
+  "second_pass_investigation_config": {
+    "version": "1.0",
+    "investigation_type": "granular_operational_analysis",
+    "description": "Multi-dimensional operational drill-through analysis building on first-pass strategic findings",
+    
+    "shared_table_metadata": {
+      "claims_operational": {
+        "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
+        "description": "Claim-level operational data with therapeutic, demographic, geographic, and utilization details",
+        "columns": [
+          {
+            "name": "product_category",
+            "description": "Product category for each claim",
+            "distinct_values": ["PBM", "Home Delivery", "Specialty"]
+          },
+          {
+            "name": "line_of_business",
+            "description": "Line of business identifier",
+            "distinct_values": ["E&I FI", "E&I ASO", "C&S", "PDP", "MAPD", "E&I UMR", "External"]
+          },
+          {
+            "name": "client_id",
+            "description": "Unique client identifier"
+          },
+          {
+            "name": "carrier_id",
+            "description": "Insurance carrier identifier"
+          },
+          {
+            "name": "member_id",
+            "description": "Individual member identifier for utilization analysis"
+          },
+          {
+            "name": "submit_date",
+            "description": "Claim submission date (yyyy-MM-dd)"
+          },
+          {
+            "name": "therapy_class_name",
+            "description": "Therapeutic class of dispensed drug"
+          },
+          {
+            "name": "drug_name",
+            "description": "Name of dispensed drug"
+          },
+          {
+            "name": "brand_vs_generic_ind",
+            "description": "Brand or Generic indicator",
+            "distinct_values": ["Brand", "Generic"]
+          },
+          {
+            "name": "pharmacy_name",
+            "description": "Dispensing pharmacy name"
+          },
+          {
+            "name": "pharmacy_type",
+            "description": "Internal vs external pharmacy type",
+            "distinct_values": ["EXTERNAL-NON OPTUM OWNED", "INTERNAL OPTUM OWNED"]
+          },
+          {
+            "name": "state_cd",
+            "description": "Two-letter state code for geographic analysis"
+          },
+          {
+            "name": "mbr_dt_of_brth",
+            "description": "Member date of birth (yyyy-MM-dd) for age analysis"
+          },
+          {
+            "name": "mbr_sex",
+            "description": "Member gender",
+            "distinct_values": ["M", "F"]
+          },
+          {
+            "name": "revenue_amt",
+            "description": "Revenue amount per claim"
+          },
+          {
+            "name": "unadjusted_script_count",
+            "description": "Raw script count per claim"
+          },
+          {
+            "name": "revenue_per_script",
+            "description": "Revenue per script derived metric"
+          },
+          {
+            "name": "GDR_Ratio",
+            "description": "Generic Dispense Rate ratio"
+          }
+        ]
+      }
+    },
+
+    "investigation_dimensions": {
+      "therapeutic": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+      "brand_generic": ["brand_vs_generic_ind", "therapy_class_name"],
+      "operational": ["pharmacy_type", "pharmacy_name", "state_cd"],
+      "geographic": ["state_cd"],
+      "demographic": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+      "utilization": ["member_id", "unadjusted_script_count", "revenue_per_script"]
+    },
+
+    "analysis_templates": {
+      "therapeutic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["therapy_class_name", "drug_name", "brand_vs_generic_ind"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 3,
+        "sql_breakdown": ["therapy_class_variance", "drug_specific_analysis", "brand_generic_mix"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings (specific clients/LOBs identified). If first-pass found 'MDOVA client declining', filter all therapeutic analysis to client_id='MDOVA' only. MULTI-SQL APPROACH: Generate 3 focused SQLs: (1) Therapy class level variance analysis, (2) Drug-specific deep dive within top therapy classes, (3) Brand vs generic analysis within therapy classes. THERAPEUTIC DEEP-DIVE ANALYSIS: Identify which therapy classes and specific drugs are driving the variance patterns identified in first-pass. Focus on therapeutic category shifts, drug mix changes, and formulary impacts. BRAND vs GENERIC INTEGRATION: For each therapy class, analyze brand vs generic distribution changes. Look for brand-to-generic switches that could explain revenue per script variance. Calculate therapy class level GDR changes over comparison periods. KEY INSIGHTS TO SURFACE: Which therapy classes show highest absolute variance? Are high-revenue therapy classes declining while low-revenue classes growing? Drug-specific drivers within problematic therapy classes? Brand vs generic mix shifts within each therapy class? ENTITY STATUS ANALYSIS: Identify NEW therapy classes (zero prior period, current presence), DROP therapy classes (prior presence, zero current), EXISTING therapy classes with significant variance. SELECTION STRATEGY: Focus on top 10-15 therapy classes by absolute variance impact. Include both declining and growing categories for balanced view. EXPECTED INSIGHTS: Therapeutic category explanations for first-pass variance. Drug formulary or clinical protocol changes. Brand/generic therapeutic substitution patterns."
+      },
 
-        "investigation_framework": {
-            "query_sequence": ["revenue_variance_detection", "client_membership_analysis", "carrier_analysis"],
-            "max_queries": 3,
-            "synthesis_approach": "markdown_intelligence_report",
-            "expected_investigation_depth": "high"
+      "brand_generic": {
+        "table_reference": "claims_operational", 
+        "dimensions": ["brand_vs_generic_ind", "therapy_class_name"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "GDR_Ratio", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["gdr_trend_analysis", "brand_switch_impact"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Apply same client/LOB filtering as identified in strategic analysis. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) GDR trend analysis by therapy class, (2) Brand-to-generic switch revenue impact quantification. GENERIC DISPENSE RATE FOCUS: Calculate GDR changes between comparison periods within the detected scope. Identify therapy classes with significant GDR shifts (>5% change). BRAND TO GENERIC IMPACT ANALYSIS: Quantify revenue impact of brand-to-generic switches. Calculate revenue per script differences between brand and generic within same therapy classes. Identify high-impact brand switches contributing to overall variance. FORMULARY CHANGE DETECTION: Look for sudden GDR spikes indicating formulary or policy changes. Identify therapy classes where brand utilization dropped significantly. FINANCIAL IMPACT ASSESSMENT: Calculate revenue lost/gained from brand-generic mix changes. Assess whether generic adoption is driving script volume increases that offset revenue per script declines. STRATEGIC INSIGHTS FOCUS: Which therapy classes show most significant brand-to-generic shifts? Are generic switches volume-positive but revenue-negative? High-value brands being replaced by generics? New generic launches impacting established brands? SELECTION STRATEGY: Focus on therapy classes with >$1M revenue variance and >10% GDR change. Include both high-GDR and low-GDR therapy classes for comparison."
+      },
 
-        "strategic_queries": {
-            "query_1_revenue_variance": {
-                "purpose": "Identify primary revenue variance areas by LOB and product",
-                "sequence_order": 1,
-                "table_name": "prd_optumrx_orxfdmprdsa.rag.actuals_vs_forecast_analysis",
-                "table_metadata": {
-                    "description": "High-level monthly or quarterly revenue performance by LOB and product category",
-                    "columns": [
-                        {
-                            "name": "ledger",
-                            "description": "Ledger type for the record",
-                            "distinct_values": ["GAAP", "BUDGET", "8+4", "2+10", "5+7"]
-                        },
-                        {
-                            "name": "metric_type",
-                            "description": "Type of metric captured in amount_or_count",
-                            "sample_values": ["Revenues", "Adjusted Scripts", "Unadjusted Scripts", "COGS Post Reclass", "SG&A Post Reclass", "IOI", "Total Membership"]
-                        },
-                        {
-                            "name": "line_of_business",
-                            "description": "Business segment for the revenue record",
-                            "sample_values": ["C&S", "E&I", "M&R", "Rev Reclass", "Optum", "External"]
-                        },
-                        {
-                            "name": "product_category",
-                            "description": "High-level product or service grouping",
-                            "sample_values": ["PBM", "Specialty", "HDP"]
-                        },
-                        {
-                            "name": "transaction_date",
-                            "description": "Transaction date (yyyy-MM-dd)"
-                        },
-                        {
-                            "name": "quarter",
-                            "description": "Quarter (Q1–Q4) derived from transaction_date"
-                        },
-                        {
-                            "name": "amount_or_count",
-                            "description": "Value for the record (amount or count depending on metric_type)"
-                        }
-                    ]
-                },
-                "analysis_requirements": {
-                    "required_filters": ["metric_type = 'Revenues'", "ledger = 'GAAP'"],
-                    "key_dimensions": ["line_of_business", "product_category"],
-                    "focus_metrics": ["amount_or_count"],
-                    "analysis_type": "period_comparison_with_variance",
-                    "variance_threshold": "$250K absolute OR 10% percentage"
-                },
-                "output_requirements": {
-                    "include_variance_calculation": true,
-                    "include_percentage_change": true,
-                    "order_by": "absolute_variance_impact_desc",
-                    "filter_significant_only": true
-                },
-                "llm_instructions": {
-                    "strategic_focus": "You are conducting HIGH-LEVEL revenue variance detection. Focus on business segment performance patterns, not operational details. This query establishes which LOBs and product categories drive overall variance.",
-                    "business_context": "PBM revenue typically varies due to client portfolio changes, membership shifts, or product mix evolution. Identify which business segments show significant variance patterns that warrant deeper investigation.",
-                    "sql_generation_guidance": "Generate period-over-period comparison focusing on line_of_business and product_category. Include current period revenue, comparison period revenue, absolute variance, and percentage variance. Filter for significance based on variance_threshold.",
-                    "result_interpretation": "Look for LOBs with variance >$250K or >10%. These become focus areas for subsequent queries. Note any unusual patterns that break expected business correlations.",
-                    "success_criteria": "Successfully identify 1-3 LOBs or product categories that explain majority of overall revenue variance with quantified impact."
-                }
-            },
-
-            "query_2_client_membership": {
-                "purpose": "Analyze client portfolio and membership changes driving revenue variance",
-                "sequence_order": 2,
-                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-                "table_metadata": {
-                    "description": "Operational revenue drivers from pharmacy claims",
-                    "columns": [
-                        {
-                            "name": "line_of_business",
-                            "description": "Business segment for the claim"
-                        },
-                        {
-                            "name": "client_name",
-                            "description": "Client name"
-                        },
-                        {
-                            "name": "client_id",
-                            "description": "Client identifier"
-                        },
-                        {
-                            "name": "submit_date",
-                            "description": "Claim submission date (yyyy-MM-dd)"
-                        },
-                        {
-                            "name": "revenue_amt",
-                            "description": "Revenue amount for the claim"
-                        },
-                        {
-                            "name": "unadjusted_script_count",
-                            "description": "Actual script count for each claim"
-                        }
-                    ]
-                },
-                "analysis_requirements": {
-                    "key_dimensions": ["line_of_business", "client_name"],
-                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
-                    "analysis_type": "client_churn_and_acquisition_detection",
-                    "client_change_threshold": "$100K revenue impact",
-                    "depends_on_query": "query_1_revenue_variance"
-                },
-                "output_requirements": {
-                    "identify_client_status": ["Lost", "New", "Existing"],
-                    "calculate_client_variance": true,
-                    "focus_on_significant_lobs": "from_query_1_results",
-                    "order_by": "absolute_client_impact_desc"
-                },
-                "llm_instructions": {
-                    "strategic_focus": "Analyze client portfolio changes that drive the revenue variance identified in Query 1. Focus on significant client departures, acquisitions, and behavior changes within affected LOBs.",
-                    "business_context": "Client churn is typically the primary driver of PBM revenue variance. Client departures directly reduce revenue, while new client acquisitions may show ramp-up patterns. Focus on clients with >$100K impact in LOBs identified from Query 1.",
-                    "sql_generation_guidance": "Compare client revenue between periods in the significant LOBs from Query 1. Identify: (1) Lost clients (zero current revenue), (2) New clients (zero prior revenue), (3) Existing clients with significant changes. Calculate client-level variance and aggregate impact.",
-                    "result_interpretation": "Quantify how much of Query 1 variance is explained by client portfolio changes. Look for patterns: multiple client losses in same LOB, new client ramp-up rates, existing client behavior shifts.",
-                    "cross_query_validation": "Client changes should correlate with LOB variance patterns from Query 1. If major client churn occurred, expect corresponding LOB revenue decline.",
-                    "success_criteria": "Identify specific clients driving significant portion of revenue variance with quantified impact. Validate correlation with Query 1 LOB findings."
-                }
-            },
-
-            "query_3_carrier_analysis": {
-                "purpose": "Identify carrier utilization changes affecting revenue",
-                "sequence_order": 3,
-                "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_transaction_for_pharmacy_pbm",
-                "table_metadata": {
-                    "description": "Operational revenue drivers from pharmacy claims",
-                    "columns": [
-                        {
-                            "name": "carrier_id",
-                            "description": "Insurance carrier identifier"
-                        },
-                        {
-                            "name": "line_of_business",
-                            "description": "Business segment for the claim"
-                        },
-                        {
-                            "name": "submit_date",
-                            "description": "Claim submission date (yyyy-MM-dd)"
-                        },
-                        {
-                            "name": "revenue_amt",
-                            "description": "Revenue amount for the claim"
-                        },
-                        {
-                            "name": "unadjusted_script_count",
-                            "description": "Actual script count for each claim"
-                        }
-                    ]
-                },
-                "analysis_requirements": {
-                    "key_dimensions": ["carrier_id", "line_of_business"],
-                    "focus_metrics": ["revenue_amt", "unadjusted_script_count"],
-                    "analysis_type": "carrier_utilization_variance",
-                    "depends_on_query": "query_1_revenue_variance",
-                    "conditional_execution": "if_client_changes_insufficient_to_explain_variance"
-                },
-                "output_requirements": {
-                    "calculate_utilization_changes": true,
-                    "identify_significant_carrier_changes": true,
-                    "focus_on_significant_lobs": "from_query_1_results",
-                    "order_by": "carrier_impact_significance"
-                },
-                "llm_instructions": {
-                    "strategic_focus": "Analyze carrier behavior and utilization pattern changes that contribute to revenue variance in LOBs identified from Query 1. Focus on operational shifts that influence revenue beyond client portfolio changes.",
-                    "business_context": "Carrier policy changes, network modifications, and utilization management shifts can significantly impact PBM revenue. Look for carriers with changed utilization patterns, especially in LOBs with unexplained variance from Queries 1-2.",
-                    "sql_generation_guidance": "Compare carrier utilization (revenue and script volume) between periods in significant LOBs from Query 1. Calculate carrier-level variance and utilization rate changes. Focus on carriers showing >20% utilization changes.",
-                    "result_interpretation": "Identify carriers with significant behavior changes that correlate with LOB variance patterns. Look for: policy changes affecting utilization, network changes impacting volume, seasonal pattern disruptions.",
-                    "cross_query_validation": "Carrier changes should help explain any remaining variance not accounted for by client portfolio changes from Query 2. Look for operational drivers behind client behavior changes.",
-                    "success_criteria": "Complete the strategic picture by identifying operational factors (carrier behavior) that, combined with client changes, explain the majority of revenue variance identified in Query 1."
-                }
-            }
+      "operational": {
+        "table_reference": "claims_operational",
+        "dimensions": ["pharmacy_type", "pharmacy_name", "state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["pharmacy_type_performance", "geographic_operational"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Focus operational analysis within identified client/LOB context only. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Pharmacy type performance analysis (internal vs external), (2) Geographic operational patterns by state and pharmacy. PHARMACY TYPE PERFORMANCE: Compare internal Optum-owned vs external pharmacy performance within scope. Identify if variance is concentrated in specific pharmacy types. Calculate revenue per script and script volume trends by pharmacy type. GEOGRAPHIC CONCENTRATION: Identify states/regions driving variance patterns within the entity scope. Look for geographic clustering of performance issues or improvements. STATE-LEVEL VARIANCE ANALYSIS: Which states show disproportionate variance contribution? Are certain states showing different operational patterns? PHARMACY-SPECIFIC DRIVERS: Within significant variance states, identify specific high-impact pharmacies (both internal and external). Focus on pharmacies with >$500K variance or >20% volume change. OPERATIONAL EFFICIENCY INSIGHTS: Compare pharmacy type efficiency metrics (revenue per script, script processing volume). Identify operational bottlenecks or performance advantages. NETWORK OPTIMIZATION SIGNALS: Are internal pharmacies outperforming external in certain regions? Should pharmacy network mix be optimized? Geographic expansion or contraction opportunities? SELECTION STRATEGY: Top 10 states by variance impact, top 20 pharmacies by operational significance. Balance internal vs external pharmacy representation."
+      },
 
-        "intelligence_synthesis": {
-            "variance_thresholds": {
-                "significant_lob_variance": "$500K",
-                "significant_client_change": "$100K", 
-                "significant_membership_change": "5%",
-                "significant_carrier_change": "20% utilization change"
-            },
-            
-            "correlation_analysis": [
-                "revenue_vs_membership",
-                "revenue_vs_client_churn",
-                "revenue_vs_carrier_changes"
-            ],
-            
-            "tactical_direction_rules": {
-                "client_driven_variance": "if_client_churn_explains_>60%_of_variance",
-                "membership_driven_variance": "if_membership_changes_correlate_with_revenue", 
-                "operational_variance": "if_none_of_above_explain_variance_sufficiently"
-            },
-            
-            "llm_synthesis_instructions": {
-                "strategic_intelligence_approach": "Synthesize findings from all 3 strategic queries into comprehensive revenue variance explanation. Connect LOB-level variance (Query 1) with client portfolio changes (Query 2) and operational factors (Query 3) into cohesive strategic narrative.",
-                "business_correlation_validation": "Validate expected business correlations: Client departures should correlate with LOB revenue decline. Carrier changes should align with client behavior shifts. Identify any broken correlations that suggest deeper issues.",
-                "variance_explanation_completeness": "Quantify how much of total revenue variance is explained by identified factors. If <70% explained, flag need for tactical investigation into additional operational factors.",
-                "tactical_direction_formulation": "Based on primary variance drivers identified, formulate clear tactical investigation priorities: (1) Client-focused if churn explains >60%, (2) Operational-focused if carrier/utilization factors dominate, (3) Mixed approach if multiple factors contribute significantly.",
-                "strategic_insight_generation": "Generate actionable strategic insights: client retention opportunities, operational efficiency improvements, market positioning implications based on variance patterns discovered.",
-                "markdown_report_structure": "Create executive-ready intelligence report with: Executive Summary (total variance + primary driver), Detailed Findings (3-query synthesis), Strategic Implications (business impact), Tactical Investigation Plan (next steps with priorities)"
-            }
+      "geographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["state_cd"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["state_variance_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze geographic patterns within identified client/LOB context only. SINGLE-SQL APPROACH: Generate comprehensive state-level analysis with regional clustering in one query using CASE statements for regional groupings. GEOGRAPHIC VARIANCE CONCENTRATION: Identify which states contribute most to variance patterns identified in first-pass. Look for regional clustering of similar performance patterns. STATE-LEVEL MARKET DYNAMICS: Compare state-level performance trends within the entity scope. Identify states with disproportionate variance contribution (>5% of total). REGIONAL PATTERN RECOGNITION: Are variance patterns concentrated in specific geographic regions (West Coast, Southeast, etc.)? Do certain states show opposite trends (some growing, others declining)? MARKET SHARE IMPLICATIONS: Within entity scope, identify states where market position may be strengthening or weakening. Geographic concentration vs diversification trends. REGULATORY OR COMPETITIVE FACTORS: Flag states with unusual patterns that might indicate regulatory changes or competitive pressures. Identify states requiring strategic attention. CROSS-STATE COMPARISON: Compare similar-sized state markets within entity scope. Identify best-performing and underperforming state markets for benchmarking. SELECTION STRATEGY: Focus on top 15 states by absolute variance impact. Include both high-performing and underperforming states for balanced analysis."
+      },
 
-        "domain_specific_prompts": {
-            "business_intelligence_context": "You are analyzing pharmacy benefits management (PBM) revenue where variance typically stems from three strategic drivers: (1) Client portfolio changes - client departures/acquisitions directly impact revenue, (2) Membership dynamics - enrollment changes affect utilization volume, (3) Operational shifts - carrier policy changes and network utilization patterns. Focus on HIGH-LEVEL strategic patterns, not operational details.",
-            
-            "variance_interpretation_logic": "Revenue variance significance: >$250K absolute OR >10% percentage indicates strategic investigation priority. Client changes >$100K warrant deep analysis. Membership changes >5% typically correlate with revenue shifts. Cross-validate findings: client churn should align with membership decline and LOB performance patterns.",
-            
-            "investigation_priorities": "SEQUENCE: Start with LOB-level revenue variance to identify affected business segments → Analyze client portfolio changes in affected LOBs → Validate with operational drivers (carriers, utilization). Each query should narrow focus based on previous findings.",
-            
-            "business_seasonality": "Consider PBM patterns: Q1 (plan year changes, new client onboarding), Q4 (deductible exhaustion increases utilization), mid-year (formulary updates affect therapy mix). Adjust variance expectations accordingly.",
-            
-            "strategic_correlation_patterns": "Expected relationships: Client departures → membership decline → LOB revenue impact. Carrier policy changes → utilization shifts → revenue per script changes. Look for broken correlations as they indicate deeper issues requiring tactical investigation."
+      "demographic": {
+        "table_reference": "claims_operational",
+        "dimensions": ["mbr_dt_of_brth", "mbr_sex", "member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
         },
+        "date_column": "submit_date",
+        "sql_count": 1,
+        "sql_breakdown": ["demographic_utilization_analysis"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze demographic patterns within identified client/LOB context only. SINGLE-SQL APPROACH: Generate comprehensive demographic analysis combining age cohorts and gender patterns in one query with member-level aggregations. AGE SEGMENTATION ANALYSIS: Create age cohorts (18-34, 35-54, 55-64, 65+) and analyze variance by age group. Identify which age segments driving variance patterns from first-pass. MEMBER STRENGTH AND CONCENTRATION: Calculate member counts and average revenue per member by demographic segments. Identify high-value member segments showing variance patterns. MEMBER UTILIZATION INTENSITY: Analyze scripts per member and revenue per member trends by demographic groups. Identify if variance is driven by member behavior changes or population mix shifts. GENDER-BASED UTILIZATION PATTERNS: Compare male vs female utilization patterns within entity scope. Identify gender-specific therapeutic or utilization trends contributing to variance. MEMBER LIFECYCLE ANALYSIS: Using member_id, identify member retention, churn, and acquisition patterns within demographic segments. High-value member retention vs new member acquisition impact. DEMOGRAPHIC RISK ASSESSMENT: Which demographic segments show concerning utilization or revenue trends? Are aging populations driving higher pharmaceutical utilization? Gender-specific therapeutic needs evolving? ACTIONABLE DEMOGRAPHIC INSIGHTS: Member segments requiring targeted clinical or commercial attention. Demographic-specific intervention opportunities. SELECTION STRATEGY: Focus on age segments with >$2M variance impact. Include both high-utilization and emerging demographic segments."
+      },
 
-        "analysis_type_guidance": {
-            "period_comparison_with_variance": "Calculate both absolute ($) and percentage (%) variance. Include current period, comparison period, and variance in output. Focus on business segments exceeding significance thresholds.",
-            
-            "client_churn_and_acquisition_detection": "Identify clients with zero current period revenue (churn), zero prior period revenue (acquisition), and significant revenue changes (behavior shifts). Quantify impact and focus on LOBs identified in query 1.",
-            
-            "carrier_utilization_variance": "Analyze carrier behavior changes affecting revenue. Focus on carriers serving LOBs with significant variance from query 1. Look for utilization pattern shifts that explain client or membership changes."
-        }
+      "utilization": {
+        "table_reference": "claims_operational",
+        "dimensions": ["member_id"],
+        "metrics": ["revenue_amt", "unadjusted_script_count", "revenue_per_script"],
+        "filters": {
+          "claim_status_code": "['P','X']",
+          "product_category": "USER_INTENT_DRIVEN"
+        },
+        "date_column": "submit_date",
+        "sql_count": 2,
+        "sql_breakdown": ["volume_price_decomposition", "member_utilization_patterns"],
+        "llm_instructions": "CONTEXTUAL SCOPING: Inherit entity scope from first-pass findings. Analyze utilization patterns within identified client/LOB context only. DUAL-SQL APPROACH: Generate 2 focused SQLs: (1) Volume vs price variance decomposition, (2) Member-level utilization pattern analysis. VOLUME vs PRICE VARIANCE DECOMPOSITION: Separate variance into script volume changes vs revenue per script changes. Identify whether variance is primarily volume-driven or price-driven within entity scope. MEMBER-LEVEL UTILIZATION INTENSITY: Calculate scripts per member and revenue per member trends. Identify high-utilization members driving variance patterns. UTILIZATION PATTERN SEGMENTATION: Segment members by utilization intensity (low, medium, high utilizers). Analyze variance contribution by utilization segment. HIGH-VALUE MEMBER ANALYSIS: Identify members with annual pharmaceutical spend >$10K. Analyze retention, churn, and utilization changes among high-value members. MEMBER UTILIZATION LIFECYCLE: Track member utilization intensity changes between periods. Identify members moving between utilization tiers. NEW vs EXISTING MEMBER UTILIZATION: Compare new member utilization patterns vs existing member changes. Assess if variance driven by member mix changes or behavior changes. PER-MEMBER EFFICIENCY METRICS: Revenue per member, scripts per member, average script value by member segments. Identify efficiency trends within entity scope. UTILIZATION-BASED TARGETING: Which utilization segments require clinical intervention? Members showing concerning utilization spikes or drops? Opportunities for medication adherence programs? SELECTION STRATEGY: Focus on members with >$5K annual spend variance or >50% utilization change. Include both high and low utilizers for comprehensive view."
+      }
+    },
+
+    "global_llm_instructions": {
+      "second_pass_orchestration": "You are conducting SECOND-PASS granular operational analysis building on first-pass strategic findings. The investigation scope is inherited from first-pass entity identification (specific clients/LOBs/carriers). Focus on operational and behavioral drivers that explain WHY the strategic variance occurred. Use multi-dimensional analysis to provide actionable operational insights.",
+      
+      "dimensional_intelligence": "Select analysis dimensions based on user intent and first-pass findings. If user requests specific dimension (therapeutic, geographic, etc.), focus on that dimension plus 1-2 complementary dimensions. If user requests comprehensive analysis, analyze all relevant dimensions but prioritize based on first-pass variance patterns.",
+      
+      "operational_focus": "Second-pass analysis should explain operational drivers behind first-pass strategic findings. Focus on controllable business levers: therapeutic mix optimization, pharmacy network performance, member utilization management, geographic market strategies, brand/generic formulary decisions.",
+      
+      "cross_dimensional_correlation": "Look for correlations across dimensions: Do certain therapy classes concentrate in specific geographies? Are demographic segments driving brand vs generic preferences? Do pharmacy types serve different utilization patterns? Identify multi-dimensional insights that provide comprehensive operational understanding.",
+      
+      "actionable_insight_prioritization": "Prioritize insights that suggest clear business actions. Therapeutic formulary adjustments, pharmacy network optimization, member clinical interventions, geographic market strategies, brand/generic policy changes. Focus on insights that operations teams can act upon.",
+      
+      "variance_continuation_logic": "Build narrative continuity with first-pass findings. Use phrases like 'Building on the finding that Client X declined...', 'Drilling deeper into the MAPD LOB variance...', 'Operational analysis reveals that...'. Connect operational insights back to strategic variance patterns."
     }
+  }
 }
 
 

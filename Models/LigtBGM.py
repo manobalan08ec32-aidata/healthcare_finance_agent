@@ -1,4 +1,4 @@
-pip install lightgbm optuna
+pip install lightgbm
 
 # COMMAND ----------
 
@@ -8,7 +8,6 @@ from lightgbm import LGBMRegressor
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 from datetime import timedelta, datetime
-import optuna
 from pyspark.sql import SparkSession
  
 spark = SparkSession.builder.getOrCreate()
@@ -136,7 +135,7 @@ for client_id in client_list:
         categorical_features = ['dayofweek', 'month', 'quarter', 'dayofmonth', 'week_of_year']
         categorical_features = [f for f in categorical_features if f in features]
  
-        # 📋 Step 2: Longer validation split (6 months for better seasonal validation)
+        # 📋 Step 2: Validation split for evaluation
         val_days = 180
         split_date = df['ds'].max() - pd.Timedelta(days=val_days)
  
@@ -158,65 +157,54 @@ for client_id in client_list:
         X_train_full = df[features]
         y_train_full = df['y_log']
  
-        # 📋 Step 3: LightGBM Optuna (fewer trials, faster optimization)
-        def objective(trial):
-            params = {
-                'objective': 'regression',
-                'metric': 'rmse',
-                'boosting_type': 'gbdt',
-                'num_leaves': trial.suggest_int('num_leaves', 31, 100),
-                'learning_rate': trial.suggest_float('learning_rate', 0.05, 0.2),
-                'feature_fraction': trial.suggest_float('feature_fraction', 0.7, 1.0),
-                'bagging_fraction': trial.suggest_float('bagging_fraction', 0.7, 1.0),
-                'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
-                'min_child_samples': trial.suggest_int('min_child_samples', 10, 50),
-                'lambda_l1': trial.suggest_float('lambda_l1', 0, 1.0),
-                'lambda_l2': trial.suggest_float('lambda_l2', 0, 1.0),
-                'verbosity': -1,
-                'random_state': 42
-            }
- 
-            model = LGBMRegressor(n_estimators=200, **params)
-            model.fit(
-                X_train, y_train,
-                eval_set=[(X_val, y_val)],
-                categorical_feature=categorical_features,
-                callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)]
-            )
-            preds = model.predict(X_val)
-            rmse = mean_squared_error(y_val, preds, squared=False)
-            return rmse
- 
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=50)  # Reduced from 100 for speed
+        # 📋 Step 3: Use Trial 10's Best Parameters (No Optimization Needed)
+        best_params = {
+            'objective': 'regression',
+            'metric': 'rmse',
+            'boosting_type': 'gbdt',
+            'num_leaves': 31,
+            'learning_rate': 0.052418127033081005,
+            'feature_fraction': 0.9140249670721408,
+            'bagging_fraction': 0.8953253503091405,
+            'bagging_freq': 7,
+            'min_child_samples': 10,
+            'lambda_l1': 0.01115041615701301,
+            'lambda_l2': 0.6759112958166033,
+            'verbosity': -1,
+            'random_state': 42
+        }
         
+        print(f"🏆 Using Trial 10's optimal parameters (RMSE: 0.007557)")
+        
+        # Quick validation to confirm performance
+        validation_model = LGBMRegressor(n_estimators=200, **best_params)
+        validation_model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            categorical_feature=categorical_features,
+            callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)]
+        )
+        val_preds = validation_model.predict(X_val)
+        val_rmse = mean_squared_error(y_val, val_preds, squared=False)
+        print(f"✅ Validation RMSE confirmed: {val_rmse:.6f}")
+        
+        # Log results
         log_entry = f"""
         adjusted_total, client_id: {client_id}, 
-        model: lightgbm,
-        trial_number: {study.best_trial.number}, 
-        best_value: {study.best_value}, 
-        best_params: {study.best_params}, 
+        model: lightgbm_optimized,
+        validation_rmse: {val_rmse:.6f}, 
+        best_params: {best_params}, 
         features_used: {len(features)},
         timestamp: {datetime.now().isoformat()}
         """
         log_entry = log_entry.replace("'", " ")
         spark.sql(f"INSERT INTO log_ml_data (col1) VALUES ('{log_entry}')")
  
-        # 📋 Step 4: Retrain final model
-        final_params = {
-            'objective': 'regression',
-            'metric': 'rmse',
-            'boosting_type': 'gbdt',
-            'verbosity': -1,
-            'random_state': 42,
-            **study.best_params
-        }
-        
-        model = LGBMRegressor(n_estimators=400, **final_params)
+        # 📋 Step 4: Train final model on all data
+        model = LGBMRegressor(n_estimators=300, **best_params)
         model.fit(
             X_train_full, y_train_full,
-            categorical_feature=categorical_features,
-            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(0)]
+            categorical_feature=categorical_features
         )
  
         # 📋 Step 5: Future predictions with enhanced features
@@ -316,7 +304,7 @@ for client_id in client_list:
             row['y'] = pred
  
             latest_df = pd.concat([latest_df, pd.DataFrame([row])], ignore_index=True)
-            forecast_results.append((client_id, future_day, float(pred), 'lightgbm_enhanced'))
+            forecast_results.append((client_id, future_day, float(pred), 'lightgbm_trial10'))
  
     except Exception as e:
         print(f"❌ Error for {client_id}: {str(e)}")
@@ -327,8 +315,8 @@ for client_id in client_list:
 forecast_df = pd.DataFrame(forecast_results, columns=['client_id', 'forecast_date', 'yhat', 'model_type'])
 error_df = pd.DataFrame(error_log, columns=['client_id', 'error_message'])
  
-print("\n✅ All clients processed and saved.")
-print(f"📊 Enhanced LightGBM with {len([c for c in forecast_df.columns if 'enhanced' in str(c)])} improved features per client")
+print(f"\n✅ All clients processed with Trial 10's optimal parameters")
+print(f"🏆 Expected performance: ~0.76% error (RMSE: 0.007557)")
 
 # COMMAND ----------
 

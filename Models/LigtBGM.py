@@ -25,11 +25,6 @@ def calculate_days_until_next_holiday(date, holiday_dates):
         return (min(future_holidays) - date).days
     return 999
 
-def count_holidays_in_window(date, holiday_dates, start_offset, end_offset):
-    start_date = date + timedelta(days=start_offset)
-    end_date = date + timedelta(days=end_offset)
-    return len([h for h in holiday_dates if start_date <= h <= end_date])
-
 def create_dynamic_holiday_features(date, holiday_df):
     if isinstance(date, str):
         date = pd.to_datetime(date)
@@ -116,14 +111,23 @@ for client_id in client_list:
         holiday_features_df = pd.DataFrame(holiday_features_list)
         df = pd.concat([df.reset_index(drop=True), holiday_features_df.reset_index(drop=True)], axis=1)
 
+        # INTERACTION FEATURES (boost holiday importance)
+        df['major_holiday_weekday_interaction'] = df['is_major_holiday'] * df['dayofweek']
+        df['rebound_tuesday_signal'] = df['is_1day_after_major'] * (df['dayofweek'] == 1).astype(int)
+        df['major_holiday_month_interaction'] = df['is_major_holiday'] * df['month']
+        df['pre_holiday_friday_signal'] = df['is_1day_before_major'] * (df['dayofweek'] == 4).astype(int)
+        df['weekend_after_major'] = df['is_1day_after_major'] * (df['dayofweek'] >= 5).astype(int)
+        df['holiday_proximity_strength'] = (df['is_1day_after_major'] * 3 + 
+                                           df['is_2day_after_major'] * 2 + 
+                                           df['is_1day_before_major'] * 2)
+
         # Lag features
         df['lag_7'] = df['y'].shift(7)
         df['lag_30'] = df['y'].shift(30)
         df['rolling_mean_21'] = df['y'].shift(1).rolling(21, min_periods=7).mean()
         
         df = df.dropna().copy()
-        
-        # NO LOG TRANSFORMATION - work with raw values
+        df['y_log'] = np.log1p(df['y'])  # Keep log transformation
         df = df.drop(columns=['SBM_DT'])
 
         features = [
@@ -134,6 +138,10 @@ for client_id in client_list:
             'is_1day_before_major', 'is_2day_before_major', 'is_tuesday_after_monday_major',
             'days_since_last_major', 'days_until_next_major',
             'days_since_last_minor', 'days_until_next_minor',
+            # INTERACTION FEATURES
+            'major_holiday_weekday_interaction', 'rebound_tuesday_signal',
+            'major_holiday_month_interaction', 'pre_holiday_friday_signal',
+            'weekend_after_major', 'holiday_proximity_strength',
             'lag_7', 'lag_30', 'rolling_mean_21'
         ]
         
@@ -145,8 +153,8 @@ for client_id in client_list:
         train_df = df[df['ds'] <= split_date]
         val_df = df[df['ds'] > split_date]
 
-        X_train, y_train = train_df[features], train_df['y']  # RAW VALUES
-        X_val, y_val = val_df[features], val_df['y']          # RAW VALUES
+        X_train, y_train = train_df[features], train_df['y_log']  # Log values
+        X_val, y_val = val_df[features], val_df['y_log']
 
         # Hyperparameter optimization
         def objective(trial):
@@ -171,7 +179,7 @@ for client_id in client_list:
                      callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)])
             
             preds = model.predict(X_val)
-            return mean_absolute_percentage_error(y_val, preds)
+            return mean_squared_error(y_val, preds, squared=False)
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=50)
@@ -179,7 +187,7 @@ for client_id in client_list:
         # Train final model
         final_model = LGBMRegressor(n_estimators=400, **study.best_params, 
                                    verbosity=-1, random_state=42)
-        final_model.fit(df[features], df['y'], categorical_feature=categorical_features)
+        final_model.fit(df[features], df['y_log'], categorical_feature=categorical_features)
 
         # Generate predictions
         future_start = df['ds'].max() + timedelta(days=1)
@@ -207,14 +215,25 @@ for client_id in client_list:
             holiday_features = create_dynamic_holiday_features(future_day, holiday_df)
             row.update(holiday_features)
             
-            # Direct prediction (no log transformation)
-            pred = final_model.predict(pd.DataFrame([row]))[0]
+            # Calculate interaction features
+            row['major_holiday_weekday_interaction'] = row['is_major_holiday'] * row['dayofweek']
+            row['rebound_tuesday_signal'] = row['is_1day_after_major'] * (row['dayofweek'] == 1)
+            row['major_holiday_month_interaction'] = row['is_major_holiday'] * row['month']
+            row['pre_holiday_friday_signal'] = row['is_1day_before_major'] * (row['dayofweek'] == 4)
+            row['weekend_after_major'] = row['is_1day_after_major'] * (row['dayofweek'] >= 5)
+            row['holiday_proximity_strength'] = (row['is_1day_after_major'] * 3 + 
+                                                row['is_2day_after_major'] * 2 + 
+                                                row['is_1day_before_major'] * 2)
+            
+            # Prediction with log transformation
+            pred_log = final_model.predict(pd.DataFrame([row]))[0]
+            pred = np.expm1(pred_log)
             pred = max(0, pred)
             
             day_name = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][future_day.dayofweek]
             print(f"{future_day.date()} ({day_name}): {pred:,.0f}")
             
-            forecast_results.append((client_id, future_day, float(pred), 'lightgbm_no_log'))
+            forecast_results.append((client_id, future_day, float(pred), 'lightgbm_interactions'))
 
     except Exception as e:
         print(f"Error for {client_id}: {str(e)}")

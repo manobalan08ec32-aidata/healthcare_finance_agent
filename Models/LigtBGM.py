@@ -178,15 +178,14 @@ for client_id in client_list:
             normal_avg = df[df['is_major_holiday'] == 0]['y'].mean()
             print(f"📊 Major holidays avg: {major_avg:,.0f} vs normal: {normal_avg:,.0f} (ratio: {major_avg/normal_avg:.3f})")
 
-        # 📋 Create lag features
+        # 📋 Create REDUCED lag features (less dominance)
         df['lag_7'] = df['y'].shift(7)
-        df['lag_14'] = df['y'].shift(14)
         df['lag_30'] = df['y'].shift(30)
+        # ❌ REMOVED: lag_14 (was overpowering holiday features)
         
-        # Rolling features (shifted to avoid leakage)
-        df['rolling_mean_7'] = df['y'].shift(1).rolling(7, min_periods=3).mean()
-        df['rolling_std_7'] = df['y'].shift(1).rolling(7, min_periods=3).std()
+        # REDUCED rolling features (less dominance)
         df['rolling_mean_21'] = df['y'].shift(1).rolling(21, min_periods=7).mean()
+        # ❌ REMOVED: rolling_mean_7, rolling_std_7 (too many lag-based features)
         
         # Remove NaN rows
         df = df.dropna().copy()
@@ -197,35 +196,32 @@ for client_id in client_list:
         
         print(f"✅ Final dataset: {len(df)} clean rows")
 
-        # 📋 Define features (NOW with specific rebound features!)
+        # 📋 REDUCED FEATURE SET (giving holiday features more importance)
         features = [
-            # Time features
+            # Time features (keep all - important for seasonality)
             'dayofweek', 'month', 'dayofmonth', 'quarter', 'day_of_year',
             'month_sin', 'month_cos', 'dow_sin', 'dow_cos',
             
-            # Dynamic holiday features (model learns what these mean)
+            # 🎯 HOLIDAY FEATURES (should get higher importance now)
             'is_major_holiday', 'is_minor_holiday',
-            'days_since_last_major', 'days_until_next_major',
-            'days_since_last_minor', 'days_until_next_minor',
-            
-            # 🎯 SPECIFIC REBOUND FEATURES (the key addition!)
             'is_1day_after_major', 'is_2day_after_major', 'is_3day_after_major',
             'is_1day_before_major', 'is_2day_before_major',
             'is_monday_after_major', 'is_tuesday_after_major', 'is_tuesday_after_monday_major',
-            
-            # Holiday density and proximity
+            'days_since_last_major', 'days_until_next_major',
+            'days_since_last_minor', 'days_until_next_minor',
             'major_holidays_in_next_7days', 'major_holidays_in_last_7days',
             'minor_holidays_in_next_7days', 'minor_holidays_in_last_7days',
             'is_within_3days_of_major', 'is_within_7days_of_major',
             
-            # Historical features
-            'lag_7', 'lag_14', 'lag_30',
-            'rolling_mean_7', 'rolling_std_7', 'rolling_mean_21'
+            # 📉 REDUCED HISTORICAL FEATURES (less dominance)
+            'lag_7', 'lag_30',          # Only 2 lag features (removed lag_14)
+            'rolling_mean_21'           # Only 1 rolling feature (removed rolling_mean_7, rolling_std_7)
         ]
         
         categorical_features = ['dayofweek', 'month', 'quarter']
         
-        print(f"🔧 Using {len(features)} dynamic features ({len(categorical_features)} categorical)")
+        print(f"🔧 Using REDUCED feature set: {len(features)} features ({len(categorical_features)} categorical)")
+        print(f"📉 Removed lag_14, rolling_mean_7, rolling_std_7 to boost holiday feature importance")
 
         # 📋 Train/validation split
         val_days = 90
@@ -317,14 +313,12 @@ for client_id in client_list:
         future_start = df['ds'].max() + timedelta(days=1)
         future_dates = pd.date_range(start=future_start, periods=31)
         
-        # Use ORIGINAL historical data (not predictions) for lag features
+        # Use ORIGINAL historical data for REDUCED lag features
         original_data = df['y'].values
-        original_rolling_7 = df['rolling_mean_7'].iloc[-1]
         original_rolling_21 = df['rolling_mean_21'].iloc[-1]
-        original_std_7 = df['rolling_std_7'].iloc[-1]
         
         for future_day in future_dates:
-            # Basic time features
+            # REDUCED lag features (using original stable data)
             row = {
                 'dayofweek': future_day.dayofweek,
                 'month': future_day.month,
@@ -338,12 +332,9 @@ for client_id in client_list:
                 'dow_sin': np.sin(2 * np.pi * future_day.dayofweek / 7),
                 'dow_cos': np.cos(2 * np.pi * future_day.dayofweek / 7),
                 
-                # Stable lag features (using original data)
+                # REDUCED stable lag features (only 2 lag features now)
                 'lag_7': original_data[-7],
-                'lag_14': original_data[-14], 
                 'lag_30': original_data[-30],
-                'rolling_mean_7': original_rolling_7,
-                'rolling_std_7': original_std_7,
                 'rolling_mean_21': original_rolling_21
             }
             

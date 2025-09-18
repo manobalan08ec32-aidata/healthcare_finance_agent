@@ -51,6 +51,12 @@ def create_dynamic_holiday_features(date, holiday_df):
     is_major = int(holiday_match['is_major_holiday'].iloc[0]) if len(holiday_match) > 0 else 0
     is_minor = int(holiday_match['is_minor_holiday'].iloc[0]) if len(holiday_match) > 0 else 0
     
+    # Calculate distance metrics
+    days_since_major = calculate_days_since_last_holiday(date, major_holidays)
+    days_until_major = calculate_days_until_next_holiday(date, major_holidays)
+    days_since_minor = calculate_days_since_last_holiday(date, minor_holidays)
+    days_until_minor = calculate_days_until_next_holiday(date, minor_holidays)
+    
     # Calculate dynamic proximity features
     features = {
         # Current day status
@@ -58,12 +64,28 @@ def create_dynamic_holiday_features(date, holiday_df):
         'is_minor_holiday': is_minor,
         
         # Distance to major holidays (let model learn what these distances mean)
-        'days_since_last_major': calculate_days_since_last_holiday(date, major_holidays),
-        'days_until_next_major': calculate_days_until_next_holiday(date, major_holidays),
+        'days_since_last_major': days_since_major,
+        'days_until_next_major': days_until_major,
         
         # Distance to minor holidays  
-        'days_since_last_minor': calculate_days_since_last_holiday(date, minor_holidays),
-        'days_until_next_minor': calculate_days_until_next_holiday(date, minor_holidays),
+        'days_since_last_minor': days_since_minor,
+        'days_until_next_minor': days_until_minor,
+        
+        # 🎯 SPECIFIC REBOUND FEATURES (the missing piece!)
+        'is_1day_after_major': int(days_since_major == 1),
+        'is_2day_after_major': int(days_since_major == 2),
+        'is_3day_after_major': int(days_since_major == 3),
+        'is_1day_before_major': int(days_until_major == 1),
+        'is_2day_before_major': int(days_until_major == 2),
+        
+        # 🎯 WEEKDAY + HOLIDAY INTERACTION FEATURES (critical for rebound)
+        'is_monday_after_major': int(date.weekday() == 0 and days_since_major <= 3),
+        'is_tuesday_after_major': int(date.weekday() == 1 and days_since_major <= 3),
+        'is_tuesday_after_monday_major': int(
+            date.weekday() == 1 and  # Tuesday
+            days_since_major == 1 and  # 1 day after major
+            any((date - timedelta(days=1)) == h and h.weekday() == 0 for h in major_holidays)  # Yesterday was Monday major holiday
+        ),
         
         # Holiday density features
         'major_holidays_in_next_7days': count_holidays_in_window(date, major_holidays, 0, 7),
@@ -72,14 +94,8 @@ def create_dynamic_holiday_features(date, holiday_df):
         'minor_holidays_in_last_7days': count_holidays_in_window(date, minor_holidays, -7, 0),
         
         # Proximity flags (let model learn patterns around holidays)
-        'is_within_3days_of_major': int(
-            calculate_days_since_last_holiday(date, major_holidays) <= 3 or 
-            calculate_days_until_next_holiday(date, major_holidays) <= 3
-        ),
-        'is_within_7days_of_major': int(
-            calculate_days_since_last_holiday(date, major_holidays) <= 7 or 
-            calculate_days_until_next_holiday(date, major_holidays) <= 7
-        )
+        'is_within_3days_of_major': int(days_since_major <= 3 or days_until_major <= 3),
+        'is_within_7days_of_major': int(days_since_major <= 7 or days_until_major <= 7)
     }
     
     return features
@@ -181,7 +197,7 @@ for client_id in client_list:
         
         print(f"✅ Final dataset: {len(df)} clean rows")
 
-        # 📋 Define features (NO hardcoded factors, just descriptive features)
+        # 📋 Define features (NOW with specific rebound features!)
         features = [
             # Time features
             'dayofweek', 'month', 'dayofmonth', 'quarter', 'day_of_year',
@@ -191,6 +207,13 @@ for client_id in client_list:
             'is_major_holiday', 'is_minor_holiday',
             'days_since_last_major', 'days_until_next_major',
             'days_since_last_minor', 'days_until_next_minor',
+            
+            # 🎯 SPECIFIC REBOUND FEATURES (the key addition!)
+            'is_1day_after_major', 'is_2day_after_major', 'is_3day_after_major',
+            'is_1day_before_major', 'is_2day_before_major',
+            'is_monday_after_major', 'is_tuesday_after_major', 'is_tuesday_after_monday_major',
+            
+            # Holiday density and proximity
             'major_holidays_in_next_7days', 'major_holidays_in_last_7days',
             'minor_holidays_in_next_7days', 'minor_holidays_in_last_7days',
             'is_within_3days_of_major', 'is_within_7days_of_major',
@@ -328,13 +351,19 @@ for client_id in client_list:
             holiday_features = create_dynamic_holiday_features(future_day, holiday_df)
             row.update(holiday_features)
             
-            # Show holiday detection
+            # Show holiday detection with rebound info
             if holiday_features['is_major_holiday'] == 1:
                 print(f"🎄 MAJOR HOLIDAY DETECTED: {future_day.date()}")
-            elif holiday_features['days_until_next_major'] <= 2:
+            elif holiday_features['is_1day_after_major'] == 1:
+                print(f"📈 1 DAY AFTER MAJOR HOLIDAY (REBOUND): {future_day.date()}")
+            elif holiday_features['is_2day_after_major'] == 1:
+                print(f"📈 2 DAYS AFTER MAJOR HOLIDAY: {future_day.date()}")
+            elif holiday_features['is_tuesday_after_monday_major'] == 1:
+                print(f"🚀 TUESDAY AFTER MONDAY MAJOR HOLIDAY (SUPER REBOUND): {future_day.date()}")
+            elif holiday_features['is_1day_before_major'] == 1:
+                print(f"📅 1 day before major holiday: {future_day.date()}")
+            elif holiday_features['days_until_next_major'] <= 3:
                 print(f"📅 {holiday_features['days_until_next_major']} days until major holiday: {future_day.date()}")
-            elif holiday_features['days_since_last_major'] <= 2:
-                print(f"📅 {holiday_features['days_since_last_major']} days since major holiday: {future_day.date()}")
 
             # Make prediction
             row_df = pd.DataFrame([row])
@@ -344,6 +373,8 @@ for client_id in client_list:
             
             day_name = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][future_day.dayofweek]
             holiday_flag = " 🎄 MAJOR" if holiday_features['is_major_holiday'] == 1 else ""
+            holiday_flag += " 🚀 REBOUND" if holiday_features['is_1day_after_major'] == 1 else ""
+            holiday_flag += " 📈 RECOVERY" if holiday_features['is_2day_after_major'] == 1 else ""
             holiday_flag += " 🔔 MINOR" if holiday_features['is_minor_holiday'] == 1 else ""
             
             print(f"🔮 {future_day.date()} ({day_name}): {pred:,.0f}{holiday_flag}")

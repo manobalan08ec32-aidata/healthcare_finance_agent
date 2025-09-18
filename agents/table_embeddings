@@ -1,128 +1,38 @@
-# hypothesis_catalog.yaml - Comprehensive investigation patterns
-investigation_patterns:
-  revenue_change:
-    mandatory_checks:
-      - name: overall_magnitude
-        description: "Assess overall revenue change magnitude and timing"
-        dataset: ledger_overview
-        group_set: "by line of business"
-        priority: 1
-        
-      - name: volume_price_decomposition
-        description: "Split revenue into volume and price components"
-        dataset: claims_drivers
-        metrics: ["revenue_amt", "unadjusted_script_count"]
-        calculation: "revenue_per_script"
-        priority: 2
-        
-      - name: temporal_pattern
-        description: "Check for seasonal or cyclical patterns"
-        dataset: ledger_overview
-        time_analysis: true
-        priority: 3
-    
-    investigation_factors:
-      client_factors:
-        - name: client_churn
-          description: "Check for lost clients"
-          dataset: claims_drivers
-          group_set: "by client"
-          analysis_type: "retention"
-          priority: 1
-          
-        - name: client_additions
-          description: "Check for new client additions"
-          dataset: claims_drivers
-          group_set: "by client"
-          analysis_type: "new_business"
-          priority: 2
-          
-      member_factors:
-        - name: membership_changes
-          description: "Analyze member count changes"
-          dataset: claims_drivers
-          metrics: ["member_count", "eligibility_status"]
-          analysis_type: "cohort"
-          priority: 1
-          
-        - name: member_demographics
-          description: "Check age group shifts"
-          dataset: claims_drivers
-          group_set: "by age group"
-          priority: 2
-          
-      carrier_factors:
-        - name: carrier_changes
-          description: "Analyze carrier additions or drops"
-          dataset: claims_drivers
-          group_set: "by carrier"
-          analysis_type: "retention"
-          priority: 1
-          
-      product_factors:
-        - name: brand_generic_mix
-          description: "Analyze brand vs generic shifts"
-          dataset: claims_drivers
-          group_set: "by brand vs generic and drug combination"
-          priority: 1
-          
-        - name: therapy_class_mix
-          description: "Check therapy class changes"
-          dataset: claims_drivers
-          group_set: "by therapy drug"
-          priority: 2
-          
-      operational_factors:
-        - name: pharmacy_network
-          description: "Analyze pharmacy performance"
-          dataset: claims_drivers
-          group_set: "by pharmacy"
-          priority: 1
-          
-        - name: claim_processing
-          description: "Check claim status patterns"
-          dataset: claims_drivers
-          metrics: ["claim_status_code", "rejection_rate"]
-          priority: 2
-
-  script_volume_change:
-    mandatory_checks:
-      - name: overall_script_trend
-        description: "Overall script volume trend"
-        dataset: claims_drivers
-        metrics: ["unadjusted_script_count"]
-        priority: 1
-        
-      - name: scripts_per_member
-        description: "Scripts per member analysis"
-        dataset: claims_drivers
-        calculation: "scripts_per_member"
-        priority: 2
-        
-    investigation_factors:
-      # Similar structure for script-specific investigations
-      
-  membership_change:
-    mandatory_checks:
-      - name: overall_membership
-        description: "Total membership trend"
-        dataset: ledger_overview
-        metrics: ["Total Membership"]
-        priority: 1
-        
-    investigation_factors:
-      # Membership-specific factors
-
-investigation_rules:
-  max_total_iterations: 7
-  min_iterations: 3
-  variance_threshold: 70
-  confidence_threshold: 0.8
-  stop_conditions:
-    - variance_explained: 80
-    - no_progress_iterations: 2
-    - confidence_reached: 0.9
-  iteration_limits:
-    per_hypothesis: 2
-    per_dimension: 3
-    mandatory_completion_required: true
+llm_context
+"- **unadjusted_script_count**: Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script.
+- **adjusted_script_count**: adjusted script count and should not be used for raw script count or revenue per script analysis.
+- **30_days_script_count**: Count of 30-day prescriptions; complements 90-day for supply-mix insights.
+- **90_days_script_count**: Count of 90-day prescriptions; useful for mail-order and adherence analyses"
+"- **claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. Do not use for any calculation; use unadjusted script count for claim counts
+- **claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations or script counts.
+- **claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]"
+"- **client_id**: This contain unique client id.
+- **client_name**: This contains client description. Return alongside client_id for user-facing reports
+- **client_type**: it used identify the type of the client. [Values:SECONDARY,PHARM TECH,MS UHCMB,WORK COMP,GOVERNMENT,HOSPISCRIPT,PUBLIC SECTOR COMPANIES,STRATEGIC SOLUTIONS,PAYER,WRAP,DIRECT EMPLOYER,MS WC,HEALTH PLAN,PROVIDER,REBATES,MCO,MS ONLY,MAPD,COE,TPA CLIENTS,OTHER,UMR,LABOR TRUST,FMS ONLY,EMPLOYER CARVE OUT,DISCOUNT CARD]"
+"- **carrier_id**: Identifier of the insurance carrier administering the plan.
+-**CAG**: calculated column .concatenate carrier id , account id and group id to derive CAG"
+- **product_category**: Indicates the category of product or service for each claim. Distinct values: PBM, Home Delivery (HDP), and Specialty (SP) [Values: PBM, Home Delivery, Specialty]
+"- **line_of_business**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR and when the user asks plainly external then use this column for filtering and is distinct from client type. [Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External]
+- **line_of_business_desc**: Contains detailed descriptive name of the line of business [Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External]"
+"- **pharmacy_name**: Dispensing pharmacy/provider name; used for provider-level performance.
+- **pharmacy_npi_no**: National Provider Identifier (NPI) of the dispensing pharmacy/provider.
+-**pharmacy_type**:Used to identify the pharmacy type whether optum owned internal or external pharmacies.[Values: EXTERNAL-NON OPTUM OWNED,INTERNAL OPTUM OWNED]"
+- **line_of_business**: Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
+"- **submit_date**: Exact claim submission date. Use for daily trending and time-window filters. format is YYYY-MM-DD.
+"- **drug_name**: Name of the dispensed drug; use for molecule-level trends and financials.
+- **therapy_class_name**: Therapeutic class of the drug. Choose class or specific drug based on the question. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information
+- **brand_vs_generic_ind**: Product type indicator. Drives brand/generic mix and Generic Dispense Rate and also use it filter clause in case of brand vs generic calculation using distinct values [Values: Brand, Generic]
+- **gpi_no**: Generic Product Identifier; standardized drug classification used for grouping.
+-**DRUG_MANUFCTR_NM**:Drug manufacturer; supports brand/manufacturer market-share views
+-**GDR_Ratio**:Column not exists.Derived Metric:Calculates the percentage of generic drug scripts by dividing the count of scripts where brand_vs_generic_ind =Generic by the total script volume"
+"- **mbr_sex**: Contains values M or F representing Male or Female respectively, and is suitable for sex-level demographic or behavioral analysis.
+- **mbr_dt_of_brth**: Contains member date of birth in the format YYYY-MM-DD, enabling age-based segmentation and analysis  .
+- **state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN] "
+"- **revenue_amt**: Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script.
+- **expense_amt**: Expense/cost of goods sold for the claim. Pairs with revenue_amt for margin views.
+- **wac_amount**: Wholesale Acquisition Cost reference for the dispensed drug; used in pricing/cost analytics.
+- **awp_cost_amount**: Average Wholesale Price reference for the dispensed drug; used in pricing/cost analytics
+- **revenue_per_script or rate**: Column not exists.Derived Metric- calculate using revenue_amt divided by unadjusted_script_count
+- **rate variance **: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume, 
+--** volume variance = (prior Month volume - Current Month Volume) x Current Rate.Rate is reveneue_amt divided by unadjusted_script_count. Volume is unajusted_script_count. current month and previous month should be extracted from user question.
+- **mix variance **: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and lume variance formulas in other derived formulas"

@@ -1,0 +1,27 @@
+State Dimension Knowledge Base
+Core Analysis Focus: State analysis reveals geographic performance variations through comparative analysis against national trends and peer states. State-level variance identifies regional outliers, competitive pressures, demographic shifts, or regulatory impacts causing specific states to deviate from broader market patterns.
+
+Primary Metrics Always Calculated: State Revenue vs National Average, State Script Count vs Peer States, Market Share by State
+
+Secondary Metrics Conditional Execution: If State Outperforms or Underperforms then Revenue per Member comparison and Script per Member analysis. If Geographic Concentration Risk then State revenue concentration percentage and Top state dependency analysis. If Demographic Variance then Member count changes and Age distribution shifts using mbr_dt_of_brth.
+
+Variance Intelligence with Dimensional Links:
+State Performance Deviation Analysis - Therapeutic Variations: therapy_class_name for state-specific utilization vs national patterns
+State Performance Deviation Analysis - Product Preferences: brand_vs_generic_ind for regional formulary or prescribing differences vs peer states  
+State Performance Deviation Analysis - Client Concentration: client_id for state-specific client performance driving deviation
+State Performance Deviation Analysis - Secondary Drill: State vs national therapy utilization rates, Regional competitive positioning
+
+Geographic Risk Assessment - Revenue Concentration: Percentage of total revenue from top performing states
+Geographic Risk Assessment - Client Dependency: client_id concentration within high-performing states creating risk
+Geographic Risk Assessment - Therapy Concentration: therapy_class_name geographic concentration patterns
+Geographic Risk Assessment - Secondary Drill: Geographic diversification analysis, State dependency risk metrics
+
+Demographic-Driven Variations - Age Population Shifts: mbr_dt_of_brth for state aging trends vs national demographics
+Demographic-Driven Variations - Member Count Changes: Member growth decline rates vs national member trends
+Demographic-Driven Variations - Secondary Drill: Demographics-adjusted performance analysis, Population health trend impact
+
+Smart Drill Through Options: Therapy Class Level using therapy_class_name for state vs national therapeutic performance, Client Performance using client_id for state-specific client performance variations, Brand Generic Patterns using brand_vs_generic_ind for regional substitution differences, Demographic Context using mbr_dt_of_brth for state population characteristics impact
+
+Secondary Metric Follow-ups: Outlier Analysis indicates Texas diabetes therapy 25 percent below national average competitive pressure or formulary restrictions. Risk Assessment indicates California represents 30 percent of total revenue geographic concentration risk increasing.
+
+Cross Dimensional Relationships: State connects to comparative therapeutic performance patterns, regional client concentration risks, demographic-adjusted utilization trends, and geographic market positioning relative to national benchmarks.

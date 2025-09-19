@@ -1,0 +1,20 @@
+Drug Dimension Knowledge Base
+Core Analysis Focus: Drug analysis reveals individual medication performance patterns, utilization trends, and competitive positioning. Drug-level variance indicates formulary changes, generic substitution, clinical guideline shifts, or market access issues affecting specific medication performance.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Brand vs Generic ratio analysis and Script Count by geographic region. If Rate Variance Detected then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Generic Substitution: brand_vs_generic_ind for brand to generic switching patterns
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional utilization differences
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name comparison, 30_days_script_count vs 90_days_script_count
+
+Rate Variance Analysis - Pricing Changes: Revenue per Script trends over time periods
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Therapy Class Level using therapy_class_name to see if issue affects entire therapeutic area, Brand Generic Analysis using brand_vs_generic_ind for substitution patterns, Geographic Analysis using state_cd for regional utilization patterns, Supply Analysis using 30_days_script_count vs 90_days_script_count for supply duration patterns
+
+Secondary Metric Follow-ups: Volume Analysis indicates Drug script count declined 25 percent is this generic substitution or therapeutic area decline. Geographic Analysis indicates Drug performance varies by region are there state-specific access barriers.
+
+Cross Dimensional Relationships: Drug connects to therapeutic class competition patterns, brand generic substitution dynamics, geographic utilization differences, and supply duration preferences based on medication characteristics.

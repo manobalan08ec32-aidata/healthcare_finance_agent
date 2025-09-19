@@ -1,0 +1,32 @@
+LOB Dimension Knowledge Base
+Core Analysis Focus: LOB Line of Business analysis reveals performance across different payer segments. Each LOB represents distinct business models with different member demographics, coverage policies, and contract structures. Revenue trends at LOB level indicate broader payer-specific issues, operational efficiency changes, or competitive positioning shifts within each segment.
+
+Primary Metrics Always Calculated: Rate Variance, Volume Variance, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Rate Variance Dominant then Revenue per Script trends and Mix Variance analysis. If Volume Variance Dominant then Script Count by LOB and Mix Variance analysis. If Mix Variance Dominant then LOB composition analysis and Revenue per Script trends.
+
+Variance Intelligence with Dimensional Links:
+Script Count Changes - Member Related: mbr_dt_of_brth for age demographics affecting prescription needs, mbr_sex for gender-specific medication patterns
+Script Count Changes - Client Related: client_id for specific client performance changes, client_type for business segment shifts, carrier_id for carrier network or coverage changes
+Script Count Changes - Product Related: therapy_class_name for therapeutic area utilization changes, brand_vs_generic_ind for brand to generic switching, drug_name for specific medication changes
+Script Count Changes - Operational: pharmacy_type for network access differences, product_category for delivery channel preferences, state_cd for geographic performance variations
+Script Count Changes - Supply: 30_days_script_count vs 90_days_script_count for supply duration preferences
+
+Rate Variance Pricing Changes - Contract Pricing: client_id for client-specific rate changes, therapy_class_name for category pricing shifts
+Rate Variance Pricing Changes - Product Mix: brand_vs_generic_ind for brand generic pricing differences, drug_name for specific drug pricing
+Rate Variance Pricing Changes - Operational: pharmacy_type for network pricing variations, product_category for channel-specific rates
+
+Volume Variance Utilization Impact - Business: client_id for client volume changes, state_cd for geographic utilization patterns
+Volume Variance Utilization Impact - Access: pharmacy_type plus product_category for channel utilization shifts
+Volume Variance Utilization Impact - Clinical: therapy_class_name for therapeutic area utilization changes
+
+Mix Variance Composition Changes - Client Mix: client_type distribution changes within LOB
+Mix Variance Composition Changes - Product Mix: therapy_class_name and brand_vs_generic_ind composition shifts
+Mix Variance Composition Changes - Geographic Mix: state_cd concentration changes
+Mix Variance Composition Changes - Channel Mix: product_category distribution changes
+
+Smart Drill Through Options: Client Level using client_id client_name client_type, Product Level using drug_name therapy_class_name brand_vs_generic_ind, Geographic Level using state_cd, Operational Level using pharmacy_type product_category, Member Level using mbr_dt_of_brth mbr_sex
+
+Secondary Metric Follow-ups: Rate Variance Analysis indicates LOB rate variance indicates pricing pressure which clients or therapy classes are affected. Volume Analysis indicates LOB script count decline is this market share loss or utilization management impact.
+
+Cross Dimensional Relationships: LOB connects to client contract terms, geographic distribution, therapeutic focus areas, and delivery channel preferences based on member demographics and coverage policies.

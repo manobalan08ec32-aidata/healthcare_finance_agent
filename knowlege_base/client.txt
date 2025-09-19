@@ -1,25 +1,25 @@
-##Carrier Dimension Knowledge Base##
-Core Analysis Focus: Carrier analysis reveals insurance carrier performance patterns, rebate structures, and administrative efficiency. Carrier-level variance indicates payer-specific contract terms, rebate pass-through effectiveness, or administrative cost variations affecting overall profitability within client relationships.
+##Client Dimension Knowledge Base##
+Core Analysis Focus: Client analysis reveals individual account performance patterns, contract effectiveness, and competitive positioning. Client-level variance indicates specific relationship issues, contract terms impact, or competitive pressures affecting individual accounts within each LOB.
 
-Primary Metrics Always Calculated: Rate Variance, Revenue Amount, Script Count
+Primary Metrics Always Calculated: Rate Variance, Volume Variance, Revenue Amount
 
-Secondary Metrics Conditional Execution: If Rate Variance Dominant then Margin analysis using revenue_amt minus expense_amt and Revenue per Script trends. If Volume Variance Dominant then Script Count by therapy_class_name and brand_vs_generic_ind mix. If Mix Variance Dominant then Carrier portfolio composition by client_type and therapy_class_name.
+Secondary Metrics Conditional Execution: If Rate Variance Dominant then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt. If Volume Variance Dominant then Script Count by therapy_class_name and brand_vs_generic_ind mix. If Mix Variance Dominant then Client portfolio composition by therapy_class_name and product_category.
 
 Variance Intelligence with Dimensional Links:
-Rate Variance Dominant Analysis - Rebate Structures: therapy_class_name for carrier-specific rebate agreements, drug_name for individual drug rebate terms
-Rate Variance Dominant Analysis - Contract Terms: client_id for carrier-client relationship specifics, submit_date for contract renewal timing
-Rate Variance Dominant Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt, Revenue per Script by therapeutic area
+Rate Variance Dominant Analysis - Contract Impact: carrier_id for rebate structure changes, submit_date for contract renewal timing
+Rate Variance Dominant Analysis - Product Pricing: therapy_class_name for formulary tier changes, brand_vs_generic_ind for generic adoption impact
+Rate Variance Dominant Analysis - Secondary Drill: Revenue per Script by drug_name, Margin analysis using revenue_amt minus expense_amt
 
-Volume Variance Dominant Analysis - Network Effects: pharmacy_type for carrier network preferences, state_cd for carrier geographic coverage
-Volume Variance Dominant Analysis - Utilization Management: therapy_class_name for carrier-specific prior authorization, brand_vs_generic_ind for formulary positioning
-Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name, product_category utilization patterns
+Volume Variance Dominant Analysis - Member Impact: mbr_dt_of_brth and mbr_sex for demographic changes affecting utilization
+Volume Variance Dominant Analysis - Access Issues: pharmacy_type for Internal vs External access, state_cd for geographic member distribution
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name, 30_days_script_count vs 90_days_script_count
 
-Mix Variance Dominant Analysis - Client Portfolio: client_type distribution within carrier, line_of_business mix changes
-Mix Variance Dominant Analysis - Product Portfolio: therapy_class_name and brand_vs_generic_ind preferences by carrier
-Mix Variance Dominant Analysis - Secondary Drill: Portfolio composition analysis, Channel performance by carrier
+Mix Variance Dominant Analysis - Product Portfolio: therapy_class_name distribution changes, brand_vs_generic_ind ratio shifts
+Mix Variance Dominant Analysis - Operational Mix: product_category for PBM vs Home Delivery vs Specialty, pharmacy_type for Internal vs External
+Mix Variance Dominant Analysis - Secondary Drill: Portfolio composition analysis, Channel performance comparison
 
-Smart Drill Through Options: Client Level using client_id client_type for carrier-specific client performance, Product Level using therapy_class_name drug_name for carrier formulary analysis, Geographic Level using state_cd for carrier regional performance, Operational Level using pharmacy_type product_category for carrier network utilization
+Smart Drill Through Options: Carrier Level using carrier_id for multi-carrier clients, Product Level using therapy_class_name drug_name, Geographic Level using state_cd, Operational Level using pharmacy_type product_category
 
-Secondary Metric Follow-ups: Margin Analysis indicates Carrier margin revenue_amt minus expense_amt improved which rebate agreements are driving this. Volume Analysis indicates Carrier script count increased 20 percent is this network expansion or formulary changes.
+Secondary Metric Follow-ups: Margin Analysis indicates Client margin revenue_amt minus expense_amt declined which therapy classes are driving cost increases. Volume Analysis indicates Client script count dropped 15 percent is this member attrition or therapy switching.
 
-Cross Dimensional Relationships: Carrier connects to client contract structures, rebate pass-through mechanisms, formulary management decisions, and geographic network coverage patterns.
+Cross Dimensional Relationships: Client connects to carrier relationships, geographic member distribution, therapeutic area preferences, and operational delivery channel utilization patterns.

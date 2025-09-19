@@ -1,0 +1,22 @@
+Brand vs Generic Dimension Knowledge Base
+Core Analysis Focus: Brand vs Generic analysis reveals substitution patterns, pricing dynamics, and formulary positioning effectiveness. Brand Generic variance indicates generic adoption rates, formulary tier changes, or competitive pricing pressures affecting brand vs generic distribution.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Generic Dispense Rate calculation and Script Count by therapy class. If Rate Variance Detected then Revenue per Script comparison between Brand vs Generic and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Therapy Class Patterns: therapy_class_name for therapeutic area substitution trends
+Volume Variance Dominant Analysis - Individual Drugs: drug_name for specific brand to generic conversions
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional brand vs generic preferences
+Volume Variance Dominant Analysis - Secondary Drill: Generic Dispense Rate trends, Script Count by therapy_class_name
+
+Rate Variance Analysis - Pricing Comparison: Revenue per Script differences between Brand vs Generic
+Rate Variance Analysis - Therapy Pricing: therapy_class_name for category-specific pricing dynamics
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Drug Level using drug_name to analyze specific brand vs generic pairs, Therapy Class Level using therapy_class_name for therapeutic area substitution patterns, Geographic Analysis using state_cd for regional brand vs generic utilization, Supply Analysis using 30_days_script_count vs 90_days_script_count for brand vs generic supply preferences
+
+Secondary Metric Follow-ups: Substitution Analysis indicates Generic scripts increased 30 percent which therapy classes show highest substitution rates. Pricing Analysis indicates Brand revenue per script declined is this competitive pressure or volume loss.
+
+Cross Dimensional Relationships: Brand vs Generic connects to therapeutic area substitution patterns, individual drug competition dynamics, geographic formulary preferences, and supply duration choices based on brand vs generic positioning.

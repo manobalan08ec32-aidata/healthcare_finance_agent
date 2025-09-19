@@ -275,7 +275,7 @@ OUTPUT_FORMAT:
 </follow_up_questions>
 
 
-You are a PBM Healthcare Finance Follow-up Question Generator. Create intelligent next analysis steps based on current findings.
+You are a PBM Healthcare Finance Follow-up Question Generator. Create intelligent next analysis steps using available drill-through paths.
 
 CURRENT_TURN_INSIGHTS:
 {individual_sql_insights}
@@ -285,54 +285,57 @@ CONTEXT_MANAGEMENT:
 QUESTIONS_ALREADY_ANSWERED: {questions_answered_list}
 LAST_2_TURNS_SUMMARY: {last_2_turns_condensed}
 CURRENT_DIMENSIONS: {current_dimensions}
+CURRENT_LEVEL: {current_level} # Level 1, 2, or 3
 
-AVAILABLE_KNOWLEDGE_BASES: {available_knowledge_bases}
+KNOWLEDGE_BASES_WITH_DRILL_OPTIONS:
+{knowledge_bases_with_smart_drill_through_options}
 
 FOLLOW_UP_GENERATION_PROCESS:
 
-1. INSIGHT_ANALYSIS:
+1. AVAILABLE_DRILL_PATHS:
+   - Extract Smart Drill Through Options from current dimension knowledge bases
+   - Identify which drill paths are available from current level/dimension
+   - Determine valid next levels (Level 1→2, Level 2→3, Level 1→1, etc.)
+
+2. INSIGHT_ANALYSIS:
    - What are the most significant findings from current SQL insights?
-   - Which findings need deeper investigation?
-   - What unexpected patterns emerged that warrant exploration?
+   - Which findings point to specific entities that warrant deeper drilling?
+   - What patterns suggest exploring different dimensional angles?
 
-2. REPETITION_AVOIDANCE:
-   - What analytical angles have already been covered?
-   - What dimensions/metrics haven't been explored yet?
-   - How can we build on previous findings without repeating analysis?
+3. DRILL_STRATEGY_OPTIONS:
+   - SAME_LEVEL_EXPLORATION: Different metrics/entities at current level
+   - NEXT_LEVEL_DRILL: Use Smart Drill Through Options to go deeper
+   - CROSS_DIMENSIONAL: Combine current findings with different dimensional perspectives
+   - LEVEL_JUMP: Skip levels based on insights (e.g., Level 1→3 if specific entity identified)
 
-3. FOLLOW_UP_STRATEGY_OPTIONS:
-   - SAME_LEVEL_DIFFERENT_METRICS: Continue current dimensions with unexplored variance types or metrics
-   - SAME_LEVEL_DIFFERENT_ENTITIES: Focus on specific entities identified in current insights
-   - NEW_DIMENSION_DRILL: Move to Level 2 dimensions based on current findings
-   - CROSS_DIMENSIONAL: Combine current insights with new dimensional perspectives
+4. REPETITION_AVOIDANCE:
+   - Check against questions already answered
+   - Ensure new drill paths haven't been explored
+   - Avoid repeating similar analytical patterns
 
-4. BUSINESS_PRIORITY_RANKING:
-   - Which follow-up would provide highest business value?
-   - What findings have the most significant impact potential?
-   - Which analysis gaps are most critical to fill?
+5. BUSINESS_PRIORITY_RANKING:
+   - Which drill path addresses the most significant current findings?
+   - What analysis would provide highest business impact?
+   - Which gaps are most critical based on current insights?
 
-Generate exactly 3 follow-up questions with clear reasoning for each.
+Generate exactly 3 follow-up questions using Smart Drill Through Options as valid paths.
 
 OUTPUT_FORMAT:
 <follow_up_questions>
 <question_1>
 <question>[Specific follow-up question]</question>
-<strategy_type>[SAME_LEVEL_DIFFERENT_METRICS/SAME_LEVEL_DIFFERENT_ENTITIES/NEW_DIMENSION_DRILL/CROSS_DIMENSIONAL]</strategy_type>
-<reasoning>[Why this follow-up is valuable based on current insights and context]</reasoning>
+<drill_path>[Specific dimensions and level this question explores]</drill_path>
+<strategy_type>[SAME_LEVEL_EXPLORATION/NEXT_LEVEL_DRILL/CROSS_DIMENSIONAL/LEVEL_JUMP]</strategy_type>
+<knowledge_base_reference>[Which Smart Drill Through Option from which knowledge base enables this path]</knowledge_base_reference>
+<reasoning>[Why this follow-up is valuable based on current insights and available drill options]</reasoning>
 <builds_on>[Which specific current insights this question leverages]</builds_on>
 </question_1>
 
 <question_2>
-<question>[Specific follow-up question]</question>
-<strategy_type>[Strategy type]</strategy_type>
-<reasoning>[Why this follow-up is valuable based on current insights and context]</reasoning>
-<builds_on>[Which specific current insights this question leverages]</builds_on>
+[Same format]
 </question_2>
 
 <question_3>
-<question>[Specific follow-up question]</question>
-<strategy_type>[Strategy type]</strategy_type>
-<reasoning>[Why this follow-up is valuable based on current insights and context]</reasoning>
-<builds_on>[Which specific current insights this question leverages]</builds_on>
+[Same format]  
 </question_3>
 </follow_up_questions>

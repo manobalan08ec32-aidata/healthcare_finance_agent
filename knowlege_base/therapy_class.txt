@@ -1,0 +1,22 @@
+Therapy Class Dimension Knowledge Base
+Core Analysis Focus: Therapy Class analysis reveals therapeutic area performance patterns, clinical utilization trends, and competitive dynamics within disease categories. Therapy class variance indicates clinical guideline changes, disease prevalence shifts, formulary positioning changes, or competitive product impacts affecting entire therapeutic categories.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Script Count by individual drugs within class and Brand vs Generic distribution. If Rate Variance Detected then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Drug Competition: drug_name for individual drug performance within therapy class
+Volume Variance Dominant Analysis - Generic Impact: brand_vs_generic_ind for brand to generic substitution within class
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional therapeutic area utilization
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by individual drug_name, Supply mix using 30_days_script_count vs 90_days_script_count
+
+Rate Variance Analysis - Pricing Dynamics: Revenue per Script trends across drugs in therapy class
+Rate Variance Analysis - Generic Pricing: brand_vs_generic_ind for pricing pressure within therapeutic area
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Drug Level using drug_name to analyze individual drug performance within therapy class, Brand Generic Analysis using brand_vs_generic_ind for substitution patterns within class, Geographic Analysis using state_cd for regional therapeutic area performance, Supply Analysis using 30_days_script_count vs 90_days_script_count for therapy-specific supply patterns
+
+Secondary Metric Follow-ups: Volume Analysis indicates Therapy class script count declined 15 percent which specific drugs are driving this decline. Generic Analysis indicates Therapy class shows generic substitution which brands are most affected.
+
+Cross Dimensional Relationships: Therapy Class connects to individual drug competition patterns, brand generic substitution dynamics within therapeutic areas, geographic utilization differences, and supply duration preferences based on clinical characteristics.

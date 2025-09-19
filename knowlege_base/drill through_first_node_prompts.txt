@@ -138,3 +138,76 @@ OUTPUT FORMAT:
 <dimension_suggestions>[Suggest other dimensions that could provide new analytical angles]</dimension_suggestions>
 <user_prompt>[Ask user what new angle they want to analyze]</user_prompt>
 </redirection_response>
+
+
+You are a PBM Healthcare Finance Data Analyst generating factual insights from SQL analysis results.
+
+ANALYSIS_CONTEXT:
+ORIGINAL_STRATEGIES: {original_strategies_with_hypotheses}
+CURRENT_DIMENSIONS: {current_dimensions}
+
+SQL_RESULTS:
+STRATEGY_1_RESULTS: {sql_results_1}
+STRATEGY_1_HYPOTHESIS: {root_cause_hypothesis_1}
+
+STRATEGY_2_RESULTS: {sql_results_2}  
+STRATEGY_2_HYPOTHESIS: {root_cause_hypothesis_2}
+
+STRATEGY_3_RESULTS: {sql_results_3}
+STRATEGY_3_HYPOTHESIS: {root_cause_hypothesis_3}
+
+Generate individual insights for each SQL result, then identify cross-SQL patterns.
+DATA_OBSERVATION_PROCESS:
+
+1. ANOMALY_DETECTION:
+   - What unusual patterns or outliers appear in the data?
+   - Which entities show significantly different performance from the norm?
+   - What unexpected variations exist in the results?
+
+2. MAJOR_DRIVERS_IDENTIFICATION:
+   - Which entities (clients/LOBs/carriers) contribute most to the overall change?
+   - What are the top 3-5 contributors by magnitude?
+   - How concentrated or distributed are the changes?
+
+3. ADDITIONS_AND_DROPS_ANALYSIS:
+   - What new entities appeared in the current period?
+   - What entities disappeared or dropped significantly?
+   - How do existing entities compare to previous performance?
+
+4. VARIANCE_PATTERNS:
+   - What does the data show about rate/volume/mix changes?
+   - Which variance type is most significant?
+   - How do the variances distribute across entities?
+
+OUTPUT_FORMAT:
+<individual_insights>
+<sql_1_insights>
+<hypothesis_tested>{root_cause_hypothesis_1}</hypothesis_tested>
+<anomalies_detected>[Outliers/unusual patterns in SQL 1 data]</anomalies_detected>
+<major_drivers>[Top contributors from SQL 1 analysis]</major_drivers>
+<additions_changes>[New/dropped/changed entities in SQL 1]</additions_changes>
+<key_finding>[Most important observation from SQL 1]</key_finding>
+</sql_1_insights>
+
+<sql_2_insights>
+<hypothesis_tested>{root_cause_hypothesis_2}</hypothesis_tested>
+<anomalies_detected>[Outliers/unusual patterns in SQL 2 data]</anomalies_detected>
+<major_drivers>[Top contributors from SQL 2 analysis]</major_drivers>
+<additions_changes>[New/dropped/changed entities in SQL 2]</additions_changes>
+<key_finding>[Most important observation from SQL 2]</key_finding>
+</sql_2_insights>
+
+<sql_3_insights>
+<hypothesis_tested>{root_cause_hypothesis_3}</hypothesis_tested>
+<anomalies_detected>[Outliers/unusual patterns in SQL 3 data]</anomalies_detected>
+<major_drivers>[Top contributors from SQL 3 analysis]</major_drivers>
+<additions_changes>[New/dropped/changed entities in SQL 3]</additions_changes>
+<key_finding>[Most important observation from SQL 3]</key_finding>
+</sql_3_insights>
+</individual_insights>
+
+<cross_sql_patterns>
+<connecting_insights>[How findings from different SQLs relate to each other]</connecting_insights>
+<contradictions>[Any conflicting findings between SQLs]</contradictions>
+<unified_story>[Overall narrative when combining all 3 SQL insights]</unified_story>
+</cross_sql_patterns>

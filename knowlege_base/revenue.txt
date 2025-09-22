@@ -1,0 +1,188 @@
+# Revenue Playbook (All Dimensions)
+
+## LOB Dimension Knowledge Base
+
+Core Analysis Focus: LOB Line of Business analysis reveals performance across different payer segments. Each LOB represents distinct business models with different member demographics, coverage policies, and contract structures. Revenue trends at LOB level indicate broader payer-specific issues, operational efficiency changes, or competitive positioning shifts within each segment.
+
+Primary Metrics Always Calculated: Rate Variance, Volume Variance, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Rate Variance Dominant then Revenue per Script trends and Mix Variance analysis. If Volume Variance Dominant then Script Count by LOB and Mix Variance analysis. If Mix Variance Dominant then LOB composition analysis and Revenue per Script trends.
+
+Variance Intelligence with Dimensional Links:
+Script Count Changes - Member Related: mbr_dt_of_brth for age demographics affecting prescription needs, mbr_sex for gender-specific medication patterns
+Script Count Changes - Client Related: client_id for specific client performance changes, client_type for business segment shifts, carrier_id for carrier network or coverage changes
+Script Count Changes - Product Related: therapy_class_name for therapeutic area utilization changes, brand_vs_generic_ind for brand to generic switching, drug_name for specific medication changes
+Script Count Changes - Operational: pharmacy_type for network access differences, product_category for delivery channel preferences, state_cd for geographic performance variations
+Script Count Changes - Supply: 30_days_script_count vs 90_days_script_count for supply duration preferences
+
+Rate Variance Pricing Changes - Contract Pricing: client_id for client-specific rate changes, therapy_class_name for category pricing shifts
+Rate Variance Pricing Changes - Product Mix: brand_vs_generic_ind for brand generic pricing differences, drug_name for specific drug pricing
+Rate Variance Pricing Changes - Operational: pharmacy_type for network pricing variations, product_category for channel-specific rates
+
+Volume Variance Utilization Impact - Business: client_id for client volume changes, state_cd for geographic utilization patterns
+Volume Variance Utilization Impact - Access: pharmacy_type plus product_category for channel utilization shifts
+Volume Variance Utilization Impact - Clinical: therapy_class_name for therapeutic area utilization changes
+
+Mix Variance Composition Changes - Client Mix: client_type distribution changes within LOB
+Mix Variance Composition Changes - Product Mix: therapy_class_name and brand_vs_generic_ind composition shifts
+Mix Variance Composition Changes - Geographic Mix: state_cd concentration changes
+Mix Variance Composition Changes - Channel Mix: product_category distribution changes
+
+Smart Drill Through Options: Client Level using client_id client_name client_type, Product Level using drug_name therapy_class_name brand_vs_generic_ind, Geographic Level using state_cd, Operational Level using pharmacy_type product_category, Member Level using mbr_dt_of_brth mbr_sex
+
+Secondary Metric Follow-ups: Rate Variance Analysis indicates LOB rate variance indicates pricing pressure which clients or therapy classes are affected. Volume Analysis indicates LOB script count decline is this market share loss or utilization management impact.
+
+Cross Dimensional Relationships: LOB connects to client contract terms, geographic distribution, therapeutic focus areas, and delivery channel preferences based on member demographics and coverage policies.
+
+## Client Dimension Knowledge Base
+
+Core Analysis Focus: Client analysis reveals individual account performance patterns, contract effectiveness, and competitive positioning. Client-level variance indicates specific relationship issues, contract terms impact, or competitive pressures affecting individual accounts within each LOB.
+
+Primary Metrics Always Calculated: Rate Variance, Volume Variance, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Rate Variance Dominant then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt. If Volume Variance Dominant then Script Count by therapy_class_name and brand_vs_generic_ind mix. If Mix Variance Dominant then Client portfolio composition by therapy_class_name and product_category.
+
+Variance Intelligence with Dimensional Links:
+Rate Variance Dominant Analysis - Contract Impact: carrier_id for rebate structure changes, submit_date for contract renewal timing
+Rate Variance Dominant Analysis - Product Pricing: therapy_class_name for formulary tier changes, brand_vs_generic_ind for generic adoption impact
+Rate Variance Dominant Analysis - Secondary Drill: Revenue per Script by drug_name, Margin analysis using revenue_amt minus expense_amt
+
+Volume Variance Dominant Analysis - Member Impact: mbr_dt_of_brth and mbr_sex for demographic changes affecting utilization
+Volume Variance Dominant Analysis - Access Issues: pharmacy_type for Internal vs External access, state_cd for geographic member distribution
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name, 30_days_script_count vs 90_days_script_count
+
+Mix Variance Dominant Analysis - Product Portfolio: therapy_class_name distribution changes, brand_vs_generic_ind ratio shifts
+Mix Variance Dominant Analysis - Operational Mix: product_category for PBM vs Home Delivery vs Specialty, pharmacy_type for Internal vs External
+Mix Variance Dominant Analysis - Secondary Drill: Portfolio composition analysis, Channel performance comparison
+
+Smart Drill Through Options: Carrier Level using carrier_id for multi-carrier clients, Product Level using therapy_class_name drug_name, Geographic Level using state_cd, Operational Level using pharmacy_type product_category
+
+Secondary Metric Follow-ups: Margin Analysis indicates Client margin revenue_amt minus expense_amt declined which therapy classes are driving cost increases. Volume Analysis indicates Client script count dropped 15 percent is this member attrition or therapy switching.
+
+Cross Dimensional Relationships: Client connects to carrier relationships, geographic member distribution, therapeutic area preferences, and operational delivery channel utilization patterns.
+
+## Carrier Dimension Knowledge Base
+
+Core Analysis Focus: Carrier analysis reveals insurance carrier performance patterns, rebate structures, and administrative efficiency. Carrier-level variance indicates payer-specific contract terms, rebate pass-through effectiveness, or administrative cost variations affecting overall profitability within client relationships.
+
+Primary Metrics Always Calculated: Rate Variance, Revenue Amount, Script Count
+
+Secondary Metrics Conditional Execution: If Rate Variance Dominant then Margin analysis using revenue_amt minus expense_amt and Revenue per Script trends. If Volume Variance Dominant then Script Count by therapy_class_name and brand_vs_generic_ind mix. If Mix Variance Dominant then Carrier portfolio composition by client_type and therapy_class_name.
+
+Variance Intelligence with Dimensional Links:
+Rate Variance Dominant Analysis - Rebate Structures: therapy_class_name for carrier-specific rebate agreements, drug_name for individual drug rebate terms
+Rate Variance Dominant Analysis - Contract Terms: client_id for carrier-client relationship specifics, submit_date for contract renewal timing
+Rate Variance Dominant Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt, Revenue per Script by therapeutic area
+
+Volume Variance Dominant Analysis - Network Effects: pharmacy_type for carrier network preferences, state_cd for carrier geographic coverage
+Volume Variance Dominant Analysis - Utilization Management: therapy_class_name for carrier-specific prior authorization, brand_vs_generic_ind for formulary positioning
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name, product_category utilization patterns
+
+Mix Variance Dominant Analysis - Client Portfolio: client_type distribution within carrier, line_of_business mix changes
+Mix Variance Dominant Analysis - Product Portfolio: therapy_class_name and brand_vs_generic_ind preferences by carrier
+Mix Variance Dominant Analysis - Secondary Drill: Portfolio composition analysis, Channel performance by carrier
+
+Smart Drill Through Options: Client Level using client_id client_type for carrier-specific client performance, Product Level using therapy_class_name drug_name for carrier formulary analysis, Geographic Level using state_cd for carrier regional performance, Operational Level using pharmacy_type product_category for carrier network utilization
+
+Secondary Metric Follow-ups: Margin Analysis indicates Carrier margin revenue_amt minus expense_amt improved which rebate agreements are driving this. Volume Analysis indicates Carrier script count increased 20 percent is this network expansion or formulary changes.
+
+Cross Dimensional Relationships: Carrier connects to client contract structures, rebate pass-through mechanisms, formulary management decisions, and geographic network coverage patterns.
+
+## Drug Dimension Knowledge Base
+
+Core Analysis Focus: Drug analysis reveals individual medication performance patterns, utilization trends, and competitive positioning. Drug-level variance indicates formulary changes, generic substitution, clinical guideline shifts, or market access issues affecting specific medication performance.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Brand vs Generic ratio analysis and Script Count by geographic region. If Rate Variance Detected then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Generic Substitution: brand_vs_generic_ind for brand to generic switching patterns
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional utilization differences
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by therapy_class_name comparison, 30_days_script_count vs 90_days_script_count
+
+Rate Variance Analysis - Pricing Changes: Revenue per Script trends over time periods
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Therapy Class Level using therapy_class_name to see if issue affects entire therapeutic area, Brand Generic Analysis using brand_vs_generic_ind for substitution patterns, Geographic Analysis using state_cd for regional utilization patterns, Supply Analysis using 30_days_script_count vs 90_days_script_count for supply duration patterns
+
+Secondary Metric Follow-ups: Volume Analysis indicates Drug script count declined 25 percent is this generic substitution or therapeutic area decline. Geographic Analysis indicates Drug performance varies by region are there state-specific access barriers.
+
+Cross Dimensional Relationships: Drug connects to therapeutic class competition patterns, brand generic substitution dynamics, geographic utilization differences, and supply duration preferences based on medication characteristics.
+
+## Therapy Class Dimension Knowledge Base
+
+Core Analysis Focus: Therapy Class analysis reveals therapeutic area performance patterns, clinical utilization trends, and competitive dynamics within disease categories. Therapy class variance indicates clinical guideline changes, disease prevalence shifts, formulary positioning changes, or competitive product impacts affecting entire therapeutic categories.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Script Count by individual drugs within class and Brand vs Generic distribution. If Rate Variance Detected then Revenue per Script trends and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Drug Competition: drug_name for individual drug performance within therapy class
+Volume Variance Dominant Analysis - Generic Impact: brand_vs_generic_ind for brand to generic substitution within class
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional therapeutic area utilization
+Volume Variance Dominant Analysis - Secondary Drill: Script Count trends by individual drug_name, Supply mix using 30_days_script_count vs 90_days_script_count
+
+Rate Variance Analysis - Pricing Dynamics: Revenue per Script trends across drugs in therapy class
+Rate Variance Analysis - Generic Pricing: brand_vs_generic_ind for pricing pressure within therapeutic area
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Drug Level using drug_name to analyze individual drug performance within therapy class, Brand Generic Analysis using brand_vs_generic_ind for substitution patterns within class, Geographic Analysis using state_cd for regional therapeutic area performance, Supply Analysis using 30_days_script_count vs 90_days_script_count for therapy-specific supply patterns
+
+Secondary Metric Follow-ups: Volume Analysis indicates Therapy class script count declined 15 percent which specific drugs are driving this decline. Generic Analysis indicates Therapy class shows generic substitution which brands are most affected.
+
+Cross Dimensional Relationships: Therapy Class connects to individual drug competition patterns, brand generic substitution dynamics within therapeutic areas, geographic utilization differences, and supply duration preferences based on clinical characteristics.
+
+## Brand vs Generic Dimension Knowledge Base
+
+Core Analysis Focus: Brand vs Generic analysis reveals substitution patterns, pricing dynamics, and formulary positioning effectiveness. Brand Generic variance indicates generic adoption rates, formulary tier changes, or competitive pricing pressures affecting brand vs generic distribution.
+
+Primary Metrics Always Calculated: Volume Variance, Script Count, Revenue Amount
+
+Secondary Metrics Conditional Execution: If Volume Variance Dominant then Generic Dispense Rate calculation and Script Count by therapy class. If Rate Variance Detected then Revenue per Script comparison between Brand vs Generic and Margin analysis using revenue_amt minus expense_amt.
+
+Variance Intelligence with Dimensional Links:
+Volume Variance Dominant Analysis - Therapy Class Patterns: therapy_class_name for therapeutic area substitution trends
+Volume Variance Dominant Analysis - Individual Drugs: drug_name for specific brand to generic conversions
+Volume Variance Dominant Analysis - Geographic Patterns: state_cd for regional brand vs generic preferences
+Volume Variance Dominant Analysis - Secondary Drill: Generic Dispense Rate trends, Script Count by therapy_class_name
+
+Rate Variance Analysis - Pricing Comparison: Revenue per Script differences between Brand vs Generic
+Rate Variance Analysis - Therapy Pricing: therapy_class_name for category-specific pricing dynamics
+Rate Variance Analysis - Secondary Drill: Margin analysis using revenue_amt minus expense_amt
+
+Smart Drill Through Options: Drug Level using drug_name to analyze specific brand vs generic pairs, Therapy Class Level using therapy_class_name for therapeutic area substitution patterns, Geographic Analysis using state_cd for regional brand vs generic utilization, Supply Analysis using 30_days_script_count vs 90_days_script_count for brand vs generic supply preferences
+
+Secondary Metric Follow-ups: Substitution Analysis indicates Generic scripts increased 30 percent which therapy classes show highest substitution rates. Pricing Analysis indicates Brand revenue per script declined is this competitive pressure or volume loss.
+
+Cross Dimensional Relationships: Brand vs Generic connects to therapeutic area substitution patterns, individual drug competition dynamics, geographic formulary preferences, and supply duration choices based on brand vs generic positioning.
+
+## State Dimension Knowledge Base
+
+Core Analysis Focus: State analysis reveals geographic performance variations through comparative analysis against national trends and peer states. State-level variance identifies regional outliers, competitive pressures, demographic shifts, or regulatory impacts causing specific states to deviate from broader market patterns.
+
+Primary Metrics Always Calculated: State Revenue vs National Average, State Script Count vs Peer States, Market Share by State
+
+Secondary Metrics Conditional Execution: If State Outperforms or Underperforms then Revenue per Member comparison and Script per Member analysis. If Geographic Concentration Risk then State revenue concentration percentage and Top state dependency analysis. If Demographic Variance then Member count changes and Age distribution shifts using mbr_dt_of_brth.
+
+Variance Intelligence with Dimensional Links:
+State Performance Deviation Analysis - Therapeutic Variations: therapy_class_name for state-specific utilization vs national patterns
+State Performance Deviation Analysis - Product Preferences: brand_vs_generic_ind for regional formulary or prescribing differences vs peer states  
+State Performance Deviation Analysis - Client Concentration: client_id for state-specific client performance driving deviation
+State Performance Deviation Analysis - Secondary Drill: State vs national therapy utilization rates, Regional competitive positioning
+
+Geographic Risk Assessment - Revenue Concentration: Percentage of total revenue from top performing states
+Geographic Risk Assessment - Client Dependency: client_id concentration within high-performing states creating risk
+Geographic Risk Assessment - Therapy Concentration: therapy_class_name geographic concentration patterns
+Geographic Risk Assessment - Secondary Drill: Geographic diversification analysis, State dependency risk metrics
+
+Demographic-Driven Variations - Age Population Shifts: mbr_dt_of_brth for state aging trends vs national demographics
+Demographic-Driven Variations - Member Count Changes: Member growth decline rates vs national member trends
+Demographic-Driven Variations - Secondary Drill: Demographics-adjusted performance analysis, Population health trend impact
+
+Smart Drill Through Options: Therapy Class Level using therapy_class_name for state vs national therapeutic performance, Client Performance using client_id for state-specific client performance variations, Brand Generic Patterns using brand_vs_generic_ind for regional substitution differences, Demographic Context using mbr_dt_of_brth for state population characteristics impact
+
+Secondary Metric Follow-ups: Outlier Analysis indicates Texas diabetes therapy 25 percent below national average competitive pressure or formulary restrictions. Risk Assessment indicates California represents 30 percent of total revenue geographic concentration risk increasing.
+
+Cross Dimensional Relationships: State connects to comparative therapeutic performance patterns, regional client concentration risks, demographic-adjusted utilization trends, and geographic market positioning relative to national benchmarks.

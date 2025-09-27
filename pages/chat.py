@@ -85,6 +85,9 @@ st.markdown(
 # Custom CSS for chat interface (Your original CSS is preserved)
 st.markdown("""
 <style>
+    /* Import Inter font from Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
     /* Remove default Streamlit padding and margins */
     .block-container {
         padding-top: 1rem;
@@ -134,6 +137,7 @@ st.markdown("""
         border-radius: 18px;
         max-width: 95%;
         word-wrap: break-word;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
     }
     
     /* Assistant message styling - Left aligned, full width */
@@ -143,43 +147,69 @@ st.markdown("""
         margin: 1rem 0;
     }
     .assistant-message-content {
-        background-color: #f1f3f4;
+        background-color: #faf8f2 !important;
         color: #333;
         padding: 12px 16px;
         border-radius: 18px;
         max-width: 95%;
         word-wrap: break-word;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
         font-size: 15px;
         line-height: 1.6;
         font-style: normal !important;
         font-weight: normal !important;
+        border: 1px solid #f0ede4 !important;
+    }
+    
+    
+    /* NEW: Clean narrative/insight styling - NO BACKGROUND */
+    .narrative-content {
+        color: #333;
+        padding: 12px 16px;
+        margin: 8px 0;
+        max-width: 95%;
+        word-wrap: break-word;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        font-size: 15px;
+        line-height: 1.6;
+        font-style: normal !important;
+        font-weight: normal !important;
+        background-color: #faf8f2 !important;
+        border: 1px solid #f0ede4 !important;
+        border-radius: 12px !important;
     }
     
     /* HTML headers within assistant messages */
     .assistant-message-content h1,
     .assistant-message-content h2,
-    .assistant-message-content h3 {
+    .assistant-message-content h3,
+    .narrative-content h1,
+    .narrative-content h2,
+    .narrative-content h3 {
         font-family: inherit;
         font-weight: 700;
         color: #1a1a1a;
         margin: 0.8em 0 0.4em 0;
     }
     
-    .assistant-message-content h1 {
+    .assistant-message-content h1,
+    .narrative-content h1 {
         font-size: 1.4em;
     }
     
-    .assistant-message-content h2 {
+    .assistant-message-content h2,
+    .narrative-content h2 {
         font-size: 1.3em;
     }
     
-    .assistant-message-content h3 {
+    .assistant-message-content h3,
+    .narrative-content h3 {
         font-size: 1.2em;
     }
     
     /* HTML paragraph styling */
-    .assistant-message-content p {
+    .assistant-message-content p,
+    .narrative-content p {
         margin: 0.8em 0;
         color: #333;
         font-family: inherit;
@@ -188,21 +218,24 @@ st.markdown("""
     }
     
     /* HTML strong/bold styling - Make it more prominent */
-    .assistant-message-content strong {
+    .assistant-message-content strong,
+    .narrative-content strong {
         font-weight: 700;
         color: #1a1a1a;
         font-family: inherit;
     }
     
     /* HTML emphasis/italic styling */
-    .assistant-message-content em {
+    .assistant-message-content em,
+    .narrative-content em {
         font-style: italic;
         color: #444;
         font-family: inherit;
     }
     
     /* HTML line breaks */
-    .assistant-message-content br {
+    .assistant-message-content br,
+    .narrative-content br {
         line-height: 1.8;
     }
 
@@ -376,839 +409,6 @@ st.markdown("""
     }          
 </style>
 """, unsafe_allow_html=True)
-
-def format_query_results_as_table(query_results):
-    """Format query results and return both the dataframe and row count for proper display"""
-    try:
-        if not query_results or len(query_results) == 0:
-            return None, "No data returned from query."
-        
-        print(f"🔍 Raw query results: {query_results}")
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(query_results)
-        print(f"📊 DataFrame created with shape: {df.shape}")
-        print(f"📊 DataFrame columns: {df.columns.tolist()}")
-        
-        def format_value(val):
-            # Handle ISO date strings
-            if isinstance(val, str) and 'T' in val and val.endswith('Z'):
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(val.replace('Z', '+00:00'))
-                    return dt.strftime('%Y-%m-%d')
-                except Exception:
-                    return val
-            # Handle year values (don't format as decimals)
-            elif isinstance(val, str) and val.isdigit() and len(val) == 4:
-                return val  # Keep year as is
-            # Handle month values (1-12, don't add decimals)
-            elif isinstance(val, str) and val.replace('.', '').isdigit():
-                try:
-                    numeric_val = float(val)
-                    if 1 <= numeric_val <= 12 and '.' not in val:  # Month value
-                        return str(int(numeric_val))
-                    elif numeric_val > 1000:  # Large numbers like revenue
-                        return f"{numeric_val:,.1f}"
-                    else:
-                        return f"{numeric_val:.1f}"
-                except Exception:
-                    return val
-            # Handle large numeric strings (like your revenue values)
-            elif isinstance(val, str) and val.replace('.', '').replace('-', '').isdigit():
-                try:
-                    numeric_val = float(val)
-                    if numeric_val > 1000:  # Format large numbers with commas
-                        return f"{numeric_val:,.1f}"
-                    else:
-                        return f"{numeric_val:.1f}"
-                except Exception:
-                    return val
-            # Handle already formatted dollar amounts (with commas)
-            elif isinstance(val, str) and val.startswith('$') and ',' in val:
-                return val
-            # Handle already formatted strings (with commas)
-            elif isinstance(val, str) and ',' in val:
-                return val
-            # Handle scientific notation (like 1.378677675E9)
-            elif isinstance(val, (int, float)) or (isinstance(val, str) and ('E' in val.upper() or 'e' in val)):
-                try:
-                    numeric_val = float(val)
-                    if abs(numeric_val) >= 1000:  # Large numbers
-                        return f"{numeric_val:,.1f}"
-                    else:
-                        return f"{numeric_val:.1f}"
-                except Exception:
-                    return str(val)
-            elif pd.api.types.is_numeric_dtype(type(val)):
-                try:
-                    if pd.notna(val):
-                        if abs(float(val)) >= 1000:
-                            return f"{float(val):,.1f}"
-                        else:
-                            return f"{float(val):.1f}"
-                    else:
-                        return ""
-                except Exception:
-                    return str(val)
-            else:
-                return val
-        
-        # Apply formatting to all columns
-        for col in df.columns:
-            df[col] = df[col].apply(format_value)
-        
-        # Convert column names to title case for display
-        df.columns = [col.replace('_', ' ').title() for col in df.columns]
-        
-        print(f"✅ Formatted DataFrame:\n{df}")
-        
-        # Return both the dataframe and row count message
-        row_count_msg = f"*Showing all {len(df)} row{'s' if len(df) != 1 else ''}*"
-        return df, row_count_msg
-        
-    except Exception as e:
-        print(f"❌ Error formatting table: {str(e)}")
-        return None, f"Error displaying table: {str(e)}"
-
-def convert_text_to_safe_html(text):
-    """Convert text to HTML while preserving intentional formatting"""
-    if not text:
-        return ""
-    
-    # Fix number-word combinations that cause italics (like "1.65billion")
-    import re
-    text = re.sub(r'(\d+\.?\d*)(billion|million|thousand|trillion)', r'\1 \2', text)
-    
-    # Convert markdown formatting to HTML
-    # Bold: **text** -> <strong>text</strong>
-    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
-    
-    # Italic: *text* -> <em>text</em> (but be careful with asterisks in numbers)
-    text = re.sub(r'(?<!\d)\*([^*\d]+)\*(?!\d)', r'<em>\1</em>', text)
-    
-    # Headers: ### text -> <h3>text</h3>
-    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
-    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
-    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
-    
-    # Convert line breaks to HTML
-    # Double line breaks -> paragraph breaks
-    paragraphs = text.split('\n\n')
-    html_paragraphs = []
-    
-    for paragraph in paragraphs:
-        if paragraph.strip():
-            # Clean up single line breaks within paragraphs
-            cleaned_paragraph = paragraph.strip().replace('\n', '<br>')
-            # Don't wrap if it's already a header
-            if not (cleaned_paragraph.startswith('<h') or cleaned_paragraph.startswith('<strong>')):
-                html_paragraphs.append(f'<p>{cleaned_paragraph}</p>')
-            else:
-                html_paragraphs.append(cleaned_paragraph)
-    
-    return ''.join(html_paragraphs)
-
-def extract_response_content(step_data):
-    """Extract meaningful response content from workflow step with better debugging"""
-        
-    if isinstance(step_data, dict):
-        if 'step' in step_data:
-            step_content = step_data['step']
-        else:
-            step_content = step_data
-        
-        print(f"📍 Step content keys: {list(step_content.keys())}")
-        
-        for node_name, node_state in step_content.items():
-            if node_name == '__start__':
-                continue
-            
-            print(f"📊 Processing node: {node_name}")
-            print(f"📊 Node state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
-            
-            # Handle navigation controller domain clarification
-            if node_name == 'navigation_controller':
-                print(f"🔍 navigation_controller node_state: {json.dumps(node_state, indent=2, default=str)}")
-                greeting_response = node_state.get('greeting_response')
-                is_dml_ddl = node_state.get('is_dml_ddl', False)
-                nav_error_msg = node_state.get('nav_error_msg')
-
-                if nav_error_msg and nav_error_msg.strip():
-                    print(f"🚨 Navigation - Found error")                    
-                    formatted_greeting = convert_text_to_safe_html(nav_error_msg)
-                    return {
-                        'type': 'text',
-                        'content': formatted_greeting,
-                        'immediate_render': True
-                    }
-                
-                if greeting_response and greeting_response.strip():
-                    print(f"🎯 Navigation - Found greeting response: {greeting_response}")
-                    print(f"🎯 Navigation - Is DML/DDL: {is_dml_ddl}")
-                    
-                    formatted_greeting = convert_text_to_safe_html(greeting_response)
-                    return {
-                        'type': 'text',
-                        'content': formatted_greeting,
-                        'immediate_render': True
-                    }
-                domain_followup = node_state.get('domain_followup_question')
-                requires_clarification = node_state.get('requires_domain_clarification', False)
-                
-                print(f"🎯 Navigation - requires_clarification: {requires_clarification}")
-                print(f"🎯 Navigation - domain_followup: {domain_followup}")
-                
-                if requires_clarification and domain_followup:
-                    formatted_question = convert_text_to_safe_html(domain_followup)
-                    return {
-                        'type': 'text',
-                        'content': formatted_question,
-                        'immediate_render': True
-                    }
-                else:
-                    print("🚫 Skipping navigation_controller output - no clarification needed")
-                    continue
-            
-            elif node_name == 'router_agent':
-                print("🚫 Skipping router_agent output - hidden from UI")
-                router_error_msg = node_state.get('router_error_msg')
-
-                if router_error_msg and router_error_msg.strip():
-                    print(f"🚨 Navigation - Found error")                    
-                    formatted_greeting = convert_text_to_safe_html(router_error_msg)
-                    return {
-                        'type': 'text',
-                        'content': formatted_greeting,
-                        'immediate_render': True
-                    }
-                continue
-            
-            elif node_name == 'sql_generator_agent':
-                sql_query = node_state.get('sql_query', '')
-                query_results = node_state.get('query_results', [])
-                narrative_response = node_state.get('narrative_response', '')
-                sql_gen_error_msg = node_state.get('router_error_msg')
-
-                if sql_gen_error_msg and sql_gen_error_msg.strip():
-                    print(f"🚨 Navigation - Found error")                    
-                    formatted_greeting = convert_text_to_safe_html(sql_gen_error_msg)
-                    return {
-                        'type': 'text',
-                        'content': formatted_greeting,
-                        'immediate_render': True
-                    }
-                
-                print(f"🎯 SQL Generator - Query: {bool(sql_query)}")
-                print(f"🎯 SQL Generator - Query content: {sql_query[:100]}..." if sql_query else "No SQL")
-                print(f"🎯 SQL Generator - Results count: {len(query_results) if query_results else 0}")
-                print(f"🎯 SQL Generator - Results sample: {query_results[:2] if query_results else 'No results'}")
-                print(f"🎯 SQL Generator - Narrative: {bool(narrative_response)}")
-                print(f"🎯 SQL Generator - Narrative content: {narrative_response[:100]}..." if narrative_response else "No narrative")
-                
-                # Save audit data for sql_generator node
-                try:
-                    save_audit_data(st.session_state.session_id, node_state, 'sql_generator_agent')
-                except Exception as e:
-                    print(f"⚠️ Failed to save audit data for sql_generator: {e}")
-                
-                response_parts = []
-                table_df = None
-                
-                # Process table data FIRST (before narrative)
-                if query_results and isinstance(query_results, list) and len(query_results) > 0:
-                    print(f"🎯 Processing {len(query_results)} query results")
-                    table_df, table_info = format_query_results_as_table(query_results)
-                    if table_df is not None:
-                        print(f"✅ Table created successfully with {len(table_df)} rows")
-                    else:
-                        print(f"❌ Failed to create table: {table_info}")
-                        response_parts.append(f"❌ <strong>Table Error:</strong> {table_info}<br><br>")
-                
-                # Narrative response AFTER table
-                if narrative_response:
-                    formatted_narrative = convert_text_to_safe_html(narrative_response)
-                    response_parts.append(f"📈 <strong>Analysis:</strong><br><br>{formatted_narrative}")
-                
-                # Return with table data for immediate rendering AND feedback flag
-                if table_df is not None or response_parts:
-                    result = {
-                        'type': 'sql_with_table',
-                        'content': "".join(response_parts),
-                        'sql_query': sql_query,
-                        'dataframe': table_df,
-                        'immediate_render': True,
-                        'show_feedback': True,  # NEW: Flag to show feedback UI
-                        'feedback_target': 'sql_generator'  # NEW: Identify the feedback target
-                    }
-                    print(f"✅ Returning SQL response - Table: {table_df is not None}, Content: {bool(response_parts)}")
-                    return result
-                elif sql_query:
-                    return {
-                        'type': 'text',
-                        'content': f"⚡ <strong>Generated SQL:</strong><br><br>{sql_query}",
-                        'sql_query': sql_query,
-                        'immediate_render': True,
-                        'show_feedback': True,  # NEW: Flag to show feedback UI
-                        'feedback_target': 'sql_generator'  # NEW: Identify the feedback target
-                    }
-                else:
-                    print("❌ SQL Generator - No SQL query, results, or narrative found")
-            
-            # Follow-up question handler
-            elif node_name == 'followup_question_agent':
-                print(f"🎯 Followup Question Agent - Processing generated questions")
-                follow_up_error_msg = node_state.get('follow_up_error_msg')
-
-                if follow_up_error_msg and follow_up_error_msg.strip():
-                    print(f"🚨 Navigation - Found error")                    
-                    formatted_greeting = convert_text_to_safe_html(follow_up_error_msg)
-                    return {
-                        'type': 'text',
-                        'content': formatted_greeting,
-                        'immediate_render': True
-                    }
-                
-                followup_questions = node_state.get('followup_questions', [])
-                success = node_state.get('followup_generation_success', False)
-                
-                print(f"🎯 Follow-up questions found: {followup_questions}")
-                print(f"🎯 Follow-up questions count: {len(followup_questions)}")
-                print(f"🎯 Generation success: {success}")
-                
-                if followup_questions and len(followup_questions) > 0:
-                    print("🎯 QUESTIONS FOUND - STORING AND DISPLAYING FOLLOWUP BUTTONS")
-                    
-                    # Store in the simplified session state
-                    st.session_state.current_followup_questions = followup_questions
-                    
-                    return {
-                        'type': 'followup_questions',
-                        'content': "💡 <strong>Would you like to explore further? Here are some suggested follow-up questions:</strong>",
-                        'followup_questions': followup_questions,
-                        'immediate_render': True
-                    }
-                else:
-                    print("⚠️ No follow-up questions found - skipping display")
-                    return None
-                    
-            # Root cause node - REMOVED CONSOLIDATED NARRATIVE
-            elif node_name == 'root_cause_agent':
-                print(f"🎯 Root Cause Agent - Processing detailed output")
-                
-                consolidated_query_details = node_state.get('consolidated_query_details', [])
-                
-                print(f"🎯 Consolidated query details count: {len(consolidated_query_details)}")
-                
-                # Save audit data for root_cause node
-                try:
-                    save_audit_data(st.session_state.session_id, node_state, 'root_cause_agent')
-                except Exception as e:
-                    print(f"⚠️ Failed to save audit data for root_cause: {e}")
-                
-                all_dataframes = []
-                
-                # Process each consolidated query detail individually
-                if consolidated_query_details and len(consolidated_query_details) > 0:
-                    
-                    for i, query_detail in enumerate(consolidated_query_details, 1):
-                        purpose = query_detail.get('purpose', 'Analysis')
-                        sql = query_detail.get('sql', '')
-                        sql_results = query_detail.get('sql_results', [])
-                        insight_text = query_detail.get('insight_text', '')
-                        success = query_detail.get('success', False)
-                        row_count = query_detail.get('row_count', 0)
-                        
-                        print(f"🎯 Processing query {i}: Success: {success}, Rows: {row_count}")
-                        
-                        # Only process successful queries (ignore errors)
-                        if success and row_count > 0:
-                            if sql_results and isinstance(sql_results, list) and len(sql_results) > 0:
-                                table_df, table_info = format_query_results_as_table(sql_results)
-                                if table_df is not None:
-                                    formatted_insight = ""
-                                    if insight_text:
-                                        formatted_insight = convert_text_to_safe_html(insight_text)
-                                    
-                                    all_dataframes.append({
-                                        'title': f"{purpose}",
-                                        'dataframe': table_df,
-                                        'sql': sql,
-                                        'insight': formatted_insight,
-                                        'success': True
-                                    })
-                                    print(f"✅ Added successful analysis: {purpose}")
-                                else:
-                                    print(f"❌ Failed to create table for {purpose}: {table_info}")
-                            else:
-                                print(f"❌ No SQL results for {purpose}")
-                        else:
-                            print(f"❌ Skipping failed/empty query {i}: {purpose} - Success: {success}, Rows: {row_count}")
-                
-                # Return structured response with multiple dataframes AND feedback flag
-                if all_dataframes:
-                    return {
-                        'type': 'root_cause_detailed',
-                        'content': "",
-                        'dataframes': all_dataframes,
-                        'immediate_render': True,
-                        'show_feedback': True,  # NEW: Flag to show feedback UI
-                        'feedback_target': 'root_cause'  # NEW: Identify the feedback target
-                    }
-                
-                # Fallback if no details
-                elif node_state.get('analysis_complete'):
-                    return {
-                        'type': 'text',
-                        'content': "✅ <strong>Root cause analysis completed successfully!</strong><br><br>Analysis has been processed across multiple data sources.",
-                        'immediate_render': True,
-                        'show_feedback': True,  # NEW: Flag to show feedback UI
-                        'feedback_target': 'root_cause'  # NEW: Identify the feedback target
-                    }
-            
-            # FALLBACK FOR ANY OTHER NODE - This is crucial!
-            else:
-                print(f"🎯 Processing fallback node: {node_name}")
-                if isinstance(node_state, dict) and node_state:
-                    # Look for common response fields
-                    for key in ['narrative_response', 'response', 'result', 'analysis', 'content', 'output']:
-                        if key in node_state and node_state[key]:
-                            formatted_content = convert_text_to_safe_html(str(node_state[key]))
-                            print(f"✅ Found content in {key}: {formatted_content[:100]}...")
-                            return {
-                                'type': 'text',
-                                'content': f"🤖 <strong>{node_name.replace('_', ' ').title()}:</strong><br><br>{formatted_content}",
-                                'immediate_render': True
-                            }
-                    
-                    # If no standard fields, show entire node state
-                    print(f"⚠️ No standard response fields found in {node_name}, showing full state")
-                    content = json.dumps(node_state, indent=2) if isinstance(node_state, dict) else str(node_state)
-                    return {
-                        'type': 'text',
-                        'content': f"🤖 <strong>{node_name.replace('_', ' ').title()}:</strong><br><br><pre>{content}</pre>",
-                        'immediate_render': True
-                    }
-    
-    print("❌ No response content extracted from step_data")
-    return None
-
-def render_sql_response(response_data):
-    """Render SQL response with table and narrative"""
-    
-    # 1. SQL expander FIRST
-    if response_data.get('sql_query'):
-        with st.expander("🔍 View SQL Query", expanded=False):
-            st.code(response_data['sql_query'], language='sql')
-    
-    # 2. TABLE SECOND (before narrative)
-    if response_data.get('dataframe') is not None:
-        st.dataframe(response_data['dataframe'], use_container_width=True)
-        print(f"📊 Displayed table with {len(response_data['dataframe'])} rows")
-    
-    # 3. NARRATIVE LAST
-    if response_data.get('content'):
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                {response_data['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # 4. FEEDBACK UI (NEW) - Create unique feedback ID
-    if response_data.get('show_feedback', False):
-        import hashlib
-        content_hash = hashlib.md5(str(response_data.get('content', '') + str(response_data.get('sql_query', ''))).encode()).hexdigest()[:8]
-        feedback_target = f"{response_data.get('feedback_target', 'default')}_{content_hash}"
-        st.session_state['feedback_target_id'] = feedback_target
-        render_feedback_ui(st.session_state.current_query)
-
-def render_root_cause_response(response_data):
-    """Render root cause analysis response with multiple dataframes"""
-    
-    print(f"🔥 RENDERING ROOT CAUSE DETAILED ANALYSIS")
-    
-    # Display each analysis one by one in the correct order
-    if response_data.get('dataframes'):
-        for idx, df_info in enumerate(response_data['dataframes']):
-            print(f"🔥 Processing dataframe {idx+1}: {df_info.get('title', 'Unknown')}")
-            
-            # Only show successful analyses (ignore errors)
-            if df_info.get('success', False):
-                # 1. PURPOSE
-                st.markdown(f"**📊 {df_info['title']}**")
-                
-                # 2. SQL (in expander)
-                if df_info.get('sql'):
-                    with st.expander("🔍 View SQL Query", expanded=False):
-                        st.code(df_info['sql'], language='sql')
-                
-                # 3. TABLE OUTPUT
-                if df_info.get('dataframe') is not None:
-                    st.dataframe(df_info['dataframe'], use_container_width=True)
-                    print(f"📊 Displayed table for {df_info['title']} with {len(df_info['dataframe'])} rows")
-                
-                # 4. DETAILS/INSIGHT
-                if df_info.get('insight'):
-                    st.markdown(f"""
-                    <div class="assistant-message">
-                        <div class="assistant-message-content">
-                            {df_info['insight']}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    print(f"⚠️ No insight available for {df_info['title']}")
-                
-                # Separator between analyses
-                st.markdown("---")
-            else:
-                print(f"❌ Skipping unsuccessful analysis: {df_info.get('title', 'Unknown')}")
-    else:
-        print("⚠️ No dataframes found in root_cause_detailed response")
-    
-    # 5. FEEDBACK UI (NEW) - Create unique feedback ID
-    if response_data.get('show_feedback', False):
-        import hashlib
-        dataframes_str = str([df.get('title', '') for df in response_data.get('dataframes', [])])
-        content_hash = hashlib.md5(str(dataframes_str + str(response_data.get('content', ''))).encode()).hexdigest()[:8]
-        feedback_target = f"{response_data.get('feedback_target', 'default')}_{content_hash}"
-        st.session_state['feedback_target_id'] = feedback_target
-        render_feedback_ui(st.session_state.current_query)
-
-
-def render_chat_message(message):
-    """
-    Renders a single message from the chat history, routing to the correct display function.
-    """
-    with st.chat_message(message.get("role", "assistant")):
-        response_type = message.get("response_type")
-        
-        if response_type == 'sql_with_table':
-            render_sql_response(message)
-        elif response_type == 'root_cause_detailed':
-            render_root_cause_response(message)
-        else: # Default rendering for simple text (user messages and simple assistant text)
-            if message.get("role") == 'user':
-                 st.markdown(f"""
-                <div class="user-message">
-                    <div class="user-message-content">
-                        {message['content']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else: # Simple text from assistant
-                st.markdown(f"""
-                <div class="assistant-message">
-                    <div class="assistant-message-content">
-                        {message['content']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # NEW: Render feedback UI for simple text messages that have feedback flag
-                if message.get('show_feedback', False):
-                    import hashlib
-                    message_hash = hashlib.md5(str(message.get('content', '') + str(message.get('timestamp', ''))).encode()).hexdigest()[:8]
-                    feedback_target = f"{message.get('feedback_target', 'default')}_{message_hash}"
-                    st.session_state['feedback_target_id'] = feedback_target
-                    render_feedback_ui(st.session_state.current_query)
-                    
-def render_persistent_followup_questions():
-    """Renders follow-up buttons if they exist in the session state."""
-    if st.session_state.current_followup_questions and not st.session_state.processing:
-        # Check if feedback is currently being displayed to avoid conflicts
-        current_feedback_id = st.session_state.get('feedback_target_id')
-        feedback_key = f"feedback_submitted_{current_feedback_id}" if current_feedback_id else None
-        
-        # Only show followup questions if no feedback form is currently open
-        show_followup = True
-        if feedback_key and feedback_key in st.session_state:
-            if st.session_state[feedback_key] == "down":  # Feedback form is open
-                show_followup = False
-        
-        if show_followup:
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div class="assistant-message-content">
-                    💡 <strong>Would you like to explore further? Here are some suggested follow-up questions:</strong>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">', unsafe_allow_html=True)
-            
-            for i, question in enumerate(st.session_state.current_followup_questions):
-                st.button(
-                    question,
-                    key=f"persistent_btn_{i}_{abs(hash(question))}",
-                    on_click=start_processing,
-                    args=(question,) # Pass the question to the callback
-                )
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-
-def get_current_node_name(step_data):
-    """Extract current node name for display"""
-    if isinstance(step_data, dict):
-        if 'step' in step_data:
-            step_content = step_data['step']
-        else:
-            step_content = step_data
-        
-        for node_name, node_state in step_content.items():
-            if node_name != '__start__':
-                readable_name = node_name.replace('_', ' ').title()
-                return readable_name
-    
-    return "Processing"
-
-def get_next_agent_from_state(step_data):
-    """Extract next agent from actual workflow state"""
-    if isinstance(step_data, dict):
-        if 'step' in step_data:
-            step_content = step_data['step']
-        else:
-            step_content = step_data
-        
-        # Look for next_agent in any node state
-        for node_name, node_state in step_content.items():
-            if node_name != '__start__' and isinstance(node_state, dict):
-                next_agent = node_state.get('next_agent_disp', '')
-                if next_agent:
-                    readable_next = next_agent.replace('_', ' ').title()
-                    print(f"🎯 Found next_agent: {next_agent} -> {readable_next}")
-                    return readable_next
-    
-    return None
-
-def update_spinner(spinner_placeholder, current_node, next_agent):
-    """Update spinner with current and next agent information"""
-    
-    if next_agent:
-        spinner_message = f"🤖 Completed {current_node}... Next: {next_agent}"
-    else:
-        spinner_message = f"🤖 Running {current_node}..."
-    
-    spinner_placeholder.markdown(f"""
-    <div class="spinner-container">
-        <div class="spinner"></div>
-        <div class="spinner-message">{spinner_message}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-def start_processing(user_query):
-    """
-    Callback to set the state for processing a new query.
-    Handles state changes for both chat input and button clicks.
-    """
-    st.session_state.messages.append({'role': 'user', 'content': user_query})
-    st.session_state.current_followup_questions = []
-    st.session_state.processing = True
-    st.session_state.current_query = user_query
-    st.session_state.workflow_started = False
-    # No st.rerun() is needed here; on_click handles it.
-
-def handle_followup_click(question, session_id):
-    """Handle follow-up question click with session isolation"""
-    
-    print(f"🔥 Session {session_id} - Follow-up button clicked: {question}")
-    
-    # REFACTORED: Update state directly, no prefixes needed.
-    st.session_state.click_counter += 1
-    st.session_state.last_clicked_question = question
-    st.session_state.button_clicked = True
-    st.session_state.current_followup_questions = []
-    
-    st.session_state.messages.append({
-        'type': 'user',
-        'content': question,
-        'timestamp': datetime.now()
-    })
-    
-    st.session_state.processing = True
-    st.session_state.workflow_started = False
-    st.session_state.current_query = question
-    
-    print(f"🔥 Session {session_id} - Set processing=True, workflow_started=False")
-    st.rerun()
-
-def render_immediate_response(response_data, step_count, session_id):
-    """Render immediate response with session context"""
-    
-    if response_data['type'] == 'followup_questions':
-        print(f"🔥 Session {session_id} - Rendering follow-up questions")
-        
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                {response_data['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        followup_questions = response_data.get('followup_questions', [])
-        if followup_questions:
-            st.markdown('<div class="followup-buttons-container" style="display: flex; flex-wrap: wrap; gap: 8px;">', unsafe_allow_html=True)
-            
-            for i, question in enumerate(followup_questions):
-                button_key = f"immediate_btn_{session_id}_{step_count}_{i}_{abs(hash(question)) % 10000}"
-                
-                st.button(
-                    question,
-                    key=button_key,
-                    type="secondary",
-                    help="Click to explore this follow-up question",
-                    on_click=start_processing,
-                    args=(question,)
-                )
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    elif response_data['type'] == 'sql_with_table':
-        render_sql_response(response_data)
-    
-    elif response_data['type'] == 'root_cause_detailed':
-        render_root_cause_response(response_data)
-    
-    elif response_data['type'] == 'text':
-        print(f"🔥 Session {session_id} - Rendering text response")
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div class="assistant-message-content">
-                {response_data['content']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    else:
-        print(f"⚠️ Session {session_id} - Unknown response type: {response_data['type']}")
-        if response_data.get('content'):
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div class="assistant-message-content">
-                    {response_data['content']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-def save_feedback_data(session_id, user_response, feedback_type):
-    """Saves user feedback to the Unity Catalog table."""
-    try:
-        db_client = st.session_state.workflow.db_client
-        # Use parameterized query to prevent SQL injection
-        feedback_query = """
-            INSERT INTO fdmenh.chatbot_user_feedback (
-                session_id, user_response, feedback_type, created_at
-            ) VALUES (?, ?, ?, current_timestamp())
-        """
-        db_client.execute_sql(feedback_query, [session_id, user_response, feedback_type])
-        print("✅ Feedback saved successfully.")
-    except Exception as e:
-        print(f"❌ Failed to save feedback data: {e}")
-        st.error(f"Failed to save feedback data: {e}")
-
-
-def save_audit_data(session_id, full_state, node_name):
-    """Saves the full state to the Unity Catalog audit table."""
-    try:
-        db_client = st.session_state.workflow.db_client
-        # Use parameterized query with proper JSON handling
-        audit_query = """
-            INSERT INTO fdmenh.chatbot_audit_tracking (
-                session_id, full_state_output, node_name, created_at
-            ) VALUES (?, ?, ?, current_timestamp())
-        """
-        # Convert state to JSON string safely
-        full_state_json = json.dumps(full_state, default=str)
-        db_client.execute_sql(audit_query, [session_id, full_state_json, node_name])
-        print(f"✅ Audit data saved successfully for node: {node_name}")
-    except Exception as e:
-        print(f"❌ Failed to save audit data: {e}")
-
-def render_feedback_ui(user_question):
-    """Renders the feedback UI with thumbs-up/down and an optional text box."""
-    
-    feedback_id = st.session_state.get('feedback_target_id', 'default')
-    feedback_key = f"feedback_submitted_{feedback_id}"
-    
-    if feedback_key not in st.session_state:
-        st.session_state[feedback_key] = None
-    
-    if st.session_state[feedback_key] is None:
-        st.markdown("<br>Did this answer your question?")
-        
-        # Use columns for side-by-side buttons
-        col1, col2, col3 = st.columns([0.1, 0.1, 0.8])
-        
-        with col1:
-            if st.button("👍", key=f"thumbs_up_{feedback_id}", help="This response was helpful"):
-                save_feedback_data(st.session_state.session_id, user_question, "thumbs_up")
-                st.session_state[feedback_key] = "up"
-                st.success("Thanks for the feedback!")
-                st.rerun()
-                
-        with col2:
-            if st.button("👎", key=f"thumbs_down_{feedback_id}", help="This response needs improvement"):
-                st.session_state[feedback_key] = "down"
-                st.rerun()
-                
-    elif st.session_state[feedback_key] == "down":
-        # Show feedback form
-        with st.form(key=f"feedback_form_{feedback_id}"):
-            feedback_text = st.text_area("Please tell us how we can improve:", key=f"feedback_text_{feedback_id}")
-            col1, col2 = st.columns([0.2, 0.8])
-            with col1:
-                submit_button = st.form_submit_button(label="Submit")
-            
-            if submit_button:
-                feedback_response = f"thumbs_down: {feedback_text}" if feedback_text.strip() else "thumbs_down: No comment"
-                save_feedback_data(st.session_state.session_id, feedback_response, "thumbs_down")
-                st.session_state[feedback_key] = "submitted"
-                st.success("Thanks for the feedback!")
-                st.rerun()
-                
-    elif st.session_state[feedback_key] in ["up", "submitted"]:
-        st.success("Thanks for the feedback!")
-
-
-def save_to_session_history(all_response_data):
-    """
-    Saves the final, consolidated assistant response to chat history.
-    """
-    assistant_message = {
-        "role": "assistant",
-        "content": "",
-        "response_type": "text", # Default type
-        "timestamp": datetime.now()
-    }
-    
-    has_content = False
-    for data in all_response_data:
-        if data['type'] == 'sql_with_table':
-            assistant_message.update(data)
-            assistant_message['response_type'] = 'sql_with_table'
-            has_content = True
-        elif data['type'] == 'root_cause_detailed':
-            assistant_message.update(data)
-            assistant_message['response_type'] = 'root_cause_detailed'
-            has_content = True
-        elif data['type'] == 'text':
-            # Preserve feedback flags when saving to history
-            if data.get('show_feedback'):
-                assistant_message['show_feedback'] = data['show_feedback']
-                assistant_message['feedback_target'] = data.get('feedback_target', 'default')
-            assistant_message['content'] += data['content'] + "<br>"
-            has_content = True
-        elif data['type'] == 'followup_questions':
-            # Follow-up questions are not saved to history, but to a separate state variable
-            st.session_state.current_followup_questions = data.get('followup_questions', [])
-
-    # Only append to history if there was actual content to display
-    if has_content:
-        st.session_state.messages.append(assistant_message)
-
-
 def execute_workflow_streaming(workflow):
     """
     Executes the LangGraph workflow, collects all responses, and saves them to history.

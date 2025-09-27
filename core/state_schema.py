@@ -1,137 +1,65 @@
-from typing import TypedDict, List, Dict, Any, Optional
-import datetime
-from dataclasses import dataclass, field
-from typing import Annotated
-from operator import add
-
+from typing import Dict, List, Optional, Any
+from typing_extensions import TypedDict
 
 class AgentState(TypedDict):
-    """Simplified state schema for core workflow - no enterprise tracking"""
+    """Minimal state schema for entry router and navigation controller nodes"""
     
-    # ============ CORE SESSION DATA ============
-    session_id: str
-    user_id: str
-    original_question: str
-    current_question: str
+    # ============ CORE REQUIRED FIELDS ============
     
-    # ============ CURRENT STATE ============
-    current_agent: Optional[str]
-    previous_agent: Optional[str]
-    flow_type: Optional[str]
-    transition_type: Optional[str]
-    ambiguous_options: Optional[list]
-    dataset_followup_question: Optional[str]
+    # Input questions
+    original_question: str              # Initial user input
+    current_question: str               # Current question being processed
     
-    # ============ NAVIGATION CONTROLLER STATE ============
-    question_type: Optional[str]  # "what" or "why"
-    next_agent: Optional[str]     # "router_agent", "sql_generator_agent", "root_cause_agent"
-    routing_decision: Optional[Dict]
+    # Session identification (REQUIRED)
+    session_id: str                     # Unique session identifier
+    user_id: str                        # User identifier
     
-    # ============ DATASET SELECTION ============
-    selected_dataset: Optional[str]
-    narrative_response:Optional[str]
-    dataset_metadata: Optional[Dict]
-    selection_reasoning: Optional[str]
-    available_datasets: List[Dict]
-    selection_confidence: Optional[float]
-    metadata_context: Optional[Dict]  # For storing last table context
-    pending_selection_result: Optional[Dict]
+    # ============ ENTRY ROUTER FIELDS ============
     
-    # ============ SQL & EXECUTION (PHASE 2) ============
-    sql_templates: List[Dict]
-    selected_template: Optional[Dict]
-    generated_sql: Optional[str]
-    query_results: Optional[Any]
-    execution_status: str
-    sql_query:Optional[str]
-    next_agent_disp:Optional[str]
-    # ============ VARIANCE & ROOT CAUSE (PHASE 2/3) ============
-    variance_detected: bool
-    variance_details: List[Dict]
-    root_cause_steps: List[Dict]
-    follow_up_questions: List[Dict]
+    # Routing flags for entry router logic
+    requires_dataset_clarification: Optional[bool]     # Default: False
+    is_sql_followup: Optional[bool]                   # Default: False
     
-    # ============ USER INTERACTION ============
-    requires_user_input: bool
-    clarification_data: Optional[Dict]
-    user_preferences: Dict
+    # ============ NAVIGATION CONTROLLER FIELDS ============
     
-    # ============ WORKFLOW STATE ============
-    phase1_summary: Optional[Dict]
-    workflow_complete: bool
-    errors: List[str]
-    final_summary: Optional[Dict]  # Added for workflow completion
+    # Navigation outputs
+    rewritten_question: Optional[str]               # Processed/rewritten question
+    question_type: Optional[str]                    # "what" or "why"
+    next_agent: Optional[str]                       # Next node to execute
+    next_agent_disp: Optional[str]                  # Display name for next agent
+    current_agent: Optional[str]                    # Current processing agent
     
-    # ============ ANALYSIS RESULTS ============
-    root_cause_analysis: Optional[str]  # For root cause agent results
+    # Domain handling
+    domain_selection: Optional[List[str]]           # Selected product categories
+    requires_domain_clarification: Optional[bool]   # Default: False
+    domain_followup_question: Optional[str]         # Domain clarification message
+    pending_business_question: Optional[str]        # Stored business question during domain clarification
     
-    # ============ SYSTEM METADATA ============
-    session_start_time: str
-    last_update_time: str
-    total_processing_time: Optional[float]
-    questions_sql_history: list[str]
-    user_question_history: list[str]
-
+    # Context and history
+    user_question_history: Optional[List[str]]      # Previous questions for context
+    context_type: Optional[str]                     # "new_independent", "true_followup", etc.
+    inherited_context: Optional[str]                # Context inherited from previous questions
     
-    def __init__(self, **kwargs):
-        """Initialize state with basic defaults"""
-        defaults = {
-            # Core required fields
-            'session_id': '',
-            'user_id': '',
-            'original_question': '',
-            'current_question': '',
-            
-            # Question history
-            'user_questions_history': [],
-
-            
-            # Current state
-            'current_agent': None,
-            'previous_agent': None,
-            'flow_type': None,
-            'transition_type': None,
-            
-            # Navigation state
-            'question_type': None,
-            'next_agent': None,
-            'routing_decision': None,
-            
-            # Dataset selection
-            'selected_dataset': None,
-            'dataset_metadata': None,
-            'selection_reasoning': None,
-            'available_datasets': [],
-            'selection_confidence': None,
-            'metadata_context': None,
-            'pending_selection_result': None,
-            'sql_templates': [],
-            'selected_template': None,
-            'generated_sql': None,
-            'query_results': None,
-            'execution_status': 'pending',
-            'variance_detected': False,
-            'variance_details': [],
-            'root_cause_steps': [],
-            'follow_up_questions': [],
-            'requires_user_input': False,
-            'clarification_data': None,
-            'user_preferences': {},
-            'phase1_summary': None,
-            'workflow_complete': False,
-            'errors': [],
-            'final_summary': None,
-            'root_cause_analysis': None,
-            
-            # System metadata
-            'session_start_time': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'last_update_time': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'total_processing_time': None
-        }
-        
-        # Update with provided kwargs
-        for key, value in kwargs.items():
-            if key in defaults:
-                defaults[key] = value
-        
-        super().__init__(**defaults)
+    # Response handling
+    greeting_response: Optional[str]                # Greeting/capability responses
+    is_dml_ddl: Optional[bool]                     # Data modification request flag
+    
+    # Error handling
+    nav_error_msg: Optional[str]                   # Navigation-specific errors
+    errors: Optional[List[str]]                    # General error list
+    llm_retry_count: Optional[int]                 # LLM retry tracking
+    
+    # ============ LEGACY/COMPATIBILITY FIELDS ============
+    
+    # Keep these for compatibility with existing Streamlit code
+    user_questions_history: Optional[List[str]]    # Alternative history field name
+    session_context: Optional[Dict[str, Any]]      # Session metadata
+    
+    # Workflow state flags
+    topic_drift: Optional[bool]                    # Default: False
+    missing_dataset_items: Optional[bool]          # Default: False
+    
+    # Additional error fields (for other nodes when added back)
+    router_error_msg: Optional[str]
+    follow_up_error_msg: Optional[str]
+    sql_gen_error_msg: Optional[str]

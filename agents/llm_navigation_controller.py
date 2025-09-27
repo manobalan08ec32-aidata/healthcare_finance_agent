@@ -1,5 +1,7 @@
-from typing import Dict, List, Optional
+import requests
 import json
+import time
+from typing import Dict, List, Optional, Any
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
 
@@ -121,11 +123,8 @@ class LLMNavigationController:
 
         === EXAMPLES FOR CLAUDE ===
 
-        Input: "Hi" 
+        Input: "Hi,what can you do,how are you" 
         → input_type="greeting", valid=false, domain_found=false, domains=[], response="Hello! I'm your healthcare finance analytics assistant..."
-
-        Input: "What can you do?"
-        → input_type="greeting", valid=false, domain_found=false, domains=[], response="I can help analyze pharmacy data..."
         
         Input: "Specifically within claims, what information you have"
         → input_type="greeting", valid=false, domain_found=false, domains=[], response="Here is the information I have about claims: ..."
@@ -137,12 +136,6 @@ class LLMNavigationController:
         → input_type="business_question", valid=true, domain_found=false, domains=[], response=""
 
         Input: "PBM revenue trends"
-        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
-
-        Input: "Show me PBM data"
-        → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
-
-        Input: "pbm costs"
         → input_type="business_question", valid=true, domain_found=true, domains=["PBM"], response=""
 
         Input: "Specialty and HDP costs"
@@ -237,7 +230,7 @@ class LLMNavigationController:
 2. **Specialty** - Specialty pharmacy services  
 3. **PBM** - Pharmacy Benefit Management services
 
-You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and Specialty), or 'ALL' for comprehensive analysis."""
+You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and Specialty) for comprehensive analysis."""
                         
                         return {
                             'rewritten_question': current_question,
@@ -404,6 +397,7 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
                 llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": domain_parse_prompt}
                 ])
+                print("response-2", llm_response)
                 response_json = json.loads(llm_response)
                 return {
                     'valid_domain_selection': response_json.get('valid_domain_selection', False),
@@ -551,6 +545,7 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
                 llm_response = self.db_client.call_claude_api_endpoint([
                     {"role": "user", "content": rewrite_classify_prompt}
                 ])
+                print("response-3",llm_response)
                 response_json = json.loads(llm_response)
                 context_type = response_json.get('context_type', 'new_independent')
                 inherited_context = response_json.get('inherited_context', '')

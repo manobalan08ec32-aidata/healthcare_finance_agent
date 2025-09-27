@@ -3,27 +3,198 @@ import json
 import time
 from typing import List, Dict, Any, Optional
 import datetime
+import os
+import openai 
+from dotenv import load_dotenv
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
 
 class DatabricksClient:
     """Databricks client for SQL execution, vector search, and Claude API calls"""
     
     def __init__(self):
-        self.DATABRICKS_HOST = "https://adb-1446028976895628.8.azuredatabricks.net"
-        self.DATABRICKS_TOKEN = "************"  # Use environment variable in production
-        self.SQL_WAREHOUSE_ID = "86fe3eb6b45135bb"
+        # self.DATABRICKS_HOST =  os.getenv("DATABRICKS_HOST")
+        # self.DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN") # Use environment variable in production
+        # self.SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
+        # self.DATABRICKS_LLM_TOKEN = os.getenv("DATABRICKS_LLM_TOKEN")
+        # self.DATABRICKS_LLM_HOST = os.getenv("DATABRICKS_LLM_HOST")
+        # self.UHG_CLIENT_ID = os.getenv("UHG_CLIENT_ID")
+        # self.UHG_CLIENT_SECRET = os.getenv("UHG_CLIENT_SECRET")
+        # self.UHG_PROJECT_ID = os.getenv("UHG_PROJECT_ID")
+        
+        self.DATABRICKS_HOST =  os.getenv("DATABRICKS_HOST")
+        self.DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN") # Use environment variable in production
+        self.SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
+        self.DATABRICKS_LLM_TOKEN = os.getenv("DATABRICKS_LLM_TOKEN")
+        self.DATABRICKS_LLM_HOST = os.getenv("DATABRICKS_LLM_HOST")
+        self.UHG_CLIENT_ID = os.getenv("UHG_CLIENT_ID")
+        self.UHG_CLIENT_SECRET = os.getenv("UHG_CLIENT_SECRET")
+        self.UHG_PROJECT_ID = os.getenv("UHG_PROJECT_ID")
+        
         self.VECTOR_TBL_INDEX = "prd_optumrx_orxfdmprdsa.rag.table_chunks"
         self.LLM_MODEL = "databricks-claude-sonnet-4"
         self.SESSION_TABLE = "prd_optumrx_orxfdmprdsa.rag.session_state"
+        self.ROOTCAUSE_INDEX = "prd_optumrx_orxfdmprdsa.rag.rootcause_chunks"  # Add this
+        self.UHG_AUTH_URL = "https://api.uhg.com/oauth2/token"
+        self.UHG_SCOPE = "https://api.uhg.com/.default"
+        self.UHG_GRANT_TYPE = "client_credentials" 
+        self.UHG_DEPLOYMENT_NAME = "gpt-4o_2024-11-20"
+        self.UHG_ENDPOINT = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
+        self.UHG_API_VERSION = "2025-01-01-preview"
+        self.CLAUDE_AUTH_URL = "https://api.uhg.com/oauth2/token"
+        self.CLAUDE_SCOPE = "https://api.uhg.com/.default"
+        self.CLAUDE_GRANT_TYPE = "client_credentials"
+        self.CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        self.CLAUDE_API_URL = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
+        self.CLAUDE_PROJECT_ID= os.getenv("CLAUDE_PROJECT_ID")
+        self.CLAUDE_CLIENT_ID = os.getenv("CLAUDE_CLIENT_ID")
+        self.CLAUDE_CLIENT_SECRET = os.getenv("CLAUDE_CLIENT_SECRET")
+        
         
         self.headers = {
             "Authorization": f"Bearer {self.DATABRICKS_TOKEN}",
             "Content-Type": "application/json",
         }
+
+        self.llm_headers = {
+            "Authorization": f"Bearer {self.DATABRICKS_LLM_TOKEN}",
+            "Content-Type": "application/json",
+        }
         
         self.sql_api_url = f"{self.DATABRICKS_HOST}/api/2.0/sql/statements/"
-        self.llm_api_url = f"{self.DATABRICKS_HOST}/serving-endpoints/{self.LLM_MODEL}/invocations"
+        self.llm_api_url = f"{self.DATABRICKS_LLM_HOST}/serving-endpoints/{self.LLM_MODEL}/invocations"
+
+    def call_claude_api_endpoint(self, messages: list, max_tokens: int = 25000, temperature: float = 0.1, top_p: float = 0.8, system_prompt: str = "you are an AI assistant") -> str:
+        """
+        Call UHG Claude API endpoint using HCP credentials and return the response text.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            max_tokens: Maximum tokens in response (default: 25000)
+            temperature: Controls randomness (0.0-1.0, default: 0.1)
+            top_p: Controls diversity (0.0-1.0, default: 0.9)  
+            system_prompt: System prompt for the assistant
+        """
+        BASE_URL = self.CLAUDE_API_URL
+        PROJECT_ID = self.CLAUDE_PROJECT_ID
+        MODEL_ID = self.CLAUDE_MODEL_ID
+
+        CONFIG = {
+            "HCP_CLIENT_ID": self.CLAUDE_CLIENT_ID,
+            "HCP_CLIENT_SECRET": self.CLAUDE_CLIENT_SECRET,
+            "HCP_AUTH": self.CLAUDE_AUTH_URL,
+            "HCP_SCOPE": self.CLAUDE_SCOPE,
+            "HCP_GRANT_TYPE": self.CLAUDE_GRANT_TYPE
+        }
+
+        def fetch_hcp_token(config):
+            data = {
+                "grant_type": config["HCP_GRANT_TYPE"],
+                "client_id": config["HCP_CLIENT_ID"],
+                "client_secret": config["HCP_CLIENT_SECRET"],
+                "scope": config["HCP_SCOPE"],
+            }
+            resp = requests.post(config["HCP_AUTH"], data=data)
+            resp.raise_for_status()
+            return resp.json()["access_token"]
+
+        try:
+            # Step 1: Get token
+            token = fetch_hcp_token(CONFIG)
+
+            # Step 2: Convert messages to API format
+            api_messages = []
+            for msg in messages:
+                api_messages.append({
+                    "role": msg["role"],
+                    "content": [{"text": msg["content"]}]
+                })
+
+            # Step 3: Prepare headers and payload with temperature and top_p
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+                "projectId": PROJECT_ID,
+                "guardrail": "high_strength"
+            }
+            payload = {
+                "system": [{"text": system_prompt}],
+                "messages": api_messages,
+                "inferenceConfig": {
+                    "maxTokens": max_tokens,
+                    "temperature": temperature,
+                    "topP": top_p
+                }
+            }
+            url = f"{BASE_URL}/model/{MODEL_ID}/converse"
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+
+            # Add debugging information
+            print(f"Status code: {response.status_code}")
+            if response.status_code != 200:
+                print(f"Error response: {response.text}")
+            response.raise_for_status()
+
+            result = response.json()
+            # Try to extract the response text - adjust based on actual response structure
+            try:
+                return result["output"]["message"]["content"][0]["text"]
+            except KeyError as e:
+                print(f"KeyError accessing response: {e}")
+                print(f"Available keys: {list(result.keys())}")
+                # Fallback - return the full result as string for debugging
+                return str(result)
+
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP Error: {e}")
+            print(f"Response content: {e.response.text if hasattr(e, 'response') else 'No response content'}")
+            raise Exception(f"Claude API endpoint call failed: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Claude API endpoint call failed: {str(e)}")
+
     
-    def execute_sql(self, sql_query: str, timeout: int = 300) -> List[Dict]:
+    
+    def vector_search_columns(self, query_text: str, num_results: int = 20, index_name: str = None, timeout: int = 600, tables_list: list = None) -> List[Dict]:
+        """Search table chunks using vector search with extended timeout and table filter"""
+
+        # Use provided index or default
+        search_index = index_name if index_name else "prd_optumrx_orxfdmprdsa.rag.column_embeddings_idx"
+
+        # Escape single quotes properly
+        escaped_query = query_text.replace("'", "''")
+
+        # Prepare WHERE clause for table_name IN (...)
+        where_clause = ""
+        if tables_list and len(tables_list) > 0:
+            # Safely quote each table name
+            quoted_tables = [f"'{t}'" for t in tables_list]
+            tables_str = ", ".join(quoted_tables)
+            where_clause = f"WHERE table_name IN ({tables_str})"
+
+        sql_query = f"""
+        SELECT table_name, llm_context
+        FROM VECTOR_SEARCH(
+            index => '{search_index}',
+            query_text => '{escaped_query}',
+            num_results => {num_results},
+            query_type => 'hybrid'
+        )
+        {where_clause}
+        """
+        try:
+            start_time = time.time()
+            results = self.execute_sql(sql_query, timeout=timeout)
+            elapsed = time.time() - start_time
+            print(f"✅ Vector search completed in {elapsed:.1f}s, returned {len(results)} results")
+
+            return results
+
+        except Exception as e:
+            elapsed = time.time() - start_time if 'start_time' in locals() else 0
+            print(f"❌ Vector search failed after {elapsed:.1f}s: {str(e)}")
+            raise Exception(f"Vector search failed: {str(e)}")
+    
+    def execute_sql(self, sql_query: str, timeout: int = 500) -> List[Dict]:
         """Execute SQL query and return results with proper async handling"""
         
         payload = {
@@ -140,7 +311,7 @@ class DatabricksClient:
                     time.sleep(poll_interval)
                     
                     # Progressive backoff: increase interval up to max
-                    poll_interval = min(poll_interval * 1.5, max_poll_interval)
+                    poll_interval = min(poll_interval * 1, max_poll_interval)
                     continue
                 
                 else:
@@ -155,190 +326,6 @@ class DatabricksClient:
         
         raise Exception(f"Query timed out after {timeout} seconds")
 
-    def vector_search_tables(self, query_text: str, num_results: int = 5, index_name: str = None, timeout: int = 600) -> List[Dict]:
-        """Search table chunks using vector search with extended timeout"""
-        
-        # Use provided index or default
-        search_index = index_name if index_name else self.VECTOR_TBL_INDEX
-        
-        # Escape single quotes properly
-        escaped_query = query_text.replace("'", "''")
-        
-        sql_query = f"""
-        SELECT table_name, table_summary as content, table_kg 
-        FROM VECTOR_SEARCH(
-            index => '{search_index}',
-            query_text => '{escaped_query}',
-            num_results => {num_results}
-        )
-        """
-        
-        print(f"⏱️ Using timeout: {timeout}s")
-        
-        try:
-            start_time = time.time()
-            results = self.execute_sql(sql_query, timeout=timeout)
-            elapsed = time.time() - start_time
-            
-            print(f"✅ Vector search completed in {elapsed:.1f}s, returned {len(results)} results")
-            
-            return results
-            
-        except Exception as e:
-            elapsed = time.time() - start_time if 'start_time' in locals() else 0
-            print(f"❌ Vector search failed after {elapsed:.1f}s: {str(e)}")
-            raise Exception(f"Vector search failed: {str(e)}")
+    
 
-    
-    def call_claude_api(self, messages: List[Dict], system_prompt: str = None, max_tokens: int = 15000) -> str:
-        """Call Databricks-hosted Claude endpoint"""
-        
-        payload = {
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.1,
-            "top_p": 0.9
-        }
-        
-        if system_prompt:
-            payload["system"] = system_prompt
-        
-        try:
-            response = requests.post(
-                self.llm_api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=120
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            return result['choices'][0]['message']['content']
-            
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Claude API call failed: {str(e)}")
-        except Exception as e:
-            raise Exception(f"Unexpected error in Claude API call: {str(e)}")
-    
-    def save_session_state(self, state: Dict) -> bool:
-        """Save session state to Databricks table"""
-        
-        try:
-            state_string = json.dumps(state).replace("'", "''")
-            insert_sql = f"""
-            INSERT INTO {self.SESSION_TABLE} (session_id, state_json, timestamp)
-            VALUES ('{state["session_id"]}', '{state_string}', '{datetime.datetime.now(datetime.timezone.utc).isoformat()}')
-            """
-            
-            self.execute_sql(insert_sql)
-            return True
-            
-        except Exception as e:
-            print(f"Failed to save session state: {str(e)}")
-            return False
-    
-    def load_session_state(self, session_id: str) -> Optional[Dict]:
-        """Load latest session state from Databricks table"""
-        
-        try:
-            sql_query = f"""
-            SELECT state_json, timestamp 
-            FROM {self.SESSION_TABLE} 
-            WHERE session_id = '{session_id}' 
-            ORDER BY timestamp DESC 
-            LIMIT 1
-            """
-            
-            results = self.execute_sql(sql_query)
-            
-            if results:
-                return json.loads(results[0]['state_json'])
-            else:
-                return None
-                
-        except Exception as e:
-            print(f"Failed to load session state: {str(e)}")
-            return None
-    
-    def get_table_metadata(self, table_name: str) -> Optional[Dict]:
-        """Get detailed metadata for a specific table"""
-        
-        try:
-            sql_query = f"""
-            SELECT table_name, table_summary, table_kg
-            FROM {self.VECTOR_TBL_INDEX.replace('VECTOR_SEARCH', '')}
-            WHERE table_name = '{table_name}'
-            """
-            
-            results = self.execute_sql(sql_query)
-            return results[0] if results else None
-            
-        except Exception as e:
-            print(f"Failed to get table metadata: {str(e)}")
-            return None
-    
-    def test_connection(self) -> bool:
-        """Test Databricks connection with better error handling"""
-        try:
-            # Simple test query
-            test_sql = "SELECT 1 as test_column"
-            results = self.execute_sql(test_sql)
-            print('result', results)
-            
-            # Check if we got any results
-            if results and len(results) > 0:
-                first_result = results[0]
-                test_value = None
-                
-                print(f"First result: {first_result}")
-                
-                if 'test_column' in first_result:
-                    test_value = first_result['test_column']
-                    print(f"Found test_column: {test_value} (type: {type(test_value)})")
-                elif 'col_0' in first_result:
-                    test_value = first_result['col_0']
-                    print(f"Found col_0: {test_value} (type: {type(test_value)})")
-                elif len(first_result) > 0:
-                    test_value = list(first_result.values())[0]
-                    print(f"Found first value: {test_value} (type: {type(test_value)})")
-                
-                return test_value
-                
-            else:
-                print("No results returned from test query")
-                return False
-            
-        except Exception as e:
-            # ✅ FIX: Actually raise the exception to see what's wrong
-            print(f"Exception in test_connection: {e}")
-            import traceback
-            traceback.print_exc()
-            raise  # This will show the full error
 
-# Example usage and testing
-if __name__ == "__main__":
-    client = DatabricksClient()
-    
-    # Test connection
-    if client.test_connection():
-        print("✅ Databricks connection successful")
-        
-        # Test vector search
-        try:
-            results = client.vector_search_tables("claims transaction data", 3)
-            print(f"✅ Vector search successful, found {len(results)} tables")
-            for result in results:
-                print(f"  - {result['table_name']}")
-        except Exception as e:
-            print(f"❌ Vector search failed: {e}")
-        
-        # Test Claude API
-        try:
-            response = client.call_claude_api([
-                {"role": "user", "content": "What is healthcare finance?"}
-            ])
-            print(f"✅ Claude API successful: {response[:100]}...")
-        except Exception as e:
-            print(f"❌ Claude API failed: {e}")
-    else:
-        print("❌ Databricks connection failed")

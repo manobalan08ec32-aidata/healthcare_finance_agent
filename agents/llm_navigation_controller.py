@@ -45,27 +45,12 @@ class LLMNavigationController:
         history_context = questions_history[-1:] if questions_history else []
         
         # SINGLE COMPREHENSIVE PROMPT - Your complete unified prompt + rewrite logic
-        comprehensive_prompt = f"""You are a healthcare finance analytics assistant specialized in pharmacy and healthcare performance data analysis.
+        comprehensive_prompt = f"""You are a healthcare finance analytics assistant.
 
-        SYSTEM KNOWLEDGE - WHAT THIS CHATBOT IS BUILT FOR:
+        SYSTEM KNOWLEDGE:
+        This chatbot analyzes healthcare finance data including claims, ledgers, payments, member data, provider data, and pharmacy data. It supports financial reporting, variance analysis, trends, and performance metrics.
 
-        ## Dataset 1: Actuals vs Forecast Analysis
-        **Attributes:** Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)  
-        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis
-
-        ## Dataset 2: PBM & Pharmacy Claim Transaction
-        **Attributes:** Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status, Client Type, Pharmacy Type, Member Age group, State (Paid/Reversed/Rejected)  
-        **Metrics:** Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)
-
-        **Supported Analysis Types:**
-        - Variance analysis (actual vs forecast/budget)
-        - Mix shift tracking by LOB or product category
-        - Trend reporting across timeframes
-        - Prescription volume analysis
-        - Revenue and cost analysis
-        - Membership analytics
-
-        **Available Product Categories:**
+        Available Product Categories:
         - Home Delivery (HDP) - Home delivery pharmacy services
         - Specialty (SP) - Specialty pharmacy services  
         - PBM - Pharmacy Benefit Management services
@@ -85,13 +70,12 @@ class LLMNavigationController:
         2. **DML/DDL** - Data modification requests (not supported)
         Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
 
-        3. **BUSINESS_QUESTION** - Questions about data, analytics, healthcare finance
-        Examples: "Show me revenue", "Prescription counts", "Cost analysis", "Performance metrics"
+        3. **BUSINESS_QUESTION** - Questions about healthcare finance data, analytics, claims, ledgers, payments
+        Examples: "Show me claims data", "Revenue analysis", "Payment trends", "Ledger reconciliation", "Member costs"
 
-        BUSINESS QUESTION VALIDATION RULES:
-        ✅ VALID: Healthcare/pharmacy related queries about metrics, trends, analysis
-        ✅ VALID: Vague but analytics-related: "show me data", "performance metrics"
-        ❌ INVALID: Completely unrelated topics: "weather", "sports", "personal advice"
+        **BUSINESS QUESTION VALIDATION:**
+        ✅ VALID: Healthcare finance questions about claims, ledgers, payments, members, providers, pharmacy
+        ❌ INVALID: Non-healthcare topics like weather, sports, retail, manufacturing
 
         === TASK 2: EXTRACT DOMAIN CONTEXT ===
 
@@ -218,16 +202,16 @@ class LLMNavigationController:
         → input_type="business_question", valid=true, domain_found=true, domains=["Specialty", "Home Delivery"], response="", rewritten="Specialty and HDP costs", question_type="what"
 
         Input: "Tell me about the weather"
-        → input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics..."
+        → input_type="business_question", valid=false, domain_found=false, domains=[], response="I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data."
 
         The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
         {{
             "input_type": "greeting|dml_ddl|business_question",
             "is_valid_business_question": true,
-            "domain_found": true,
-            "detected_domains": ["PBM"],
+            "domain_found": true or false,
+            "detected_domains": ["PBM"] or [],
             "response_message": "",
-            "needs_domain_clarification": false,
+            "needs_domain_clarification": true or false if there is no detected domains,
             "context_type": "new_independent|true_followup|filter_refinement|metric_expansion",
             "inherited_context": "specific context inherited from previous question or 'none' if independent",
             "rewritten_question": "complete rewritten question with appropriate context inheritance",
@@ -247,16 +231,31 @@ class LLMNavigationController:
                 ])
                 
                 print("Comprehensive LLM response:", llm_response)
-                response_json = json.loads(llm_response)
                 
-                input_type = response_json.get('input_type', 'business_question')
-                is_valid_business_question = response_json.get('is_valid_business_question', False)
-                response_message = response_json.get('response_message', '')
-                domain_found = response_json.get('domain_found', False)
-                detected_domains = response_json.get('detected_domains', [])
-                needs_domain_clarification = response_json.get('needs_domain_clarification', False)
-                rewritten_question = response_json.get('rewritten_question', '')
-                question_type = response_json.get('question_type', 'what')
+                # Try to parse as JSON, if it fails, treat as greeting message
+                try:
+                    response_json = json.loads(llm_response)
+                    
+                    input_type = response_json.get('input_type', 'business_question')
+                    is_valid_business_question = response_json.get('is_valid_business_question', False)
+                    response_message = response_json.get('response_message', '')
+                    domain_found = response_json.get('domain_found', False)
+                    detected_domains = response_json.get('detected_domains', [])
+                    needs_domain_clarification = response_json.get('needs_domain_clarification', False)
+                    rewritten_question = response_json.get('rewritten_question', '')
+                    question_type = response_json.get('question_type', 'what')
+                    
+                except json.JSONDecodeError as json_error:
+                    print(f"LLM response is not valid JSON, treating as greeting: {json_error}")
+                    # Treat non-JSON response as a greeting message
+                    input_type = 'greeting'
+                    is_valid_business_question = False
+                    response_message = llm_response.strip()  # Use the raw response as greeting message
+                    domain_found = False
+                    detected_domains = []
+                    needs_domain_clarification = False
+                    rewritten_question = ''
+                    question_type = 'what'
                 
                 total_retry_count += retry_count
                 
@@ -294,7 +293,7 @@ class LLMNavigationController:
 2. **Specialty** - Specialty pharmacy services  
 3. **PBM** - Pharmacy Benefit Management services
 
-You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and Specialty'), or 'ALL' for comprehensive analysis."""
+You can choose either (e.g., 'PBM'), or (e.g., 'HDP and Specialty') for comprehensive analysis."""
                         
                         return {
                             'rewritten_question': current_question,
@@ -326,9 +325,7 @@ You can choose individual categories (e.g., 'PBM'), combinations (e.g., 'HDP and
                             'pending_business_question': ''
                         }
                 
-                # Fallback for any other cases
-                return await self._simple_fallback_response(current_question, existing_domain_selection, total_retry_count)
-                    
+                # Fallback for any other cases                    
             except Exception as e:
                 retry_count += 1
                 print(f"Comprehensive analysis attempt {retry_count} failed: {str(e)}")
@@ -507,14 +504,27 @@ Important: Return ONLY valid JSON. No additional text, markdown, or formatting."
                 ])
                 
                 print("Domain + Classify response:", llm_response)
-                response_json = json.loads(llm_response)
                 
-                valid_domain_selection = response_json.get('valid_domain_selection', False)
-                selected_domains = response_json.get('selected_domains', [])
-                error_type = response_json.get('error_type')
-                smart_followup_message = response_json.get('smart_followup_message')
-                rewritten_question = response_json.get('rewritten_question', '')
-                question_type = response_json.get('question_type', 'what')
+                # Try to parse as JSON, if it fails, treat as invalid domain selection
+                try:
+                    response_json = json.loads(llm_response)
+                    
+                    valid_domain_selection = response_json.get('valid_domain_selection', False)
+                    selected_domains = response_json.get('selected_domains', [])
+                    error_type = response_json.get('error_type')
+                    smart_followup_message = response_json.get('smart_followup_message')
+                    rewritten_question = response_json.get('rewritten_question', '')
+                    question_type = response_json.get('question_type', 'what')
+                    
+                except json.JSONDecodeError as json_error:
+                    print(f"Domain classify response is not valid JSON, treating as invalid: {json_error}")
+                    # Treat non-JSON response as invalid domain selection
+                    valid_domain_selection = False
+                    selected_domains = []
+                    error_type = "invalid_input"
+                    smart_followup_message = llm_response.strip() if llm_response.strip() else None
+                    rewritten_question = ''
+                    question_type = 'what'
                 
                 total_retry_count += retry_count
                 
@@ -576,32 +586,6 @@ Important: Return ONLY valid JSON. No additional text, markdown, or formatting."
                         'error_message': f"Model serving endpoint failed after {max_retries} attempts"
                     }
 
-    async def _simple_fallback_response(self, current_question: str, existing_domain_selection: List[str], 
-                                      total_retry_count: int) -> Dict[str, any]:
-        """Simple fallback for edge cases - no LLM calls"""
-        
-        # Simple heuristic-based processing
-        question_lower = current_question.lower()
-        question_type = "why" if any(word in question_lower for word in ['why', 'cause', 'reason']) else "what"
-        
-        rewritten_question = current_question
-        if existing_domain_selection:
-            domain_str = ", ".join(existing_domain_selection)
-            rewritten_question = f"{current_question} for product category {domain_str}"
-        
-        next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
-        
-        return {
-            'rewritten_question': rewritten_question,
-            'question_type': question_type,
-            'next_agent': next_agent,
-            'next_agent_disp': next_agent.replace('_', ' ').title(),
-            'requires_domain_clarification': False,
-            'domain_followup_question': None,
-            'domain_selection': existing_domain_selection,
-            'llm_retry_count': total_retry_count,
-            'pending_business_question': ''
-        }
 
     def _get_default_domain_followup(self) -> str:
         """Default domain clarification message"""

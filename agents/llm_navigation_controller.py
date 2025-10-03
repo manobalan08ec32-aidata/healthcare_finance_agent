@@ -44,19 +44,14 @@ class LLMNavigationController:
     questions_history = state.get('user_question_history', [])
     history_context = questions_history[-1:] if questions_history else []
     
-    # SINGLE COMPREHENSIVE PROMPT - Updated for team-based selection
+    # SINGLE COMPREHENSIVE PROMPT - Simplified without team selection logic
     comprehensive_prompt = f"""You are a healthcare finance analytics assistant.
 
     SYSTEM KNOWLEDGE:
     This chatbot analyzes healthcare finance data including claims, ledgers, payments, member data, provider data, and pharmacy data. It supports financial reporting, variance analysis, trends, and performance metrics.
 
-    Available Teams:
-    - PBM Network
-    - Pharmacy (IRIS)
-
     NOW ANALYZE THIS USER INPUT:
     User Input: "{current_question}"
-    Existing Team Context: {existing_domain_selection if existing_domain_selection else "None"}
     Previous Question History: {history_context}
 
     === TASK 1: CLASSIFY INPUT TYPE ===
@@ -76,28 +71,7 @@ class LLMNavigationController:
     ✅ VALID: Healthcare finance questions about claims, ledgers, payments, members, providers, pharmacy
     ❌ INVALID: Non-healthcare topics like weather, sports, retail, manufacturing
 
-    === TASK 2: EXTRACT TEAM CONTEXT ===
-
-    For VALID business questions only, detect team mentions:
-
-    **Team Detection Rules - CASE INSENSITIVE MATCHING:**
-    - Look for "PBM Network" or "PBM" (when referring to team)
-    - Look for "Pharmacy" or "IRIS" or "Pharmacy (IRIS)"
-
-    **Exact Team Mapping (IMPORTANT - Match these exactly):**
-    - If input contains "pbm network" OR mentions "pbm" as team (case insensitive) → detected_teams = ["PBM Network"]
-    - If input contains "pharmacy" OR "iris" OR "pharmacy iris" (case insensitive) → detected_teams = ["Pharmacy (IRIS)"]
-
-    **Team Found Logic:**
-    - If team explicitly mentioned → team_found = true, detected_teams = ["PBM Network"] or ["Pharmacy (IRIS)"]
-    - If NO team mentioned but valid business question → team_found = false, detected_teams = []
-
-    **IMPORTANT: Team vs Product Category:**
-    - PBM, HDP, Specialty mentioned as DATA FILTERS in the question are NOT team selections
-    - Only detect team when user is identifying which team they belong to
-    - For most business questions without team context, team_found should be false
-
-    === TASK 3: IF VALID BUSINESS QUESTION, APPLY REWRITE AND CLASSIFY LOGIC ===
+    === TASK 2: IF VALID BUSINESS QUESTION, APPLY REWRITE AND CLASSIFY LOGIC ===
 
     IF this is a valid business question, also perform question rewriting and classification:
 
@@ -142,12 +116,7 @@ class LLMNavigationController:
     - Do not modify if a year already exists or if phrasing is like "next January".
     - Recognize month names and common abbreviations (e.g., Jan, Feb, Mar).
 
-    5) **NO Team Appending**:
-    - DO NOT append team information to the rewritten question
-    - Team context is stored separately and not added to the question text
-    - Keep the rewritten question focused on the business query only
-
-    6) **Quality Requirements**:
+    5) **Quality Requirements**:
     - Keep grammar natural, preserve important keywords, and make it sufficient for SQL generation.
     - Rewritten question must be self-contained (readable without history)
     - Length must be 15–500 characters.
@@ -161,7 +130,7 @@ class LLMNavigationController:
     - Includes: "why", "how did", "what caused", "what's driving"
     - Follow-ups inherit the type unless explicitly asking for explanations.
 
-    === TASK 4: GENERATE RESPONSE MESSAGE ===
+    === TASK 3: GENERATE RESPONSE MESSAGE ===
 
     Based on input type:
 
@@ -178,40 +147,33 @@ class LLMNavigationController:
     === EXAMPLES FOR CLAUDE ===
 
     Input: "Hi,what can you do,how are you" 
-    → input_type="greeting", valid=false, team_found=false, teams=[], response="Hello! I'm your healthcare finance analytics assistant..."
+    → input_type="greeting", valid=false, response="Hello! I'm your healthcare finance analytics assistant..."
     
     Input: "Specifically within claims, what information you have"
-    → input_type="greeting", valid=false, team_found=false, teams=[], response="Here is the information I have about claims: ..."
+    → input_type="greeting", valid=false, response="Here is the information I have about claims: ..."
 
     Input: "INSERT new data"
-    → input_type="dml_ddl", valid=false, team_found=false, teams=[], response="I can only analyze data, not modify it..."
+    → input_type="dml_ddl", valid=false, response="I can only analyze data, not modify it..."
 
     Input: "Show me revenue"
-    → input_type="business_question", valid=true, team_found=false, teams=[], response="", needs_clarification=true
+    → input_type="business_question", valid=true, response="", rewritten="Show me revenue", question_type="what"
 
-    Input: "Show me PBM data"
-    → input_type="business_question", valid=true, team_found=false, teams=[], response="", rewritten="Show me PBM data", question_type="what", needs_clarification=true
-    (Note: PBM here is a data filter, not team identification)
-
-    Input: "I'm from PBM Network team, show me revenue"
-    → input_type="business_question", valid=true, team_found=true, teams=["PBM Network"], response="", rewritten="Show me revenue", question_type="what"
+    Input: "Show me PBM data for July"
+    → input_type="business_question", valid=true, response="", rewritten="Show me PBM data for July 2025", question_type="what"
 
     Input: "Tell me about the weather"
-    → input_type="business_question", valid=false, team_found=false, teams=[], response="I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data."
+    → input_type="business_question", valid=false, response="I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data."
 
     The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
     {{
         "input_type": "greeting|dml_ddl|business_question",
-        "is_valid_business_question": true,
-        "team_found": true or false,
-        "detected_teams": ["PBM Network"] or ["Pharmacy (IRIS)"] or [],
+        "is_valid_business_question": true or false,
         "response_message": "",
-        "needs_team_clarification": true or false if there is no detected team,
         "context_type": "new_independent|true_followup|filter_refinement|metric_expansion",
         "inherited_context": "specific context inherited from previous question or 'none' if independent",
         "rewritten_question": "complete rewritten question with appropriate context inheritance",
         "question_type": "what|why",
-        "used_history": true
+        "used_history": true or false
     }}
 
     Important: Return ONLY valid JSON. No additional text, markdown, or formatting."""
@@ -234,9 +196,6 @@ class LLMNavigationController:
                 input_type = response_json.get('input_type', 'business_question')
                 is_valid_business_question = response_json.get('is_valid_business_question', False)
                 response_message = response_json.get('response_message', '')
-                team_found = response_json.get('team_found', False)
-                detected_teams = response_json.get('detected_teams', [])
-                needs_team_clarification = response_json.get('needs_team_clarification', False)
                 rewritten_question = response_json.get('rewritten_question', '')
                 question_type = response_json.get('question_type', 'what')
                 
@@ -246,9 +205,6 @@ class LLMNavigationController:
                 input_type = 'greeting'
                 is_valid_business_question = False
                 response_message = llm_response.strip()  # Use the raw response as greeting message
-                team_found = False
-                detected_teams = []
-                needs_team_clarification = False
                 rewritten_question = ''
                 question_type = 'what'
             
@@ -263,7 +219,7 @@ class LLMNavigationController:
                     'next_agent_disp': f'{input_type.replace("_", " ").title()} response',
                     'requires_domain_clarification': False,
                     'domain_followup_question': None,
-                    'domain_selection': None,
+                    'domain_selection': existing_domain_selection,
                     'greeting_response': response_message,
                     'is_dml_ddl': input_type == 'dml_ddl',
                     'llm_retry_count': total_retry_count,
@@ -273,36 +229,8 @@ class LLMNavigationController:
             # Handle valid business questions
             if input_type == 'business_question' and is_valid_business_question:
                 
-                # Determine final team selection
-                final_team_selection = None
-                
-                if team_found and detected_teams:
-                    final_team_selection = detected_teams
-                elif existing_domain_selection:
-                    final_team_selection = existing_domain_selection
-                elif needs_team_clarification:
-                    # Need team clarification
-                    followup_question = """Please select which team you belong to:
-
-1. **PBM Network**
-2. **Pharmacy (IRIS)**
-
-**Note:** Ledger datasets contain a combination of PBM, HDP, and Specialty information. Both teams will have access to the entire datasets. If you want to see individual product category level data (PBM, HDP, or Specialty), you can always add the filtering while prompting (e.g., "Show me revenue for PBM" or "Claims data for Specialty")."""
-                    
-                    return {
-                        'rewritten_question': current_question,
-                        'question_type': 'what',
-                        'next_agent': 'END',
-                        'next_agent_disp': 'Waiting for team selection',
-                        'requires_domain_clarification': True,
-                        'domain_followup_question': followup_question,
-                        'domain_selection': None,
-                        'llm_retry_count': total_retry_count,
-                        'pending_business_question': current_question
-                    }
-                
-                # Process complete business question
-                if final_team_selection and rewritten_question:
+                # Process business question with existing domain selection
+                if rewritten_question:
                     next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
                     
                     return {
@@ -314,19 +242,32 @@ class LLMNavigationController:
                         'next_agent_disp': next_agent.replace('_', ' ').title(),
                         'requires_domain_clarification': False,
                         'domain_followup_question': None,
-                        'domain_selection': final_team_selection,
+                        'domain_selection': existing_domain_selection,
                         'llm_retry_count': total_retry_count,
                         'pending_business_question': ''
                     }
             
-            # Fallback for any other cases                    
+            # Fallback - treat as invalid business question
+            return {
+                'rewritten_question': current_question,
+                'question_type': 'what',
+                'next_agent': 'END',
+                'next_agent_disp': 'Invalid business question',
+                'requires_domain_clarification': False,
+                'domain_followup_question': None,
+                'domain_selection': existing_domain_selection,
+                'greeting_response': "I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data.",
+                'llm_retry_count': total_retry_count,
+                'pending_business_question': ''
+            }
+                    
         except Exception as e:
             retry_count += 1
             print(f"Comprehensive analysis attempt {retry_count} failed: {str(e)}")
             
             if retry_count < max_retries:
                 print(f"Retrying comprehensive analysis... ({retry_count}/{max_retries})")
-                await asyncio.sleep(2 ** retry_count)  # Async sleep!
+                await asyncio.sleep(2 ** retry_count)
                 continue
             else:
                 print(f"All comprehensive analysis retries failed: {str(e)}")
@@ -337,7 +278,7 @@ class LLMNavigationController:
                     'next_agent_disp': 'Model serving endpoint failed',
                     'requires_domain_clarification': False,
                     'domain_followup_question': None,
-                    'domain_selection': None,
+                    'domain_selection': existing_domain_selection,
                     'greeting_response': "Model serving endpoint failed. Please try again after some time.",
                     'llm_retry_count': total_retry_count + retry_count,
                     'pending_business_question': '',

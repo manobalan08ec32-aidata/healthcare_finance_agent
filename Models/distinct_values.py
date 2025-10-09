@@ -8,20 +8,34 @@ from pyspark.sql.functions import col, collect_list, concat_ws, lit
 from pyspark.sql.types import StructType, StructField, StringType
 
 # COMMAND ----------
-# Configuration - Define your tables and columns
+# Configuration - Define your tables, columns, and user segments
 
 table_column_config = {
-    "table_A": ["drug_name", "category", "description"],
-    "table_B": ["product_name", "type"],
-    "table_C": ["item_name"]
+    "table_A": {
+        "columns": ["drug_name", "category", "description"],
+        "login_user_segment": "PBM Network"
+    },
+    "table_B": {
+        "columns": ["product_name", "type"],
+        "login_user_segment": "PBM Network"
+    },
+    "table_C": {
+        "columns": ["item_name"],
+        "login_user_segment": "Retail Pharmacy"
+    }
 }
 
 # COMMAND ----------
 # Function to get distinct values for a table-column combination
 
-def get_distinct_values_for_column(table_name, column_name):
+def get_distinct_values_for_column(table_name, column_name, user_segment):
     """
     Gets all distinct values from a specific column and returns them comma-separated
+    
+    Args:
+        table_name: Name of the table
+        column_name: Name of the column
+        user_segment: Login user segment value
     """
     try:
         query = f"SELECT DISTINCT {column_name} FROM {table_name} WHERE {column_name} IS NOT NULL"
@@ -31,10 +45,10 @@ def get_distinct_values_for_column(table_name, column_name):
         distinct_values = df.select(column_name).rdd.flatMap(lambda x: x).collect()
         distinct_values_str = ", ".join([str(val) for val in distinct_values])
         
-        return (table_name, column_name, distinct_values_str)
+        return (user_segment, table_name, column_name, distinct_values_str)
     except Exception as e:
         print(f"Error processing {table_name}.{column_name}: {str(e)}")
-        return (table_name, column_name, "")
+        return (user_segment, table_name, column_name, "")
 
 # COMMAND ----------
 # Process all tables and columns to create the distinct values table
@@ -42,15 +56,19 @@ def get_distinct_values_for_column(table_name, column_name):
 print("Starting data collection...")
 distinct_values_data = []
 
-for table_name, columns in table_column_config.items():
-    print(f"Processing table: {table_name}")
+for table_name, config in table_column_config.items():
+    user_segment = config["login_user_segment"]
+    columns = config["columns"]
+    
+    print(f"Processing table: {table_name} (Segment: {user_segment})")
     for column_name in columns:
-        result = get_distinct_values_for_column(table_name, column_name)
+        result = get_distinct_values_for_column(table_name, column_name, user_segment)
         distinct_values_data.append(result)
         print(f"  ✓ Column: {column_name}")
 
 # Create schema for the distinct values table
 schema = StructType([
+    StructField("login_user_segment", StringType(), True),
     StructField("table_name", StringType(), True),
     StructField("column_name", StringType(), True),
     StructField("distinct_values", StringType(), True)
@@ -115,33 +133,33 @@ WHERE matched_values != '';
 # COMMAND ----------
 # OPTION B: Python Function for Streamlit (OPTIMIZED - Single Table Scan)
 
-def search_metadata_sql(filter_list, spark_session=None):
+def search_metadata_sql(filter_list, user_segment, spark_session=None):
     """
     Searches the distinct_values_metadata table using Spark SQL.
     OPTIMIZED: Single table scan with regex pattern matching.
     
     Args:
         filter_list: List of strings to search for (e.g., ['covid', 'glp-1'])
+        user_segment: login_user_segment filter (REQUIRED - e.g., 'PBM Network')
         spark_session: Spark session object (optional, uses global spark if not provided)
     
     Returns:
         DataFrame with columns: table_name, column_name, matched_values
     
     Example:
-        results = search_metadata_sql(['covid', 'diabetes'])
-        results.show()
+        results = search_metadata_sql(['covid', 'diabetes'], user_segment='PBM Network')
     """
     
     if spark_session is None:
         spark_session = spark
     
     # Build a single regex pattern for all filter terms
-    # Pattern: (term1|term2|term3) - matches any of the terms
     escaped_terms = [term.replace('\\', '\\\\').replace('|', '\\|').replace('(', '\\(').replace(')', '\\)') 
                      for term in filter_list]
     regex_pattern = '|'.join(escaped_terms)
     
     # OPTIMIZED SQL: Single table scan with regex
+    # Segment filter always applied (guaranteed to be provided)
     query = f"""
     WITH exploded_values AS (
         SELECT 
@@ -149,6 +167,7 @@ def search_metadata_sql(filter_list, spark_session=None):
             column_name,
             trim(value) AS individual_value
         FROM distinct_values_metadata
+        WHERE login_user_segment = '{user_segment}'
         LATERAL VIEW explode(split(distinct_values, ',')) AS value
     ),
     filtered_values AS (
@@ -174,13 +193,14 @@ def search_metadata_sql(filter_list, spark_session=None):
 
 # OPTION C: Alternative High-Performance Approach (For very large datasets)
 
-def search_metadata_sql_exploded(filter_list, spark_session=None):
+def search_metadata_sql_exploded(filter_list, user_segment, spark_session=None):
     """
     Alternative approach: Pre-explode and cache for multiple searches.
     Best for scenarios where you'll run multiple searches in a session.
     
     Args:
         filter_list: List of strings to search for
+        user_segment: login_user_segment filter (REQUIRED)
         spark_session: Spark session object
     
     Returns:
@@ -198,6 +218,7 @@ def search_metadata_sql_exploded(filter_list, spark_session=None):
         spark_session.sql("""
             CREATE OR REPLACE TEMP VIEW distinct_values_exploded AS
             SELECT 
+                login_user_segment,
                 table_name,
                 column_name,
                 trim(value) AS individual_value
@@ -210,14 +231,15 @@ def search_metadata_sql_exploded(filter_list, spark_session=None):
     escaped_terms = [term.replace('\\', '\\\\').replace('|', '\\|') for term in filter_list]
     regex_pattern = '|'.join(escaped_terms)
     
-    # Fast query on cached exploded data
+    # Fast query on cached exploded data with segment filter
     query = f"""
     SELECT 
         table_name,
         column_name,
         concat_ws(', ', collect_list(individual_value)) AS matched_values
     FROM distinct_values_exploded
-    WHERE lower(individual_value) RLIKE '(?i)({regex_pattern})'
+    WHERE login_user_segment = '{user_segment}'
+      AND lower(individual_value) RLIKE '(?i)({regex_pattern})'
     GROUP BY table_name, column_name
     ORDER BY table_name, column_name
     """
@@ -229,19 +251,22 @@ def search_metadata_sql_exploded(filter_list, spark_session=None):
 # Test the optimized function with sample filters
 
 test_filters = ['covid', 'glp-1', 'diabetes']
+test_segment = 'PBM Network'
+
 print(f"Testing OPTIMIZED approach with filters: {test_filters}")
+print(f"User Segment: {test_segment}")
 print("=" * 80)
 
-# Test Option B (recommended for most cases)
-result = search_metadata_sql(test_filters)
-print("Results using single regex scan:")
+# Test Option B - Search with required segment
+print(f"Results for '{test_segment}' segment:")
+result = search_metadata_sql(test_filters, user_segment=test_segment)
 display(result)
 
 print("\n" + "=" * 80)
 
 # Test Option C (for multiple searches in same session)
-result_cached = search_metadata_sql_exploded(test_filters)
-print("Results using cached exploded view (faster for multiple searches):")
+print("Results using cached exploded view:")
+result_cached = search_metadata_sql_exploded(test_filters, user_segment=test_segment)
 display(result_cached)
 
 # COMMAND ----------
@@ -271,15 +296,20 @@ def get_spark_session():
 
 spark = get_spark_session()
 
-# OPTIMIZED search function
-def search_metadata(filter_list):
+# OPTIMIZED search function - user_segment is REQUIRED
+def search_metadata(filter_list, user_segment):
     '''
     Single table scan with regex pattern matching - OPTIMIZED
+    
+    Args:
+        filter_list: List of search terms
+        user_segment: login_user_segment filter (REQUIRED)
     '''
     # Build regex pattern from filter list
     escaped_terms = [re.escape(term) for term in filter_list]
     regex_pattern = '|'.join(escaped_terms)
     
+    # Simple WHERE clause - segment always provided
     query = f'''
     WITH exploded_values AS (
         SELECT 
@@ -287,6 +317,7 @@ def search_metadata(filter_list):
             column_name,
             trim(value) AS individual_value
         FROM distinct_values_metadata
+        WHERE login_user_segment = '{user_segment}'
         LATERAL VIEW explode(split(distinct_values, ',')) AS value
     ),
     filtered_values AS (
@@ -308,26 +339,45 @@ def search_metadata(filter_list):
     
     return spark.sql(query)
 
+# Get unique user segments for dropdown
+@st.cache_data
+def get_user_segments():
+    segments_df = spark.sql("SELECT DISTINCT login_user_segment FROM distinct_values_metadata ORDER BY login_user_segment")
+    return [row.login_user_segment for row in segments_df.collect()]
+
 # Streamlit UI
 st.title("🔍 Metadata Search Tool")
 st.write("Search for values across your data catalog - **Optimized for Performance**")
 
-# User input for filter terms
-filter_input = st.text_input(
-    "Enter search terms (comma-separated)", 
-    placeholder="e.g., covid, glp-1, diabetes"
-)
+# Create two columns for inputs
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    # User input for filter terms
+    filter_input = st.text_input(
+        "Enter search terms (comma-separated)", 
+        placeholder="e.g., covid, glp-1, diabetes"
+    )
+
+with col2:
+    # User segment dropdown (REQUIRED - no "All Segments" option)
+    segments = get_user_segments()
+    selected_segment = st.selectbox(
+        "User Segment",
+        segments,
+        index=0 if segments else None
+    )
 
 # Search button
-if st.button("🚀 Search", type="primary") and filter_input:
+if st.button("🚀 Search", type="primary") and filter_input and selected_segment:
     # Parse the input
     filter_list = [term.strip() for term in filter_input.split(',') if term.strip()]
     
-    st.info(f"Searching for: **{', '.join(filter_list)}**")
+    st.info(f"Searching for: **{', '.join(filter_list)}** in **{selected_segment}**")
     
     with st.spinner("Searching... (Single optimized query)"):
-        # Execute OPTIMIZED query - single table scan
-        result_df = search_metadata(filter_list)
+        # Execute OPTIMIZED query - single table scan with segment filter
+        result_df = search_metadata(filter_list, selected_segment)
         
         # Convert to Pandas for display
         result_pd = result_df.toPandas()
@@ -354,14 +404,16 @@ if st.button("🚀 Search", type="primary") and filter_input:
         st.download_button(
             label="📥 Download Results as CSV",
             data=csv,
-            file_name=f"search_results_{len(filter_list)}_terms.csv",
+            file_name=f"search_results_{selected_segment}_{len(filter_list)}_terms.csv",
             mime="text/csv"
         )
         
         # Performance info
-        st.caption(f"⚡ Optimized search completed with single table scan for {len(filter_list)} filter term(s)")
+        st.caption(f"⚡ Query completed for segment '{selected_segment}' with {len(filter_list)} filter term(s)")
     else:
         st.warning("❌ No matches found. Try different search terms.")
+elif st.button("🚀 Search", type="primary"):
+    st.error("⚠️ Please enter search terms and select a user segment.")
 
 # Sidebar with info
 with st.sidebar:
@@ -369,6 +421,18 @@ with st.sidebar:
     st.write("This tool searches across all tables and columns in your data warehouse.")
     st.write("**Performance:** Single optimized SQL query with regex pattern matching")
     st.write("**Matching:** Case-insensitive partial matching")
+    st.write("**Filtering:** User segment is required and used in WHERE clause")
+    
+    st.divider()
+    
+    st.subheader("📋 Output Structure")
+    st.code('''
+table_name | column_name | matched_values
+table_A    | drug_name   | GLP-1 ASTHMA, covid-19-vaccines
+table_B    | product_name| COVID-19 Test Kit
+    ''')
+    
+    st.caption("Note: Results are filtered by selected user segment")
 """
 
 # COMMAND ----------

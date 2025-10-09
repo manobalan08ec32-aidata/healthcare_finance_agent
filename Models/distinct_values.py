@@ -74,16 +74,52 @@ schema = StructType([
     StructField("distinct_values", StringType(), True)
 ])
 
-# Create DataFrame
+# Create DataFrame from collected data
 distinct_values_df = spark.createDataFrame(distinct_values_data, schema=schema)
 
-# Save to a table
+# COMMAND ----------
+# Save to PERMANENT table in your database/schema
+
+# Option 1: Save to default database (overwrite mode)
 distinct_values_df.write.mode("overwrite").saveAsTable("distinct_values_metadata")
+
+# Option 2: Save to specific database/schema (recommended for production)
+# distinct_values_df.write.mode("overwrite").saveAsTable("your_database.distinct_values_metadata")
+
+# Option 3: Save with partitioning for better query performance (if you have many segments)
+# distinct_values_df.write.mode("overwrite") \
+#     .partitionBy("login_user_segment") \
+#     .saveAsTable("distinct_values_metadata")
+
+# Option 4: Append mode (if running incrementally)
+# distinct_values_df.write.mode("append").saveAsTable("distinct_values_metadata")
 
 print("=" * 80)
 print("✓ BACKEND JOB COMPLETE: distinct_values_metadata table created")
+print(f"✓ Total rows inserted: {distinct_values_df.count()}")
 print("=" * 80)
+
+# Display sample data
 display(distinct_values_df)
+
+# COMMAND ----------
+# Verify the permanent table was created and check row count
+
+row_count = spark.sql("SELECT COUNT(*) as total FROM distinct_values_metadata").collect()[0]['total']
+print(f"✓ Verification: distinct_values_metadata table has {row_count} rows")
+
+# Show sample records
+print("\nSample records from permanent table:")
+spark.sql("SELECT * FROM distinct_values_metadata LIMIT 5").show(truncate=False)
+
+# COMMAND ----------
+# Optional: Create indexes or optimize table for better query performance
+
+# Optimize table (compacts small files)
+spark.sql("OPTIMIZE distinct_values_metadata")
+
+# Collect statistics for better query planning
+spark.sql("ANALYZE TABLE distinct_values_metadata COMPUTE STATISTICS")
 
 # COMMAND ----------
 

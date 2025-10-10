@@ -54,3 +54,20 @@ The following fields comprise the GL string used for financial accounting and re
 - **fqa_prod_cd**: 3-digit product code component of the GL string. Use for product-level financial tracking in GL.
 
 - **fqa_sub_acnt_cd**: 3-digit sub-account code component of the GL string. Use for detailed sub-account level GL analysis.
+
+
+Embedding Descriptions by Column Group
+Group 1: Invoice Identifiers and Dates
+Invoice identification and timing fields include inv_nbr which is the unique invoice number identifier for each billing record, invoice_date representing when the invoice was generated and issued to the client, and invoice_gl_date which is the general ledger posting date used for financial period reporting. These fields are essential for invoice lookup, tracking invoice timing, aging analysis, and reconciling invoices with the general ledger system.
+Group 2: Entity and Account Identifiers
+Entity and account hierarchy fields track organizational relationships. The carrier_id represents the insurance carrier identifier and is distinct from the client. The client_id field contains the actual client identifier with examples like MDOVA and 58290, paired with client_description providing detailed client names such as MDOVA OVATIONS MAPD/MA ONLY/RDS and PDIND PDP INDIVIDUAL. The account_id groups clients into accounts, while group_id provides higher-level grouping for account aggregation and hierarchical reporting. Use these fields for client analysis, account-level summaries, and understanding the carrier-client-account relationships.
+Group 3: Financial Metrics
+The billed_amount field represents the revenue amount or billing amount charged to clients. This is the primary financial metric for revenue analysis, billing summaries, financial calculations, total revenue reporting, and understanding amounts invoiced to clients. Use billed_amount for all monetary calculations, revenue trends, and financial performance analysis.
+Group 4: Product Information
+Product identification fields include oracle_prod_code containing Oracle system product codes like PROD35 and PROD57, paired with orcl_prod_desc providing detailed product descriptions such as E-Prescribing Admin Fee, PMPM-VCS, and Prior Auth Specialty. These fields enable product-level analysis, product mix reporting, revenue by product calculations, and understanding which services or products are being billed to clients.
+Group 5: Revenue and Activity Classification
+Revenue and activity categorization fields include rev_src_type which classifies revenue sources as claim fee, claim cost, or admin fee for understanding revenue composition and type-based analysis. The actvty_category_cd field contains activity category codes like 02EPRES and 01PCMS for operational classification and activity-based segmentation. Use these fields to analyze revenue by source type, understand billing composition, and perform activity-based reporting and analysis.
+Group 6: Billing Entity Information
+Billing entity fields identify who is performing the billing with blng_entty_cd containing billing entity codes such as ORXUHC0036XX and ORXUHC0005XX, and blng_entty_name providing entity names like UHC INSURANCE COMPANY and UHCACIS FULLY INSURED. These fields support entity-level reporting, understanding which legal entity is billing the client, entity performance analysis, and multi-entity billing operations.
+Group 7: General Ledger String Components
+General ledger string components are 3-digit codes used for financial accounting and reporting in the GL system. Fields include fqa_cmpny_cd for company segmentation, fqa_geo_cd for geographic financial tracking, fqa_aflt_cd for affiliate-level accounting, fqa_lob_cd for line of business P&L reporting, fqa_acnt_cd for account mapping, fqa_dept_cd for departmental cost allocation, fqa_prod_cd for product-level financial tracking, and fqa_sub_acnt_cd for sub-account detail. These GL string components enable financial reporting, cost allocation, departmental budgeting, geographic P&L analysis, and reconciliation between billing data and the general ledger system.

@@ -71,3 +71,267 @@ Group 6: Billing Entity Information
 Billing entity fields identify who is performing the billing with blng_entty_cd containing billing entity codes such as ORXUHC0036XX and ORXUHC0005XX, and blng_entty_name providing entity names like UHC INSURANCE COMPANY and UHCACIS FULLY INSURED. These fields support entity-level reporting, understanding which legal entity is billing the client, entity performance analysis, and multi-entity billing operations.
 Group 7: General Ledger String Components
 General ledger string components are 3-digit codes used for financial accounting and reporting in the GL system. Fields include fqa_cmpny_cd for company segmentation, fqa_geo_cd for geographic financial tracking, fqa_aflt_cd for affiliate-level accounting, fqa_lob_cd for line of business P&L reporting, fqa_acnt_cd for account mapping, fqa_dept_cd for departmental cost allocation, fqa_prod_cd for product-level financial tracking, and fqa_sub_acnt_cd for sub-account detail. These GL string components enable financial reporting, cost allocation, departmental budgeting, geographic P&L analysis, and reconciliation between billing data and the general ledger system.
+
+
+Perfect! Here are both functions with SQL queries for you to test and compare performance:
+
+Function 1: Complex Scoring (Most Accurate)
+pythondef search_with_complex_scoring(filter_list, user_segment, spark_session=None):
+    """
+    Complex relevance scoring - most accurate results
+    
+    Scoring:
+        - 100: Exact match
+        - 50: Contains whole phrase  
+        - 30: Contains first part
+        - 10: Contains second part
+    
+    Example:
+        search_with_complex_scoring(['covid vaccine', 'diabetes'], 'PBM Network')
+    """
+    
+    if spark_session is None:
+        spark_session = spark
+    
+    all_patterns = []
+    score_cases = []
+    
+    for term in filter_list:
+        term_clean = term.strip().lower()
+        escaped_exact = term_clean.replace("'", "\\'")
+        
+        # Whole phrase pattern
+        whole_phrase = term_clean.replace(' ', '.*')
+        escaped_whole = whole_phrase.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+        all_patterns.append(escaped_whole)
+        
+        # Score 1: Exact match (100 points)
+        score_cases.append(f"CASE WHEN lower(x) = '{escaped_exact}' THEN 100 ELSE 0 END")
+        
+        # Score 2: Whole phrase (50 points)
+        score_cases.append(f"CASE WHEN lower(x) RLIKE '(?i)({escaped_whole})' THEN 50 ELSE 0 END")
+        
+        # If multi-word, add scoring for parts
+        if ' ' in term_clean:
+            first_space_idx = term_clean.index(' ')
+            first_part = term_clean[:first_space_idx]
+            second_part = term_clean[first_space_idx+1:].replace(' ', '.*')
+            
+            escaped_first = first_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            escaped_second = second_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            
+            all_patterns.append(escaped_first)
+            all_patterns.append(escaped_second)
+            
+            # Score 3: First part (30 points)
+            score_cases.append(f"CASE WHEN lower(x) RLIKE '(?i)({escaped_first})' THEN 30 ELSE 0 END")
+            
+            # Score 4: Second part (10 points)
+            score_cases.append(f"CASE WHEN lower(x) RLIKE '(?i)({escaped_second})' THEN 10 ELSE 0 END")
+    
+    # Remove duplicates
+    unique_patterns = list(set(all_patterns))
+    regex_pattern = '|'.join(unique_patterns)
+    score_calculation = ' + '.join(score_cases)
+    
+    query = f"""
+    WITH matched_data AS (
+        SELECT 
+            table_name,
+            column_name,
+            trim(exploded_value) AS individual_value,
+            ({score_calculation}) AS value_score
+        FROM distinct_values_metadata
+        LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+        WHERE login_user_segment = '{user_segment}'
+          AND lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+    )
+    SELECT 
+        table_name,
+        column_name,
+        concat_ws(', ', collect_list(individual_value)) AS matched_values,
+        SUM(value_score) AS relevance_score
+    FROM matched_data
+    GROUP BY table_name, column_name
+    ORDER BY relevance_score DESC, table_name, column_name
+    """
+    
+    return spark_session.sql(query)
+
+Function 2: Length-Based Scoring (Simpler & Faster)
+pythondef search_with_length_scoring(filter_list, user_segment, spark_session=None):
+    """
+    Length-based scoring - simpler and faster
+    
+    Logic: Longer matched text = more relevant
+    
+    Example:
+        search_with_length_scoring(['covid vaccine', 'diabetes'], 'PBM Network')
+    """
+    
+    if spark_session is None:
+        spark_session = spark
+    
+    all_patterns = []
+    
+    for term in filter_list:
+        term_clean = term.strip().lower()
+        
+        # Whole phrase pattern
+        whole_phrase = term_clean.replace(' ', '.*')
+        escaped_whole = whole_phrase.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+        all_patterns.append(escaped_whole)
+        
+        # If multi-word, add parts
+        if ' ' in term_clean:
+            first_space_idx = term_clean.index(' ')
+            first_part = term_clean[:first_space_idx]
+            second_part = term_clean[first_space_idx+1:].replace(' ', '.*')
+            
+            escaped_first = first_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            escaped_second = second_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            
+            all_patterns.append(escaped_first)
+            all_patterns.append(escaped_second)
+    
+    # Remove duplicates
+    unique_patterns = list(set(all_patterns))
+    regex_pattern = '|'.join(unique_patterns)
+    
+    query = f"""
+    WITH matched_data AS (
+        SELECT 
+            table_name,
+            column_name,
+            trim(exploded_value) AS individual_value,
+            length(trim(exploded_value)) AS value_length
+        FROM distinct_values_metadata
+        LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+        WHERE login_user_segment = '{user_segment}'
+          AND lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+    )
+    SELECT 
+        table_name,
+        column_name,
+        concat_ws(', ', collect_list(individual_value)) AS matched_values,
+        AVG(value_length) AS relevance_score
+    FROM matched_data
+    GROUP BY table_name, column_name
+    ORDER BY relevance_score DESC, table_name, column_name
+    """
+    
+    return spark_session.sql(query)
+
+Standalone SQL Queries for Testing:
+SQL 1: Complex Scoring
+sql-- Test: Search for "E-Suppressing Admin Fee" with complex scoring
+WITH matched_data AS (
+    SELECT 
+        table_name,
+        column_name,
+        trim(exploded_value) AS individual_value,
+        (
+            CASE WHEN lower(trim(exploded_value)) = 'e-suppressing admin fee' THEN 100 ELSE 0 END +
+            CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)(e-suppressing.*admin.*fee)' THEN 50 ELSE 0 END +
+            CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)(e-suppressing)' THEN 30 ELSE 0 END +
+            CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)(admin.*fee)' THEN 10 ELSE 0 END
+        ) AS value_score
+    FROM distinct_values_metadata
+    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+    WHERE login_user_segment = 'PBM Network'
+      AND lower(trim(exploded_value)) RLIKE '(?i)(e-suppressing.*admin.*fee|e-suppressing|admin.*fee)'
+)
+SELECT 
+    table_name,
+    column_name,
+    concat_ws(', ', collect_list(individual_value)) AS matched_values,
+    SUM(value_score) AS relevance_score
+FROM matched_data
+GROUP BY table_name, column_name
+ORDER BY relevance_score DESC, table_name, column_name;
+SQL 2: Length-Based Scoring
+sql-- Test: Search for "E-Suppressing Admin Fee" with length scoring
+WITH matched_data AS (
+    SELECT 
+        table_name,
+        column_name,
+        trim(exploded_value) AS individual_value,
+        length(trim(exploded_value)) AS value_length
+    FROM distinct_values_metadata
+    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+    WHERE login_user_segment = 'PBM Network'
+      AND lower(trim(exploded_value)) RLIKE '(?i)(e-suppressing.*admin.*fee|e-suppressing|admin.*fee)'
+)
+SELECT 
+    table_name,
+    column_name,
+    concat_ws(', ', collect_list(individual_value)) AS matched_values,
+    AVG(value_length) AS relevance_score
+FROM matched_data
+GROUP BY table_name, column_name
+ORDER BY relevance_score DESC, table_name, column_name;
+
+Performance Testing Script:
+pythonimport time
+
+# Test data
+test_filters = ['E-Suppressing Admin Fee', 'covid vaccine', 'diabetes']
+test_segment = 'PBM Network'
+
+print("=" * 80)
+print("PERFORMANCE COMPARISON TEST")
+print("=" * 80)
+
+# Test 1: Complex Scoring
+print("\n1. Testing COMPLEX SCORING...")
+start_time = time.time()
+result_complex = search_with_complex_scoring(test_filters, test_segment)
+complex_count = result_complex.count()
+complex_time = time.time() - start_time
+
+print(f"   ✓ Results: {complex_count} rows")
+print(f"   ✓ Time: {complex_time:.3f} seconds")
+print("\n   Top 5 Results:")
+result_complex.select('table_name', 'column_name', 'relevance_score').show(5, truncate=False)
+
+# Test 2: Length-Based Scoring
+print("\n2. Testing LENGTH-BASED SCORING...")
+start_time = time.time()
+result_length = search_with_length_scoring(test_filters, test_segment)
+length_count = result_length.count()
+length_time = time.time() - start_time
+
+print(f"   ✓ Results: {length_count} rows")
+print(f"   ✓ Time: {length_time:.3f} seconds")
+print("\n   Top 5 Results:")
+result_length.select('table_name', 'column_name', 'relevance_score').show(5, truncate=False)
+
+# Comparison
+print("\n" + "=" * 80)
+print("COMPARISON SUMMARY")
+print("=" * 80)
+print(f"Complex Scoring: {complex_time:.3f}s")
+print(f"Length Scoring:  {length_time:.3f}s")
+print(f"Difference:      {abs(complex_time - length_time):.3f}s")
+
+if complex_time < length_time:
+    print(f"✓ Complex scoring is {((length_time/complex_time - 1) * 100):.1f}% faster")
+else:
+    print(f"✓ Length scoring is {((complex_time/length_time - 1) * 100):.1f}% faster")
+
+Quick Performance Test (SQL Only):
+sql-- Compare execution plans
+EXPLAIN EXTENDED
+WITH matched_data AS (
+    SELECT 
+        table_name,
+        column_name,
+        trim(exploded_value) AS individual_value,
+        (CASE WHEN lower(trim(exploded_value)) = 'test' THEN 100 ELSE 0 END) AS value_score
+    FROM distinct_values_metadata
+    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+    WHERE login_user_segment = 'PBM Network'
+)
+SELECT table_name, column_name, SUM(value_score) AS score
+FROM matched_data
+GROUP BY table_name, column_name;

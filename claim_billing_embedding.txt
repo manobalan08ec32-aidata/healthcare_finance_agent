@@ -1,0 +1,56 @@
+# f_claim_billing Table Column Descriptions
+
+## Invoice Identifiers and Dates
+- **inv_nbr**: Unique invoice number identifier used to distinguish individual invoices in the billing system. Primary key for invoice-level analysis.
+
+- **invoice_date**: Date when the invoice was generated and issued to the client. Use for invoice timing and aging analysis.
+
+- **invoice_gl_date**: General ledger posting date for the invoice. Use for financial period reporting and GL reconciliation. May differ from invoice_date.
+
+## Entity and Account Identifiers
+- **carrier_id**: Insurance carrier identifier in the billing system. Note: This is NOT the client; client_id represents the actual client.
+
+- **account_id**: Account identifier used for account-level grouping and analysis within the billing hierarchy.
+
+- **group_id**: Group identifier for organizing and aggregating accounts into logical groupings.
+
+- **client_id**: Client identifier representing the actual client being billed. Examples include MDOVA, 58290. This is distinct from carrier_id.
+
+- **client_description**: Descriptive name and details of the client. Examples include "MDOVA OVATIONS MAPD/MA ONLY/RDS" and "PDIND PDP INDIVIDUAL". Provides business context for client_id.
+
+## Financial Metrics
+- **billed_amount**: Revenue amount billed to the client. Also referred to as revenue amount. Use for all financial calculations, revenue analysis, and billing summaries.
+
+## Product Information
+- **oracle_prod_code**: Product code from the Oracle system. Examples include PROD35, PROD57. Use for product-level categorization and analysis.
+
+- **orcl_prod_desc**: Oracle product description providing detailed product names. Examples include "E-Prescribing Admin Fee", "PMPM-VCS", "Prior Auth. Specialty". Use for product identification and reporting.
+
+## Revenue and Activity Classification
+- **rev_src_type**: Revenue source type categorization. Values include "claim fee", "claim cost", and "admin fee". Use to segment revenue by type and understand revenue composition.
+
+- **actvty_category_cd**: Activity category code for operational classification. Examples include 02EPRES, 01PCMS. Use for activity-based analysis and categorization.
+
+## Billing Entity Information
+- **blng_entty_cd**: Billing entity code identifier. Examples include ORXUHC0036XX, ORXUHC0005XX. Use to identify which entity is performing the billing.
+
+- **blng_entty_name**: Billing entity name providing descriptive entity information. Examples include "UHC INSURANCE COMPANY", "UHCACIS FULLY INSURED". Use for entity-level reporting and analysis.
+
+## General Ledger (GL) String Components
+The following fields comprise the GL string used for financial accounting and reporting:
+
+- **fqa_cmpny_cd**: 3-digit company code component of the GL string. Use for company-level financial segmentation.
+
+- **fqa_geo_cd**: 3-digit geography code component of the GL string. Use for geographic financial segmentation and reporting.
+
+- **fqa_aflt_cd**: 3-digit affiliate code component of the GL string. Use for affiliate-level financial tracking.
+
+- **fqa_lob_cd**: 3-digit line of business code component of the GL string. Use for LOB financial segmentation and P&L reporting.
+
+- **fqa_acnt_cd**: 3-digit account code component of the GL string. Use for account-level GL mapping.
+
+- **fqa_dept_cd**: 3-digit department code component of the GL string. Use for departmental cost allocation and reporting.
+
+- **fqa_prod_cd**: 3-digit product code component of the GL string. Use for product-level financial tracking in GL.
+
+- **fqa_sub_acnt_cd**: 3-digit sub-account code component of the GL string. Use for detailed sub-account level GL analysis.

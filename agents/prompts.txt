@@ -1,14 +1,4 @@
-  # Format filter metadata results for the prompt
-        print('inside filter metadata', filter_metadata_results)
-        filter_metadata_text = ""
-        if filter_metadata_results:
-            filter_metadata_text = "\n**FILTER METADATA FOUND:**\n"
-            for result in filter_metadata_results:
-                filter_metadata_text += f"- {result}\n"
-        else:
-            filter_metadata_text = "\n**FILTER METADATA:** No specific filter values found in metadata.\n"
-
-        selection_prompt = f"""
+selection_prompt = f"""
             You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 
             CURRENT QUESTION: {user_question}
@@ -48,6 +38,18 @@
                     * Do NOT assume domain knowledge not in metadata
 
                 - Only mark as missing if NO reasonable Tier 1-3 mapping exists
+                
+                **NEW - EXPLICIT ATTRIBUTE DETECTION**:
+                - Scan the user's question for explicit attribute keywords(examples below):
+                    * "carrier" → carrier_name, carrier_id
+                    * "drug" → drug_name, drug_id
+                    * "pharmacy" → pharmacy_name, pharmacy_id
+                    * "therapy" → therapy_class_name, therapy_id
+                    * "client" → client_name, client_id
+                    * "manufacturer" → drug_manufctr_nm, manufacturer_name
+                - Flag as "explicit_attribute_mentioned = true/false"
+                - Store mapped column names for later filter disambiguation check
+                - This detection is case-insensitive and looks for these keywords anywhere in the question
 
             C. **KEYWORD & SUITABILITY ANALYSIS**:
             - **KEYWORD MATCHING**: Look for domain keywords that indicate preferences:
@@ -89,29 +91,42 @@
             - Ask clarification when: Same data available in multiple datasets with different contexts OR multiple columns in same table
             - Select multiple when: Different but compatible data needed from each dataset for complete analysis
 
-            E. **FILTER-BASED FROM FILTER VALUES FALLBACK CHECK**:
-            - **LAST RESORT ONLY**: Use filter metadata ONLY when traditional validation (A-D) cannot provide clear selection
-            - **TRIGGER CONDITIONS**: Multiple datasets pass all validations OR no clear winner from standard analysis
-            - **APPLICATION**: If sections A-D do not provide a clear selection and filter values are available, you MUST always ask a follow-up question listing all columns and their tables that contain the filter value, and request the user to specify which column context to use for filtering. This applies even if only one column matches. Do not select confidently based on filter values alone.
-            - In your follow-up, list the column names and their respective tables for the user to choose, e.g.:
-                "I found the filter value in multiple columns:
-                - Table: [table_name], Column: [column_name] (values include: ...)
-                - Table: [table_name], Column: [column_name] (values include: ...)
-                Which column should I use for filtering?"
-            - Note: Table names are not present in the extracted filter output, so use metadata to infer and present the correct table/column mapping in your follow-up.
-
-
             F. **FINAL DECISION LOGIC**:
-            - **STEP 1**: Check results from sections A through E
+            - **STEP 1**: Check results from sections A through D
             - **STEP 2**: MANDATORY Decision order:
             * **FIRST**: Apply suitability constraints - eliminate datasets with "not_useful_for" matches
             * **SECOND**: Validate complete coverage (metrics + attributes) on remaining datasets
             * **THIRD**: Single complete dataset → SELECT IT
+            
+            * **NEW - SMART FILTER DISAMBIGUATION CHECK**:
+                **STEP 3A**: Check if filter values exist in multiple columns
+                **STEP 3B**: Determine if follow-up is needed using this SIMPLIFIED logic:
+                
+                1. **Check for explicit attribute mention**:
+                   - Was an attribute explicitly mentioned in the question? (from Section B detection)
+                   - Examples: "Carrier", "drug", "pharmacy", "therapy", "client", "manufacturer", "plan"
+                
+                2. **Count matching columns in selected dataset**:
+                   - From filter metadata, identify all columns containing the filter value
+                   - Filter to only columns that exist in the selected dataset's attributes
+                   - Store as: matching_columns_count
+                
+                3. **SIMPLE DECISION TREE**:
+                   - IF explicit_attribute_mentioned = true → NO FOLLOW-UP (trust user's specification)
+                   - IF explicit_attribute_mentioned = false:
+                       * IF matching_columns_count = 1 → NO FOLLOW-UP (obvious choice)
+                       * IF matching_columns_count > 1 → RETURN "needs_disambiguation"
+                
+                **Examples**:
+                - "Carrier MPDOVA billed amount" + MPDOVA in [carrier_name, carrier_id, plan_name] → ✓ NO follow-up (user said "Carrier")
+                - "MPDOVA billed amount" + MPDOVA in [carrier_name] only → ✓ NO follow-up (only 1 match)
+                - "covid vaccine billed amount" + covid vaccine in [drug_name, pharmacy_name, therapy_class_name] → ❌ ASK which column (no explicit attribute, 3 matches)
+
             * **FOURTH**: No single complete → SELECT MULTIPLE if complementary
             * **FIFTH**: Multiple complete → Use traditional tie-breakers (keywords, high_level_table)
-            * **SIXTH**: Still tied → Apply filter-based selection as final tie-breaker
+            * **SIXTH**: Still tied → RETURN "needs_disambiguation" and ask user to choose
             * **LAST**: No coverage OR unresolvable ambiguity → Report as missing items or request clarification
-
+            
             **HIGH LEVEL TABLE PRIORITY RULE** (ONLY APPLIES DURING TIES):
             - **CRITICAL**: High-level table priority is ONLY used as a tie-breaker when multiple datasets have ALL required metrics AND attributes
             - **PRIMARY RULE**: ALWAYS validate that dataset has both required metrics AND required attributes FIRST
@@ -137,31 +152,34 @@
             - **STANDARD PATH**: Dataset passes suitability validation (not blocked by "not_useful_for" field) AND all requested metrics/attributes have Tier 1-3 matches AND clear selection
             - Single dataset meets all requirements after suitability and coverage checks
             - Complementary datasets identified for complete coverage after all validations
-            - **FILTER-FALLBACK PATH**: When multiple datasets pass all validations, filter metadata provides clear tie-breaker
 
             **MISSING_ITEMS** IF:
             - Required metrics/attributes don't have Tier 1-3 matches in any dataset
             - No suitable alternatives available after all validation steps
 
             **REQUEST_FOLLOW_UP** IF:
-            - Multiple datasets with conflicting contexts AND no clear preference from traditional validation
-            - All metrics available in multiple datasets AND no traditional tie-breaker available
-            - Filter values match more than one table (multi-table disambiguation): ALWAYS ask the user to specify which table to use for filtering.
-            - Filter values match more than one column in the same table (multi-column disambiguation): ALWAYS ask the user to specify which column to use for filtering.
-            - If filter values do not result in a single, perfect column match, you MUST ask the user for clarification, listing all possible columns and tables.
-            - Any unresolvable ambiguity exists after full validation including filter fallback: ALWAYS request user clarification rather than guessing.
+            - **PRIORITY 1 - DATASET AMBIGUITY**: 
+                * Multiple datasets with conflicting contexts AND no clear preference from traditional validation
+                * ALWAYS ask user to specify which table/dataset to use FIRST
+            
+            - **PRIORITY 2 - SMART FILTER COLUMN AMBIGUITY**: 
+                * User did NOT explicitly mention an attribute (e.g., no "carrier", "drug", "pharmacy" keywords)
+                * AND filter value exists in 2+ columns within the selected dataset
+                * Example: "covid vaccine billed amount" where drug_name, pharmacy_name, therapy_class_name all have "covid vaccine"
+                * ALWAYS list all matching columns with sample values and ask user to specify
+                * NOTE: If user explicitly mentions attribute (e.g., "Carrier MPDOVA"), NO follow-up needed regardless of multiple matches
 
             ==============================
             ASSESSMENT FORMAT (BRIEF)
             ==============================
 
-            **ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) C:✓(suitability passed) D:✓(complementary) E:✓(filter fallback available) F:✓(clear selection)
+            **ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) B-ATTR:✓(explicit attr OR single column) C:✓(suitability passed) D:✓(complementary) F:✓(clear selection)
             **DECISION**: PROCEED - [One sentence reasoning]
 
             Keep assessment ultra-brief:
             - Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
+            - **NEW B-ATTR**: ✓ means explicit attribute mentioned OR only 1 column match (no ambiguity), ❌ means no explicit attr AND multiple columns (disambiguation needed)
             - **CRITICAL for C (suitability)**: ✓ means no "not_useful_for" conflicts, ❌ means blocked by suitability constraints
-            - **CRITICAL for E (filter fallback)**: ✓ means filter metadata available for tie-breaking, ❌ means no filter guidance available
             - Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
             - Decision reasoning maximum 15 words
             - No detailed explanations or bullet points in assessment
@@ -171,45 +189,21 @@
             RESPONSE FORMAT
             ==============================
 
-            IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
+            IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY valid JSON.
 
-            Brief assessment, then JSON with status: "phi_found", "success", "missing_items", or "needs_disambiguation"
-            Include required fields: final_actual_tables, functional_names, requires_clarification, selection_reasoning (2-3 lines max)
-            Add status-specific fields: user_message (phi_found/missing_items), high_level_table_selected (success), clarification_question (needs_disambiguation)
-            Add selected_filter_context: "only mention one column name strictly - col name - [actual_column_name] , sample values [sample value]" if column the selected from filter context metadata
-
-               CRITICAL RULES:
-                - Use TIER-based validation: Direct matches > Healthcare mapping > Math operations > Skip filter values
-                - NEVER override missing attributes with high_level_table priority
-                - Validate complete coverage FIRST, then apply tie-breakers
-                - Use ONLY provided metadata, no external assumptions
-                - When unsure, ASK CLARIFICATION rather than guess
+            RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST NOT start with ```json and end with ```
+            
+            {{
+                "status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
+                "final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
+                "functional_names": ["functional_name"] if status = success else [],
+                "tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
+                "requires_clarification": true if status = needs_disambiguation else false,
+                "selection_reasoning": "2-3 lines max explanation",
+                "high_level_table_selected": true/false if status = success else null,
+                "user_message": "message to user" if status = phi_found or missing_items else null,
+                "clarification_question": "question to user" if status = needs_disambiguation else null,
+                "selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
+            }}
                 """
-    CURRENT QUESTION: What is the covid vaccine billed amount for September 2025
-            EXTRACTED COLUMNS WITH FILTER VALUES: ['covid vaccine']
 
-**FILTER METADATA FOUND:**
-- Column: drug_name
-  - drug_name: PFIZER-BIONTECH COVID-19 VACCINE/ADULT RTU, SPIKEVAX COVID-19 VACCINE/2025-26, PFIZER-BIONTECH COVID-19 VACCINE/BIVALENT/5-11Y, EVERLYWELL COVID-19 TEST HOME COLLECTION KIT DTC, PFIZER-BIONTECH COVID-19 VACCINE/BIVALENT/BA.4/BA.5
-- Column: pharmacy_name
-  - pharmacy_name: KP ALAMEDA VACCINE, KP BELLFLOWER VACCINE, KP LOS ANGELES VACCINES, KP WEST LOS ANGELES VACCINE, KP RIVERSIDE VACCINE
-- Column: therapy_class_name
-  - therapy_class_name: COVID-19 and Flu Testing, COVID-19 Vaccines, Vaccines, COVID-19 Testing
-- Column: orcl_prod_desc
-  - orcl_prod_desc: Covid Antiviral Fee, Covid Test Kit Admin Fee
-- Column: DRUG_MANUFCTR_NM
-  - DRUG_MANUFCTR_NM: COVIDIEN M
-
-Raw LLM response: **ASSESSMENT**: A:✓(no PHI) B:✓(billed amount found) C:✓(claim billing suitable) D:✓(single complete dataset) E:✓(filter available) F:✓(clear selection)
-**DECISION**: PROCEED - claim_billing has billed_amount metric and covid vaccine filter context
-
-<json>
-{
-  "status": "success",
-  "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.claim_billing"],
-  "functional_names": ["claim_billing"],
-  "requires_clarification": false,
-  "selection_reasoning": "The claim_billing dataset contains the required 'billed_amount' metric and supports monthly time granularity for September 2025. It has drug_name attribute for COVID vaccine filtering and is explicitly useful for claim-level billing analysis.",
-  "high_level_table_selected": false,
-  "selected_filter_context": "drug_name - PFIZER-BIONTECH COVID-19 VACCINE/ADULT RTU, SPIKEVAX COVID-19 VACCINE/2025-26"
-}

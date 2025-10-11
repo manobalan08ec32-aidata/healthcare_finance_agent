@@ -1,45 +1,187 @@
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+{
+  "prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
+    "**submit_date**: Exact claim submission date. Use for daily trending and time-window filters. format is YYYY-MM-DD.",
+    "**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.",
+    "**month**: Calendar month of submission; it has numerical value (1-12).",
+    "**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4",
+    "**client_id**: used for client analysis.This contain unique 5-6 digit client id.Sample values [MDOVA,PDIND,MDCSP,57939]",
+    "**unadjusted_script_count**: Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script."
+  ],
+  
+  "prd_optumrx_orxfdmprdsa.rag.claim_billing": [
+    "**invoice_date**: (YYYY-MM-DD) format. Date when the invoice was generated and issued to the client.",
+    "**client_id**: This contain unique 5-6 digit client code.Sample values [ABCD,WXYZ,57939]",
+    "**inv_nbr**: The invoice number is a unique identifier used to distinguish individual invoices within the billing system."
+  ],
+  
+  "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
+    "**ledger**: Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.",
+    "**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Revenues,Unadjusted Scripts,etc]. Always include GROUP BY metric_type when comparing actuals vs forecast.",
+    "**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.",
+    "**year**: Four-digit year of the transaction.",
+    "**month**: Numeric month of the transaction (1-12)."
+  ]
+}
 
-"- **ledger**:Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value.If no cycle is specified, prompt the user to clarify which cycle (options: 8+4, 5+7, 2+10) [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
+"""
+Single JSON file loader with caching for optimal performance.
+"""
 
-- **metric_type**:Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Research,Generic Scripts,Total Membership,Reported Revenues];Please refer the Mapping synonym Volume or total scripts ->Unadjusted Scripts , expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
+import json
+from pathlib import Path
+from typing import Dict, List
+from functools import lru_cache
 
-- **amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
+# Path to single JSON file
+MANDATORY_EMBEDDINGS_FILE = Path(__file__).parent / "mandatory_embeddings.json"
 
-***The below metrics are calculated formulas  derived using metric_type column and strictly use the below formulas rather than asking follow up questions if user question contains any of the below metrics in the question.***
-  - **Cost %**: calculated as COGS Post Reclass /  Revenues.
-  - **Gross Margin**: calculated as Revenues - COGS Post Reclass.
-  - **Gross Margin %**:calculated as  Gross Margin /  Revenues
-  - **Operating Expenses %**: calculated as calculated as SG&A Post Reclass /  Revenues.
-  - **Operating Cost %**: calculated as (COGS Post Reclass + SG&A Post Reclass) /  Revenues.
-  - **IOI or Internal Operating Income %**: calculated as IOI / Revenues.
-  - **Revenue per Script or rate**:calculated as  Revenues / Unadjusted Scripts . Use this by default for Volume or Revenue per script calculation.
-  - **rate variance **: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume, 
-  -** volume variance = (prior Month volume - Current Month Volume) x Current Rate.Rate is reveneue_amt divided by unadjusted_script_count. Volume is unajusted_script_count. current month and previous month should be extracted from user question.
-  - **mix variance **: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas
-  - **Cost per Script (Unadj)**:  COGS Post Reclass / Unadjusted Scripts.
-  - **Margin per Script (Unadj)**: (Revenues − COGS Post Reclass) / Unadjusted Scripts
-  - **Op Exp per Script (Unadj)**: SG&A Post Reclass / Unadjusted Scripts.
-  - **Op Cost per Script (Unadj)**: (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
-  - **IOI per Script (Unadj)**: IOI / Unadjusted Scripts.
-  - **Revenue per Script (Adj)**:  Revenues / Adjusted Scripts.
-  - **Cost per Script (Adj)**:  COGS Post Reclass / Adjusted Scripts.
-  - **Margin per Script (Adj)**:  calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
-  - **Op Exp per Script (Adj)**:  SG&A Post Reclass / Adjusted Scripts.
-  - **Op Cost per Script (Adj)**: (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
-  - **IOI per Script (Adj)**: IOI / Adjusted Scripts.
-  - **Utilization PMPM (Unadjusted)**:  Unadjusted Scripts / Total Membership.
-  - **Utilization PMPM (Adjusted)**: Adjusted Scripts / Total Membership.
-  - **SP Capture %**: Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
-  - **Generic Penetration %**: calculated as Generic Scripts / Unadjusted Scripts
-**calculated formulas ends here list ends here **"
-- **line_of_business**: Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
-"- **product_category**: High-level category of products or services.HDP->""Home Delivery"", Mail->""HDP"" and SP->Specialty [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH]
-- **product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
-- **product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products] "
-"- **transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis for product category PBM/Home Delivery/Specialty.
-- **year**: Four-digit year of the transaction.
-- **month**: Numeric month of the transaction (1-12).
-- **quarter**: Quarter of the transaction (Q1-Q4)."
-"- **ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]
-- **ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [""MDOVA OVATIONS MAPD/MA ONLY/RDS"",""PDIND PDP INDIVIDUAL""]"
+
+@lru_cache(maxsize=1)
+def _load_mandatory_embeddings_raw() -> Dict[str, List[str]]:
+    """
+    Load all mandatory embeddings from JSON file.
+    Cached permanently - only loads once per process.
+    """
+    try:
+        with open(MANDATORY_EMBEDDINGS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        total_embeddings = sum(len(v) for v in data.values())
+        print(f"✅ Loaded {total_embeddings} mandatory embeddings for {len(data)} tables from JSON")
+        
+        return data
+        
+    except FileNotFoundError:
+        print(f"⚠️  Mandatory embeddings file not found: {MANDATORY_EMBEDDINGS_FILE}")
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON in mandatory embeddings file: {e}")
+        return {}
+    except Exception as e:
+        print(f"❌ Error loading mandatory embeddings: {e}")
+        return {}
+
+
+def get_mandatory_embeddings_for_tables(tables_list: List[str]) -> Dict[str, List[str]]:
+    """
+    Get mandatory embeddings for specified tables.
+    Ultra-fast after first call (cached in memory).
+    """
+    # Load all embeddings (cached)
+    all_embeddings = _load_mandatory_embeddings_raw()
+    
+    # Filter to requested tables
+    result = {}
+    for table in tables_list:
+        if table in all_embeddings:
+            result[table] = all_embeddings[table]
+        else:
+            print(f"⚠️  No mandatory embeddings defined for table: {table}")
+    
+    return result
+
+
+def clear_cache():
+    """Clear cache to force reload (useful during development)"""
+    _load_mandatory_embeddings_raw.cache_clear()
+    print("✅ Mandatory embeddings cache cleared - will reload on next access")
+
+
+def get_cache_info():
+    """Get cache statistics"""
+    return _load_mandatory_embeddings_raw.cache_info()
+
+
+def list_available_tables() -> List[str]:
+    """Get list of tables that have mandatory embeddings defined"""
+    all_embeddings = _load_mandatory_embeddings_raw()
+    return list(all_embeddings.keys())
+
+
+from config.mandatory_embeddings_loader import get_mandatory_embeddings_for_tables
+
+async def get_metadata(self, state: Dict, selected_dataset: list) -> Dict:
+    """Extract metadata with mandatory embeddings from single JSON file"""
+    try:
+        current_question = state.get('rewritten_question', state.get('current_question', ''))
+        embedding_idx = "prd_optumrx_orxfdmprdsa.rag.column_embeddings_pbm_idx"
+        
+        tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
+        print(f'📊 Tables selected: {tables_list}')
+        
+        # ===== STEP 1: Load Mandatory Embeddings (Cached - Fast!) =====
+        mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list)
+        mandatory_count = sum(len(v) for v in mandatory_contexts.values())
+        
+        # ===== STEP 2: Get Vector Search Results =====
+        vector_results = await self.db_client.sp_vector_search_columns(
+            query_text=current_question,
+            tables_list=tables_list,
+            num_results_per_table=15,
+            index_name=embedding_idx
+        )
+        
+        # ===== STEP 3: Group Vector Results =====
+        vector_contexts_by_table = {}
+        for result in vector_results:
+            table = result['table_name']
+            if table not in vector_contexts_by_table:
+                vector_contexts_by_table[table] = []
+            vector_contexts_by_table[table].append(result['llm_context'])
+        
+        # ===== STEP 4: Merge & Deduplicate =====
+        merged_contexts_by_table = {}
+        
+        for table in tables_list:
+            seen_columns = set()
+            merged_contexts_by_table[table] = []
+            
+            # Add mandatory first
+            if table in mandatory_contexts:
+                for ctx in mandatory_contexts[table]:
+                    col_name = ctx.split('**')[1].split(':')[0].strip() if ctx.startswith('**') and ':' in ctx else None
+                    if col_name:
+                        seen_columns.add(col_name)
+                    merged_contexts_by_table[table].append(ctx)
+            
+            # Add vector results (skip duplicates)
+            if table in vector_contexts_by_table:
+                for ctx in vector_contexts_by_table[table]:
+                    col_name = ctx.split('**')[1].split(':')[0].strip() if ctx.startswith('**') and ':' in ctx else None
+                    if col_name and col_name not in seen_columns:
+                        merged_contexts_by_table[table].append(ctx)
+                        seen_columns.add(col_name)
+        
+        # ===== STEP 5: Build Metadata =====
+        metadata = ""
+        for table in tables_list:
+            if table in merged_contexts_by_table and merged_contexts_by_table[table]:
+                metadata += f"\n## Table: {table}\n\n"
+                for ctx in merged_contexts_by_table[table]:
+                    metadata += ctx + "\n"
+                metadata += "\n"
+        
+        total_columns = sum(len(v) for v in merged_contexts_by_table.values())
+        print(f'✅ Metadata: {total_columns} columns ({mandatory_count} mandatory + {len(vector_results)} vector)')
+        
+        return {
+            'status': 'success',
+            'metadata': metadata,
+            'total_tables': len(tables_list),
+            'mandatory_columns': mandatory_count,
+            'vector_columns': len(vector_results),
+            'total_columns': total_columns,
+            'error': False
+        }
+        
+    except Exception as e:
+        print(f"❌ Metadata extraction failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            'status': 'error',
+            'metadata': '',
+            'error': True,
+            'error_message': f"Metadata extraction failed: {str(e)}"
+        }

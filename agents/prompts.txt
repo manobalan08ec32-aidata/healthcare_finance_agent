@@ -207,3 +207,215 @@ selection_prompt = f"""
             }}
                 """
 
+
+async def _validate_fixed_sql(self, fixed_sql: str, original_sql: str, error_msg: str) -> Dict[str, Any]:
+    """
+    Guardrail validation to prevent embarrassing SQL outputs
+    Returns dict with success=False if guardrails are violated
+    """
+    forbidden_patterns = [
+        'show tables',
+        'show databases',
+        'describe table',
+        'describe ',
+        'information_schema.tables',
+        'information_schema.columns',
+        'show schemas',
+        'list tables'
+    ]
+    
+    sql_lower = fixed_sql.lower().strip()
+    
+    # Check for forbidden patterns
+    for pattern in forbidden_patterns:
+        if pattern in sql_lower:
+            print(f"🚫 GUARDRAIL VIOLATION: Blocked '{pattern}' in LLM response")
+            print(f"❌ Original error was: {error_msg}")
+            
+            return {
+                'success': False,
+                'error': f"Guardrail triggered: LLM attempted to generate '{pattern}' instead of fixing the query. This is not allowed.",
+                'violated_pattern': pattern,
+                'original_sql': original_sql
+            }
+    
+    # Additional check: if it's a table not found error, ensure the fixed SQL 
+    # still references a table (not just a utility query)
+    table_not_found_indicators = ['table not found', 'table does not exist', 'no such table', 'invalid table name']
+    if any(indicator in error_msg.lower() for indicator in table_not_found_indicators):
+        # Check if the fixed SQL is suspiciously short or doesn't contain FROM
+        if len(sql_lower) < 20 or 'from' not in sql_lower:
+            print(f"🚫 GUARDRAIL VIOLATION: Fixed SQL too short or missing FROM clause for table-not-found error")
+            return {
+                'success': False,
+                'error': "Guardrail triggered: Invalid fix for table-not-found error. Fixed query must contain valid FROM clause.",
+                'original_sql': original_sql
+            }
+    
+    return {'success': True, 'fixed_sql': fixed_sql}
+
+
+async def _fix_sql_with_llm_async(self, failed_sql: str, error_msg: str, errors_history: List[str], context: Dict) -> Dict[str, Any]:
+    """Use LLM to fix SQL based on error with enhanced prompting and retry logic async"""
+
+    history_text = "\n".join(errors_history) if errors_history else "No previous errors"
+    current_question = context.get('current_question', '')
+    dataset_metadata = context.get('dataset_metadata', '')
+
+    fix_prompt = f"""
+    You are an expert Databricks SQL developer. A SQL query has **FAILED** and needs to be **FIXED or REWRITTEN**.
+
+    ==============================
+    CONTEXT
+    ==============================
+    - ORIGINAL USER QUESTION: "{current_question}"
+    - TABLE METADATA: {dataset_metadata}
+
+    ==============================
+    FAILURE DETAILS
+    ==============================
+    - FAILED SQL QUERY:
+    ```sql
+    {failed_sql}
+    ```
+    - ERROR MESSAGE: {error_msg}
+    - PREVIOUS RETRY ERRORS: {history_text}
+
+    ==============================
+    CRITICAL ERROR INTERPRETATION RULES (FOLLOW EXACTLY)
+    ==============================
+    1. TIMEOUT / TRANSIENT EXECUTION ERRORS
+        - If the ERROR MESSAGE indicates a timeout or transient execution condition (contains ANY of these case-insensitive substrings: 
+           "timeout", "timed out", "cancelled due to timeout", "query exceeded", "network timeout", "request timed out", "socket timeout"),
+           then DO NOT modify the SQL. Return the ORIGINAL FAILED SQL verbatim as the fixed version. (Root cause is environmental, not syntax.)
+        - Still wrap it in <sql> tags exactly as required.
+
+    2. COLUMN NOT FOUND / INVALID IDENTIFIER
+        - If missing/invalid column error.
+        - FIRST: If error text itself lists / hints alternative or available columns (patterns like "Did you mean", "Available columns", "Similar: colA, colB"), pick the best match to the ORIGINAL USER QUESTION intent from those suggestions (these override metadata if conflict).
+        - ELSE: Select a replacement from TABLE METADATA (exact / case-insensitive / close semantic match). Never reuse the invalid name. Do not invent new columns.
+        - Change only what is required; keep all other logic intact.
+
+    3. TABLE NOT FOUND / TABLE DOES NOT EXIST
+        ⚠️ CRITICAL PROHIBITION:
+        - If the ERROR MESSAGE indicates a table does not exist (contains ANY of these case-insensitive substrings: "table not found", "table does not exist", "no such table", "invalid table name"):
+        
+        🚫 ABSOLUTELY FORBIDDEN - DO NOT GENERATE:
+            - SHOW TABLES
+            - SHOW DATABASES  
+            - DESCRIBE TABLE
+            - Information schema queries
+            - Any query that lists or discovers tables
+        
+        ✅ ONLY ALLOWED OPTIONS:
+            a) If TABLE METADATA contains a similarly named valid table → Replace with that exact table name
+            b) If no valid alternative exists → Return ORIGINAL FAILED SQL unchanged with a SQL comment explaining why
+        
+        - The query MUST still attempt to answer the ORIGINAL USER QUESTION using only tables in TABLE METADATA
+
+    4. OTHER ERROR TYPES (syntax, mismatched types, aggregation issues, grouping issues, function misuse, alias conflicts, etc.)
+        - Rewrite or minimally adjust the SQL to resolve the issue while preserving the analytical intent of the ORIGINAL USER QUESTION.
+        - Ensure any columns used are present in TABLE METADATA.
+        - If a derived metric is implied, derive it transparently in SELECT with proper component columns.
+
+    5. NEVER:
+        - Never fabricate table or column names not present in metadata.
+        - Never remove necessary GROUP BY columns required for non-aggregated selected columns.
+        - Never switch to a different table unless clearly required to satisfy a missing valid column.
+        - Never generate SHOW TABLES, DESCRIBE, or any schema discovery query.
+
+    6. ALWAYS:
+        - Preserve filters, joins, and calculation intent unless they reference invalid columns.
+        - Use consistent casing and UPPER() comparisons for string equality.
+        - Include replaced column(s) in SELECT list if they are used in filters or aggregations.
+
+    ==============================
+    EXAMPLE: TABLE NOT FOUND ERROR
+    ==============================
+    ❌ WRONG - THIS WILL BE REJECTED:
+    <sql>
+    SHOW TABLES;
+    </sql>
+
+    ✅ CORRECT - Return original with comment:
+    <sql>
+    -- Table 'sales_2024' not found in metadata. Returning original query.
+    -- Available tables should be verified in TABLE METADATA.
+    SELECT * FROM sales_2024 WHERE year = 2024;
+    </sql>
+
+    ✅ ALSO CORRECT - Use alternative from metadata:
+    <sql>
+    -- Replaced 'sales_2024' with 'sales_data' from available tables
+    SELECT * FROM sales_data WHERE year = 2024;
+    </sql>
+
+    ==============================
+    DECISION PATH (FOLLOW IN ORDER)
+    ==============================
+    IF timeout-related → return original query unchanged
+    ELSE IF column-not-found → replace invalid column with valid one from metadata  
+    ELSE IF table-not-found → use alternative from metadata OR return original with comment
+    ELSE → fix syntax/logic while preserving intent
+
+    ==============================
+    FINAL VALIDATION BEFORE OUTPUT
+    ==============================
+    ✓ Does SQL contain SHOW, DESCRIBE, or INFORMATION_SCHEMA? → If YES, REWRITE
+    ✓ Does SQL use only tables from TABLE METADATA? → If NO, return original
+    ✓ Does SQL answer the ORIGINAL USER QUESTION? → If NO, revise
+    ✓ Is it wrapped in <sql></sql> tags? → If NO, add them
+
+    ==============================
+    RESPONSE FORMAT
+    ==============================
+    Return ONLY the fixed SQL query wrapped in XML tags. No other text, explanations, or formatting.
+
+    <sql>
+    SELECT ...your fixed SQL here...
+    </sql>
+    """
+
+    for attempt in range(self.max_retries):
+        try:
+            llm_response = await self.db_client.call_claude_api_endpoint_async([
+                {"role": "user", "content": fix_prompt}
+            ])
+            print('sql fix prompt', fix_prompt)
+
+            # Extract SQL from XML tags
+            match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+            if match:
+                fixed_sql = match.group(1).strip()
+                fixed_sql = fixed_sql.replace('`', '')  # Remove backticks
+
+                if not fixed_sql:
+                    raise ValueError("Empty fixed SQL query in XML response")
+
+                # 🛡️ GUARDRAIL VALIDATION
+                validation_result = await self._validate_fixed_sql(fixed_sql, failed_sql, error_msg)
+                
+                if not validation_result['success']:
+                    # Guardrail violated - return error immediately
+                    print(f"⛔ Guardrail check failed: {validation_result['error']}")
+                    return validation_result
+                
+                # Validation passed
+                return {
+                    'success': True,
+                    'fixed_sql': fixed_sql
+                }
+            else:
+                raise ValueError("No SQL found in XML tags")
+
+        except Exception as e:
+            print(f"❌ SQL fix attempt {attempt + 1} failed: {str(e)}")
+
+            if attempt < self.max_retries - 1:
+                print(f"🔄 Retrying SQL fix... (Attempt {attempt + 1}/{self.max_retries})")
+                await asyncio.sleep(2 ** attempt)
+
+    return {
+        'success': False,
+        'error': f"SQL fix failed after {self.max_retries} attempts due to Model errors"
+    }

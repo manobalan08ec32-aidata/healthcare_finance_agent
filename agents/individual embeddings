@@ -1,0 +1,224 @@
+# Column-Level Embeddings Structure
+
+## Table: prd_optumrx_orxfdmprdsa.rag.pbm_claims
+
+### Financial Metrics
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_amt | Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script. Essential for financial performance and pricing analytics.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | expense_amount | Expense or cost of goods sold for the claim. Pairs with revenue_amt for margin analysis and profitability calculations.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | wac_amount | Wholesale Acquisition Cost reference for the dispensed drug. Used in pricing and cost analytics as benchmark pricing metric.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | awp_cost_amount | Average Wholesale Price reference for the dispensed drug. Used in pricing and cost analytics as industry standard pricing benchmark.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_per_script | Derived metric calculated as revenue_amt divided by unadjusted_script_count. Key performance indicator for per-script profitability and rate analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | rate_variance | Derived metric calculated as (Prior Month Average Rate minus Current Month Average Rate) multiplied by Current Month Volume. Used for financial variance analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | volume_variance | Derived metric calculated as (Prior Month Volume minus Current Month Volume) multiplied by Current Rate. Rate is revenue_amt divided by unadjusted_script_count. Volume is unadjusted_script_count.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | mix_variance | Derived metric calculated as Prior Month Revenue minus Current Month Revenue minus Rate Variance minus Volume Variance. Used for comprehensive financial variance decomposition.
+```
+
+---
+
+### Script Volume Metrics
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | unadjusted_script_count | Raw script or claim count per event. Use for total volume reporting and as denominator for revenue_per_script calculations. Primary volume metric for utilization analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | adjusted_script_count | Adjusted script count that should not be used for raw script count or revenue per script analysis. Use only when adjusted volumes are specifically required.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | 30_days_script_count | Count of 30-day prescriptions. Complements 90_days_script_count for supply-mix insights and retail channel analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | 90_days_script_count | Count of 90-day prescriptions. Useful for mail-order channel analysis, adherence tracking, and long-term supply patterns.
+```
+
+---
+
+### Claim Identifiers
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_nbr | Unique claim identifier number. Do not use for calculations or counting. Use unadjusted_script_count for claim volume metrics.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_seq_nbr | Sequence number of transactions within the same claim_nbr such as original submission or reversal. Not used for aggregations or script counts.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_status_code | Processing status of the claim. Use P for Paid and X for Reversed. Always include both P and X together for net utilization and financial metrics. Values: P, X.
+```
+
+---
+
+### Client Attributes
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_id | Unique 5-6 digit client identifier used for client-level analysis and reporting. Sample values: MDOVA, PDIND, MDCSP, 57939.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_name | Client description or display name. Return alongside client_id for user-facing reports. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_type | Client type or segment classification. Used to identify the category of the client. Values: SECONDARY, PHARM TECH, MS UHCMB, WORK COMP, GOVERNMENT, HOSPISCRIPT, PUBLIC SECTOR COMPANIES, STRATEGIC SOLUTIONS, PAYER, WRAP, DIRECT EMPLOYER, MS WC, HEALTH PLAN, PROVIDER, REBATES, MCO, MS ONLY, MAPD, COE, TPA CLIENTS, OTHER, UMR, LABOR TRUST, FMS ONLY, EMPLOYER CARVE OUT, DISCOUNT CARD.
+```
+
+---
+
+### Account Hierarchy
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | carrier_id | Identifier of the insurance carrier administering the plan. Part of the Carrier-Account-Group hierarchy for organizational reporting.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | account_id | Unique employer account identifier under which the policy is issued. Part of the Carrier-Account-Group hierarchy.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | group_id | Group or subgroup identifier within the account. Part of the Carrier-Account-Group hierarchy for detailed organizational segmentation.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | CAG | Derived metric created by concatenating carrier_id, account_id, and group_id. Used for Carrier-Account-Group level reporting and analysis.
+```
+
+---
+
+### Product and Channel
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | product_category | Category of product or service for each claim. Identifies claim channel or product type. Distinct values: PBM, Home Delivery, Specialty. Use for channel performance and product mix analysis.
+```
+
+---
+
+### Line of Business
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business | Line of business identifier or code. Distinct from client_type. Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External. Use when user asks about external business or LOB segmentation.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business_desc | Detailed descriptive name of the line of business. Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External.
+```
+
+---
+
+### Pharmacy and Provider
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_name | Dispensing pharmacy or provider name. Used for provider-level performance analysis and network optimization.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_npi_no | National Provider Identifier NPI of the dispensing pharmacy or provider. Standard healthcare provider identifier for pharmacy analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_type | Pharmacy ownership type indicator. Used to identify whether pharmacy is Optum owned internal or external non-Optum pharmacies. Values: EXTERNAL-NON OPTUM OWNED, INTERNAL OPTUM OWNED.
+```
+
+---
+
+### Drug and Therapeutic Attributes
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | drug_name | Name of the dispensed drug or medication. Use for molecule-level trends, formulary analysis, and drug-specific financial reporting.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | therapy_class_name | Therapeutic class or category of the drug. Choose class or specific drug based on the question. Sample classes: Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents. Use LIKE operator for generic GLP-1 queries.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | brand_vs_generic_ind | Product type indicator showing whether drug is Brand or Generic. Drives brand/generic mix analysis and Generic Dispense Rate calculations. Values: Brand, Generic.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | gpi_no | Generic Product Identifier. Standardized drug classification code used for grouping and therapeutic equivalency analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | DRUG_MANUFCTR_NM | Drug manufacturer name. Supports brand and manufacturer market-share analysis and pharmaceutical company performance tracking.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | GDR_Ratio | Generic Dispense Rate derived metric. Calculates the percentage of generic drug scripts by dividing count of scripts where brand_vs_generic_ind equals Generic by total script volume.
+```
+
+---
+
+### Temporal and Time Attributes
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | submit_date | Exact claim submission date in YYYY-MM-DD format. Use for daily trending, time-window filters, and precise date-based analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | year | Calendar year of claim submission. Supports year-over-year comparisons and annual trending. Contains values like 2025.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | month | Calendar month of claim submission as numerical value 1 through 12. Used for monthly trending and seasonality analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | quarter | Calendar quarter of claim submission. Supports quarter-over-quarter analysis. Contains values: Q1, Q2, Q3, Q4.
+```
+
+---
+
+### Member Demographics
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_sex | Member sex or gender. Contains values M for Male or F for Female. Used for sex-level demographic segmentation and behavioral analysis.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_dt_of_brth | Member date of birth in YYYY-MM-DD format. Enables age-based segmentation, cohort analysis, and demographic reporting.
+```
+
+```
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | state_cd | Two-letter state code where claim was processed or pharmacy is located. Used for geographic analysis and regional performance tracking. Sample values: TX, CA, MN.
+```
+
+---
+
+## Summary
+
+**Total Columns:** 42 individual column embeddings
+
+**Format:** `table_name | column_name | description`
+
+**Benefits:**
+- Each column is independently searchable
+- Vector search returns top N most relevant columns by rank_score
+- Only selected columns sent to LLM context
+- Dramatically reduces token usage and cost
+- Improves search precision and relevance

@@ -1,3 +1,29 @@
+==============================
+            RESPONSE FORMAT
+            ==============================
+
+            IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
+            
+                "status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
+                "final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
+                "functional_names": ["functional_name"] if status = success else [],
+                "tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
+                "requires_clarification": true if status = needs_disambiguation else false,
+                "selection_reasoning": "2-3 lines max explanation",
+                "high_level_table_selected": true/false if status = success else null,
+                "user_message": "message to user" if status = phi_found or missing_items else null,
+                "clarification_question": "question to user" if status = needs_disambiguation else null,
+                "selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
+
+            **FIELD POPULATION RULES FOR needs_disambiguation STATUS**:
+            - tables_identified_for_clarification: ALWAYS populate when status = needs_disambiguation
+                * If PRIORITY 1 (dataset ambiguity): List all candidate tables that need disambiguation
+                * If PRIORITY 2 (column ambiguity): List the single selected table where column disambiguation is needed
+                * Example: For "covid vaccine revenue" needing column clarification in pharmacy_claims → ["pharmacy_claims"]
+            
+                """
+
+
 Raw LLM response: **ASSESSMENT**: A:✓(no PHI) B:✓(revenue found) B-ATTR:❌(no explicit attr, multiple columns) C:✓(suitability passed) D:✓(claims complete) F:❌(filter disambiguation needed)
 **DECISION**: REQUEST_FOLLOW_UP - Filter value "covid vaccine" exists in multiple columns, need user specification
 

@@ -1,623 +1,79 @@
-# Column-Level Embeddings Structure
-
-## Table: prd_optumrx_orxfdmprdsa.rag.pbm_claims
-
-### Financial Metrics
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_amt | Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script. Essential for financial performance and pricing analytics.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | expense_amount | Expense or cost of goods sold for the claim. Pairs with revenue_amt for margin analysis and profitability calculations.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | wac_amount | Wholesale Acquisition Cost reference for the dispensed drug. Used in pricing and cost analytics as benchmark pricing metric.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | awp_cost_amount | Average Wholesale Price reference for the dispensed drug. Used in pricing and cost analytics as industry standard pricing benchmark.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_per_script | Derived metric calculated as revenue_amt divided by unadjusted_script_count. Key performance indicator for per-script profitability and rate analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | rate_variance | Derived metric calculated as (Prior Month Average Rate minus Current Month Average Rate) multiplied by Current Month Volume. Used for financial variance analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | volume_variance | Derived metric calculated as (Prior Month Volume minus Current Month Volume) multiplied by Current Rate. Rate is revenue_amt divided by unadjusted_script_count. Volume is unadjusted_script_count.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | mix_variance | Derived metric calculated as Prior Month Revenue minus Current Month Revenue minus Rate Variance minus Volume Variance. Used for comprehensive financial variance decomposition.
-```
-
----
-
-### Script Volume Metrics
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | unadjusted_script_count | Raw script or claim count per event. Use for total volume reporting and as denominator for revenue_per_script calculations. Primary volume metric for utilization analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | adjusted_script_count | Adjusted script count that should not be used for raw script count or revenue per script analysis. Use only when adjusted volumes are specifically required.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | 30_days_script_count | Count of 30-day prescriptions. Complements 90_days_script_count for supply-mix insights and retail channel analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | 90_days_script_count | Count of 90-day prescriptions. Useful for mail-order channel analysis, adherence tracking, and long-term supply patterns.
-```
-
----
-
-### Claim Identifiers
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_nbr | Unique claim identifier number. Do not use for calculations or counting. Use unadjusted_script_count for claim volume metrics.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_seq_nbr | Sequence number of transactions within the same claim_nbr such as original submission or reversal. Not used for aggregations or script counts.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_status_code | Processing status of the claim. Use P for Paid and X for Reversed. Always include both P and X together for net utilization and financial metrics. Values: P, X.
-```
-
----
-
-### Client Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_id | Unique 5-6 digit client identifier used for client-level analysis and reporting. Sample values: MDOVA, PDIND, MDCSP, 57939.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_name | Client description or display name. Return alongside client_id for user-facing reports. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_type | Client type or segment classification. Used to identify the category of the client. Values: SECONDARY, PHARM TECH, MS UHCMB, WORK COMP, GOVERNMENT, HOSPISCRIPT, PUBLIC SECTOR COMPANIES, STRATEGIC SOLUTIONS, PAYER, WRAP, DIRECT EMPLOYER, MS WC, HEALTH PLAN, PROVIDER, REBATES, MCO, MS ONLY, MAPD, COE, TPA CLIENTS, OTHER, UMR, LABOR TRUST, FMS ONLY, EMPLOYER CARVE OUT, DISCOUNT CARD.
-```
-
----
-
-### Account Hierarchy
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | carrier_id | Identifier of the insurance carrier administering the plan. Part of the Carrier-Account-Group hierarchy for organizational reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | account_id | Unique employer account identifier under which the policy is issued. Part of the Carrier-Account-Group hierarchy.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | group_id | Group or subgroup identifier within the account. Part of the Carrier-Account-Group hierarchy for detailed organizational segmentation.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | CAG | Derived metric created by concatenating carrier_id, account_id, and group_id. Used for Carrier-Account-Group level reporting and analysis.
-```
-
----
-
-### Product and Channel
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | product_category | Category of product or service for each claim. Identifies claim channel or product type. Distinct values: PBM, Home Delivery, Specialty. Use for channel performance and product mix analysis.
-```
-
----
-
-### Line of Business
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business | Line of business identifier or code. Distinct from client_type. Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External. Use when user asks about external business or LOB segmentation.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business_desc | Detailed descriptive name of the line of business. Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External.
-```
-
----
-
-### Pharmacy and Provider
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_name | Dispensing pharmacy or provider name. Used for provider-level performance analysis and network optimization.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_npi_no | National Provider Identifier NPI of the dispensing pharmacy or provider. Standard healthcare provider identifier for pharmacy analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_type | Pharmacy ownership type indicator. Used to identify whether pharmacy is Optum owned internal or external non-Optum pharmacies. Values: EXTERNAL-NON OPTUM OWNED, INTERNAL OPTUM OWNED.
-```
-
----
-
-### Drug and Therapeutic Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | drug_name | Name of the dispensed drug or medication. Use for molecule-level trends, formulary analysis, and drug-specific financial reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | therapy_class_name | Therapeutic class or category of the drug. Choose class or specific drug based on the question. Sample classes: Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents. Use LIKE operator for generic GLP-1 queries.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | brand_vs_generic_ind | Product type indicator showing whether drug is Brand or Generic. Drives brand/generic mix analysis and Generic Dispense Rate calculations. Values: Brand, Generic.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | gpi_no | Generic Product Identifier. Standardized drug classification code used for grouping and therapeutic equivalency analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | DRUG_MANUFCTR_NM | Drug manufacturer name. Supports brand and manufacturer market-share analysis and pharmaceutical company performance tracking.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | GDR_Ratio | Generic Dispense Rate derived metric. Calculates the percentage of generic drug scripts by dividing count of scripts where brand_vs_generic_ind equals Generic by total script volume.
-```
-
----
-
-### Temporal and Time Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | submit_date | Exact claim submission date in YYYY-MM-DD format. Use for daily trending, time-window filters, and precise date-based analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | year | Calendar year of claim submission. Supports year-over-year comparisons and annual trending. Contains values like 2025.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | month | Calendar month of claim submission as numerical value 1 through 12. Used for monthly trending and seasonality analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | quarter | Calendar quarter of claim submission. Supports quarter-over-quarter analysis. Contains values: Q1, Q2, Q3, Q4.
-```
-
----
-
-### Member Demographics
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_sex | Member sex or gender. Contains values M for Male or F for Female. Used for sex-level demographic segmentation and behavioral analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_dt_of_brth | Member date of birth in YYYY-MM-DD format. Enables age-based segmentation, cohort analysis, and demographic reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | state_cd | Two-letter state code where claim was processed or pharmacy is located. Used for geographic analysis and regional performance tracking. Sample values: TX, CA, MN.
-```
-
----
-
----
----
-
-# Table 2: prd_optumrx_orxfdmprdsa.rag.claim_billing
-
-### Account Hierarchy (Reused from pbm_claims)
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | carrier_id | Identifier of the insurance carrier administering the plan. Part of the Carrier-Account-Group hierarchy for organizational reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | account_id | Unique employer account identifier under which the policy is issued. Part of the Carrier-Account-Group hierarchy.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | group_id | Group or subgroup identifier within the account. Part of the Carrier-Account-Group hierarchy for detailed organizational segmentation.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | CAG | Derived metric created by concatenating carrier_id, account_id, and group_id. Used for Carrier-Account-Group level reporting and analysis.
-```
-
----
-
-### Claim Identifiers
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | claim_nbr | Unique claim identifier number. Contains unique claim numbers used to identify individual claims in the dataset. Should not be used for any aggregation or counting purposes.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | claim_seq_nbr | Sequence number of transactions within the same claim_nbr such as original submission or reversal. Not used for aggregations or script counts.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | claim_status_code | Processing status of the claim. Use P for Paid and X for Reversed. Always include both P and X together for net utilization and financial metrics. Paid and reversed together reflect net activity. Values: P, X.
-```
-
----
-
-### Client Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | client_id | Unique 5-6 digit client code used for client-level billing analysis and reporting. Sample values: ABCD, WXYZ, 57939.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | client_description | Client description or display name. Return alongside client_id for user-facing billing reports. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
-```
-
----
-
-### Billing and Revenue Metrics
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | billed_amount | Total billed amount or billing revenue charged to clients. Primary financial metric for revenue analysis, billing summaries, financial calculations, total revenue reporting, and amounts invoiced to clients. Use for all monetary calculations and revenue trends. When user asks for total billed amount do not apply GROUP BY on rev_src_type. When user asks for claim billed amount filter using rev_src_type equals CLAIM COST.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | rev_src_type | Revenue source categorization field. Classifies revenue sources as claim fee, claim cost, or admin fee for understanding revenue composition and type-based analysis. Distinct values: CLAIM FEE, CLAIM COST, ACTIVITY FEE. Use this column when user asks for specific fee types, otherwise aggregate all amounts without grouping.
-```
-
----
-
-### Product and Activity Classification
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | oracle_prod_code | Oracle system product code for billing services, not drug-related product codes. Examples: PROD35, PROD57. Use for product-level categorization and billing service analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | orcl_prod_desc | Oracle product description providing detailed billing service product names. Examples: E-Prescribing Admin Fee, PMPM-VCS, Prior Auth Specialty. Use for product identification and service-level reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | actvty_category_cd | Activity category code for operational classification and activity-based segmentation. Examples: 02EPRES, 01PCMS. Use for activity-based analysis and categorization.
-```
-
----
-
-### Billing Entity
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | blng_entty_cd | Billing entity code identifier showing which entity is performing the billing. Examples: ORXUHC0036XX, ORXUHC0005XX. Use to identify invoice generating entity.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | blng_entty_name | Billing entity name providing descriptive entity information. Examples: UHC INSURANCE COMPANY, UHCACIS FULLY INSURED. Use for entity-level billing reporting and analysis.
-```
-
----
-
-### Invoice Identification and Timing
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | inv_nbr | Invoice number, a unique identifier used to distinguish individual invoices within the billing system. Essential for invoice lookup and tracking. When user requests invoice number without specifying invoice date, return invoice number directly without requesting additional temporal context.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | invoice_date | Date when the invoice was generated and issued to the client in YYYY-MM-DD format. Use for invoice timing, aging analysis, and when user mentions invoice date. Primary date field for invoice-related queries.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | invoice_gl_date | General ledger posting date for the invoice in YYYY-MM-DD format. Use for financial period reporting and GL reconciliation. May differ from invoice_date. Used for accounting period alignment.
-```
-
----
-
-### General Ledger (GL) String Components
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_cmpny_cd | 3-digit company code component of the GL string. Use for company-level financial segmentation and general ledger reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_geo_cd | 3-digit geography code component of the GL string. Use for geographic financial segmentation, regional P&L reporting, and location-based financial tracking.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_aflt_cd | 3-digit affiliate code component of the GL string. Use for affiliate-level financial tracking and organizational accounting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_lob_cd | 3-digit line of business code component of the GL string. Use for LOB financial segmentation, P&L reporting, and business unit accounting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_acnt_cd | 3-digit account code component of the GL string for general ledger account mapping. Not related to carrier, account, or employer group. Use for GL account-level financial classification.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_dept_cd | 3-digit department code component of the GL string. Use for departmental cost allocation, budget reporting, and organizational expense tracking.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_prod_cd | 3-digit product code component of the GL string for product-level financial tracking in general ledger. Not the same as oracle_prod_code. Use for GL product-level financial classification.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | fqa_sub_acnt_cd | 3-digit sub-account code component of the GL string. Not related to carrier account group. Use for detailed sub-account level GL analysis and granular financial reporting.
-```
-
----
-
-### Line of Business
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | line_of_business_name | Line of business identifier or name. Distinct from client type. Values: E&I-FI, E&I-ASO, C&S, PDP, MAPD, E&I-UMR, External. Use when user asks about external business or LOB segmentation.
-```
-
----
-
-### Drug Attributes (Reused from pbm_claims)
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | drug_name | Name of the dispensed drug or medication. Use for molecule-level trends, formulary analysis, and drug-specific financial reporting.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | therapy_class_name | Therapeutic class or category of the drug. Choose class or specific drug based on the question. Sample classes: Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents. Use LIKE operator for generic GLP-1 queries.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | brand_vs_generic_ind | Product type indicator showing whether drug is Brand or Generic. Drives brand/generic mix analysis and Generic Dispense Rate calculations. Values: Brand, Generic.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | gpi_no | Generic Product Identifier. Standardized drug classification code used for grouping and therapeutic equivalency analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.claim_billing | DRUG_MANUFCTR_NM | Drug manufacturer name. Supports brand and manufacturer market-share analysis and pharmaceutical company performance tracking.
-```
-
----
-
----
-
-# Table 3: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-
-### Ledger Dimension
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | ledger | Ledger type for financial reporting cycles. Values: GAAP (for actuals), BUDGET (for budget), 8+4, 5+7, 2+10 (for forecast cycles). If question does not mention actuals, forecast, or budget, default to GAAP. Any mention of actuals use GAAP. Any mention of budget use BUDGET. Any mention of forecast without cycle specified, prompt user to clarify which cycle (8+4, 5+7, or 2+10).
-```
-
----
-
-### Core Metrics
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | metric_type | Metric type dimension containing the category of financial or volume metric. Values: COGS Post Reclass, SG&A Post Reclass, IOI, Operating Earnings, Balance Sheet, Revenues, Corporate Costs, Total Workforce FTE, 90 Day Scripts, Unadjusted Scripts, Interest Income, 30 Day Scripts, Adjusted Scripts, ORx Capture Count, Other Capture Count, Research, Generic Scripts, Total Membership, Reported Revenues. Synonyms: Volume or total scripts equals Unadjusted Scripts, expense equals COGS Post Reclass, Revenue equals Revenues. Always include GROUP BY metric_type when comparing actuals vs forecast vs budget or calculating any derived metrics.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | amount_or_count | Numeric value for each metric type. Contains either amount or count values that must not be aggregated without appropriate filters or grouping by metric_type column. Used as the base value for all financial and volume calculations.
-```
-
----
-
-### Calculated Metrics: Financial Ratios (Revenue-Based %)
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Cost_Percent | Derived metric calculated as COGS Post Reclass divided by Revenues. Shows cost as percentage of revenue for cost structure analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Gross_Margin | Derived metric calculated as Revenues minus COGS Post Reclass. Absolute profit before SG&A, underpins margin percentages and per-script margins. Core profitability metric.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Gross_Margin_Percent | Derived metric calculated as Gross Margin divided by Revenues. Shows gross profitability as percentage of revenue.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Operating_Expenses_Percent | Derived metric calculated as SG&A Post Reclass divided by Revenues. Shows operating expenses as percentage of revenue.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Operating_Cost_Percent | Derived metric calculated as (COGS Post Reclass plus SG&A Post Reclass) divided by Revenues. Shows total operating cost as percentage of revenue.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | IOI_Percent | Derived metric calculated as IOI divided by Revenues. Internal Operating Income percentage showing profitability as percentage of revenue.
-```
-
----
-
-### Calculated Metrics: Per-Script Economics (Unadjusted)
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Revenue_per_Script_Unadj | Derived metric calculated as Revenues divided by Unadjusted Scripts. Also called rate. Use by default for Volume or Revenue per script calculation. Key unit economics metric.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Cost_per_Script_Unadj | Derived metric calculated as COGS Post Reclass divided by Unadjusted Scripts. Unit cost for unadjusted script volume.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Margin_per_Script_Unadj | Derived metric calculated as (Revenues minus COGS Post Reclass) divided by Unadjusted Scripts. Unit margin for unadjusted script volume.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Op_Exp_per_Script_Unadj | Derived metric calculated as SG&A Post Reclass divided by Unadjusted Scripts. Operating expense per unadjusted script.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Op_Cost_per_Script_Unadj | Derived metric calculated as (COGS Post Reclass plus SG&A Post Reclass) divided by Unadjusted Scripts. Total operating cost per unadjusted script.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | IOI_per_Script_Unadj | Derived metric calculated as IOI divided by Unadjusted Scripts. Internal Operating Income per unadjusted script.
-```
-
----
-
-### Calculated Metrics: Per-Script Economics (Adjusted)
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Revenue_per_Script_Adj | Derived metric calculated as Revenues divided by Adjusted Scripts. Revenue per adjusted script for normalized volume analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Cost_per_Script_Adj | Derived metric calculated as COGS Post Reclass divided by Adjusted Scripts. Unit cost for adjusted script volume.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Margin_per_Script_Adj | Derived metric calculated as (Revenues minus COGS Post Reclass) divided by Adjusted Scripts. Unit margin for adjusted script volume.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Op_Exp_per_Script_Adj | Derived metric calculated as SG&A Post Reclass divided by Adjusted Scripts. Operating expense per adjusted script.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Op_Cost_per_Script_Adj | Derived metric calculated as (COGS Post Reclass plus SG&A Post Reclass) divided by Adjusted Scripts. Total operating cost per adjusted script.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | IOI_per_Script_Adj | Derived metric calculated as IOI divided by Adjusted Scripts. Internal Operating Income per adjusted script.
-```
-
----
-
-### Calculated Metrics: Utilization Intensity
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Utilization_PMPM_Unadjusted | Derived metric calculated as Unadjusted Scripts divided by Total Membership. Per member per month utilization using unadjusted script volume.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Utilization_PMPM_Adjusted | Derived metric calculated as Adjusted Scripts divided by Total Membership. Per member per month utilization using adjusted script volume.
-```
-
----
-
-### Calculated Metrics: Capture and Penetration Rates
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | SP_Capture_Percent | Derived metric for specialty pharmacy capture rate. Calculated as ORx Capture Count divided by (ORx Capture Count plus Other Capture Count). Shows specialty channel effectiveness.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | Generic_Penetration_Percent | Derived metric calculated as Generic Scripts divided by Unadjusted Scripts. Shows generic drug utilization rate for brand vs generic mix analysis.
-```
-
----
-
-### Calculated Metrics: Variance Analysis
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | rate_variance | Derived metric calculated as (Prior Month Average Rate minus Current Month Average Rate) multiplied by Current Month Volume. Rate is revenue divided by unadjusted scripts. Current month and previous month should be extracted from user question. Used for financial variance decomposition.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | volume_variance | Derived metric calculated as (Prior Month Volume minus Current Month Volume) multiplied by Current Rate. Rate is revenue divided by unadjusted scripts. Volume is unadjusted scripts. Current month and previous month should be extracted from user question. Used for financial variance decomposition.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | mix_variance | Derived metric calculated as Prior Month Revenue minus Current Month Revenue minus Rate Variance minus Volume Variance. Current month and previous month should be extracted from user question. Refer to rate_variance and volume_variance formulas. Used for comprehensive financial variance decomposition.
-```
-
----
-
-### Line of Business
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | line_of_business | Business or customer segment for portfolio segmentation and market-share breakdowns. Values: C&S (Community & State), E&I (Employer & Individual), M&R (Medicare & Retirement), Rev Reclass, External, Optum. Commonly used for portfolio analysis.
-```
-
----
-
-### Product Hierarchy
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | product_category | High-level category of products or services. HDP means Home Delivery, Mail means HDP, SP means Specialty. Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH. If PBM, Specialty, and Home Delivery are mentioned together or PBM alone, do not filter on product_category.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | product_sub_category_lvl_1 | First-level subcategory under product_category for more granular product analysis. Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | product_sub_category_lvl_2 | Second-level subcategory for most granular product classification. Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products.
-```
-
----
-
-### Temporal Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | transaction_date | Exact transaction date in YYYY-MM-DD format. Supports daily, monthly, quarterly, and annual trend analysis for actuals and forecast data.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | year | Four-digit calendar year of the transaction. Supports year-over-year comparisons and annual trending.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | month | Numeric month of the transaction from 1 to 12. Used for monthly trending and seasonality analysis.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | quarter | Quarter of the transaction: Q1, Q2, Q3, Q4. Supports quarter-over-quarter analysis.
-```
-
----
-
-### Client Attributes
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | ora_client_id | Unique 5-6 digit client code. Client ID exists only for Actuals (GAAP ledger) and is NULL for Forecast or Budget. If user requests client-level comparison involving Forecast or Budget, respond that client-level information is available only for Actuals. Sample values: MDOVA, PDIND, MDCSP, 57939.
-```
-
-```
-prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast | ora_client_description | Client description or display name. Return alongside ora_client_id for user-facing reports. Only available for Actuals (GAAP ledger), NULL for Forecast or Budget. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
-```
-
----
-
-## Summary
-
-**Table 1 (pbm_claims):** 42 individual column embeddings  
-**Table 2 (claim_billing):** 33 individual column embeddings  
-**Table 3 (ledger_actual_vs_forecast):** 43 individual column embeddings  
-**Total:** 118 column embeddings
-
-**Format:** `table_name | column_name | description`
-
-**Table 3 Breakdown:**
-- **Core dimensions:** 3 columns (ledger, metric_type, amount_or_count)
-- **Financial ratio metrics (%):** 6 calculated metrics
-- **Per-script unadjusted metrics:** 6 calculated metrics
-- **Per-script adjusted metrics:** 6 calculated metrics
-- **Utilization metrics:** 2 calculated metrics
-- **Capture/penetration metrics:** 2 calculated metrics
-- **Variance metrics:** 3 calculated metrics
-- **LOB:** 1 column
-- **Product hierarchy:** 3 columns
-- **Temporal:** 4 columns
-- **Client:** 2 columns (GAAP only)
-
-**Benefits:**
-- Each column is independently searchable across all tables
-- Calculated metrics are grouped by type for better semantic search
-- Vector search returns top N most relevant columns by rank_score
-- Only selected columns sent to LLM context
-- Dramatically reduces token usage and cost
-- Improves search precision and relevance
-- Supports cross-table queries with proper table context
+vector results [{'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': ' The billed_amount field represents the revenue amount or billing amount charged to clients. This is the primary financial metric for revenue analysis, billing summaries, financial calculations, total revenue reporting, and understanding amounts invoiced to clients. Use billed_amount for all monetary calculations, revenue trends, and financial performance analysis.Revenue and activity categorization fields include rev_src_type which classifies revenue sources as claim fee, claim cost, or admin fee for understanding revenue composition and type-based analysis', 'llm_context': '-**billed_amount**: Represents the total billed amount, also referred to as billing revenue.\n                        -If the user asks for total billed amount, do not apply a GROUP BY on the rev_src_type column.\n                        -If the user asks for claim billed amount, filter using rev_src_type = "CLAIM COST"\n                        -If the user refers to claim fee or activity fee, treat it as a fee-based request and apply the appropriate rev_src_type filter.\n- **rev_src_type**: Categorizes the revenue source.. Distinct Values include "CLAIM FEE", "CLAIM COST", and "ACTIVITY FEE". when the user asks for specific fee, use this column else aggregate all amount and no group by needed.\n\n', 'score': 1.0}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': ' Product identification fields include oracle_prod_code containing Oracle system product codes like PROD35 and PROD57, paired with orcl_prod_desc providing detailed product descriptions such as E-Prescribing Admin Fee, PMPM-VCS, and Prior Auth Specialty. These fields enable product-level analysis, product mix reporting, revenue by product calculations, and understanding which services or products are being billed to clients.The actvty_category_cd field contains activity category codes like 02EPRES and 01PCMS for operational classification and activity-based segmentation. Use these fields to analyze revenue by source type, understand billing composition, and perform activity-based reporting and analysis', 'llm_context': '- **oracle_prod_code**:This is not drug related product code.This is billing services from the Oracle system. Examples include PROD35, PROD57. Use for product-level categorization and analysis.\n- **orcl_prod_desc**: Oracle product description providing detailed product names. Examples include "E-Prescribing Admin Fee", "PMPM-VCS", "Prior Auth. Specialty". Use for product identification and reporting.\n- **actvty_category_cd**: Activity category code for operational classification. Examples include 02EPRES, 01PCMS. Use for activity-based analysis and categorization.\n\n', 'score': 0.5}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'Line of business with line_of_business (LOB) codes (E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External) and line_of_business_desc long names (Employer & Individual – United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual – Fully Insured, Employer & Individual – Administrative Services Only, External); distinct from client_type', 'llm_context': '- **line_of_business_name**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR and when the user asks plainly external then use this column for filtering and is distinct from client type. [Distinct Values: E&I-FI,E&I-ASO,C&S,PDP,MAPD,E&I-UMR,External]\n', 'score': 0.3333333333333333}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'Billing entity fields identify who is performing the billing with blng_entty_cd containing billing entity codes such as ORXUHC0036XX and ORXUHC0005XX, and blng_entty_name providing entity names like UHC INSURANCE COMPANY and UHCACIS FULLY INSURED. This helps to accurately report whihc billing entity generates the invoices.\n', 'llm_context': '- **blng_entty_cd**: Billing entity code identifier. Examples include ORXUHC0036XX, ORXUHC0005XX. Use to identify which entity is performing the billing.\n- **blng_entty_name**: Billing entity name providing descriptive entity information. Examples include "UHC INSURANCE COMPANY", "UHCACIS FULLY INSURED". Use for entity-level reporting and analysis.\n\n', 'score': 0.25}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'claim_nbr (unique claim id, not a count), claim_seq_nbr (sequence within claim), claim_status_code with P=Paid and X=Reversed for net activity; use P and X for utilization and financial derivations', 'llm_context': '- **claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. should not be used for any aggregation.\n- **claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations.\n- **claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]', 'score': 0.2}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'Invoice identification and timing fields include inv_nbr which is the unique invoice number identifier for each billing record, invoice_date representing when the invoice was generated and issued to the client, and invoice_gl_date which is the general ledger posting date used for financial period reporting. These fields are essential for invoice lookup, tracking invoice timing, aging analysis, and reconciling invoices with the general ledger system.', 'llm_context': '- **inv_nbr**: The invoice number is a unique identifier used to distinguish individual invoices within the billing system.\n                When a user requests an invoice number without specifying an invoice date, do not prompt for or infer a time period. The system should return the invoice number directly without requesting additional temporal context. . \n- **invoice_date**:(YYYY-MM-DD) format. Date when the invoice was generated and issued to the client. \n                    Use for invoice timing and aging analysis.when the user mentions invoice date then use this column.\n- **invoice_gl_date**:(YYYY-MM-DD) format. General ledger posting date for the invoice. Use for financial period reporting and GL reconciliation. May differ from invoice_date.\n\n', 'score': 0.16666666666666666}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'General ledger string components are 3-digit codes used for financial accounting and reporting in the GL system. Fields include fqa_cmpny_cd for company segmentation, fqa_geo_cd for geographic financial tracking, fqa_aflt_cd for affiliate-level accounting, fqa_lob_cd for line of business P&L reporting, fqa_acnt_cd for account mapping, fqa_dept_cd for departmental cost allocation, fqa_prod_cd for product-level financial tracking, and fqa_sub_acnt_cd for sub-account detail. These GL string components enable financial reporting, cost allocation, departmental budgeting, geographic P&L analysis, and reconciliation between billing data and the general ledger system.\n', 'llm_context': 'The following fields comprise the GL string used for financial accounting and reporting:\n- **fqa_cmpny_cd**: 3-digit company code component of the GL string. Use for company-level financial segmentation.\n- **fqa_geo_cd**: 3-digit geography code component of the GL string. Use for geographic financial segmentation and reporting.\n- **fqa_aflt_cd**: 3-digit affiliate code component of the GL string. Use for affiliate-level financial tracking.\n- **fqa_lob_cd**: 3-digit line of business code component of the GL string. Use for LOB financial segmentation and P&L reporting.\n- **fqa_acnt_cd**: 3-digit account code component of the GL string. Use for account-level GL mapping.This account is not related to carrier , account,employer_group_id.\n- **fqa_dept_cd**: 3-digit department code component of the GL string. Use for departmental cost allocation and reporting.\n- **fqa_prod_cd**: 3-digit product code component of the GL string. Use for product-level financial tracking in GL.This is not oracle product code.\n- **fqa_sub_acnt_cd**: 3-digit sub-account code component of the GL string. Use for detailed sub-account level GL analysis.This is not related to carrier account group.\n\n', 'score': 0.14285714285714285}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'Drug attributes including drug_name, therapy_class_name (e.g., Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents), brand_vs_generic_ind (Brand vs Generic for GDR), gpi_no standardized classification, DRUG_MANUFCTR_NM manufacturer; supports molecule/class market share, brand vs generic mix, and GDR (derived, not stored)', 'llm_context': '- **drug_name**: Name of the dispensed drug; use for molecule-level trends and financials.\n- **therapy_class_name**: Therapeutic class of the drug. Choose class or specific drug based on the question. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information\n- **brand_vs_generic_ind**: Product type indicator. Drives brand/generic mix and Generic Dispense Rate and also use it filter clause in case of brand vs generic calculation using distinct values [Values: Brand, Generic]\n- **gpi_no**: GPI code.\n-**DRUG_MANUFCTR_NM**:Drug manufacturer; supports brand/manufacturer market-share views\n\n', 'score': 0.125}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': ' client_id (unique id), client_name (description name) used for client level reporting for billing data', 'llm_context': '- **client_id**: This contain unique 5-6 digit client code.Sample values [ABCD,WXYZ,57939]\n- **client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values ["MDOVA OVATIONS MAPD/MA ONLY/RDS","PDIND PDP INDIVIDUAL"]\n\n', 'score': 0.1111111111111111}, {'table_name': 'prd_optumrx_orxfdmprdsa.rag.claim_billing', 'col_embedding_content': 'Carrier–Account–Group hierarchy: carrier_id (carrier), account_id (account), group_id (group/subgroup); CAG is a calculated concatenation of carrier_id, account_id, and group_id for CAG-level reporting', 'llm_context': '- **carrier_id**: Insurance carrier identifier in the billing system. \n- **account_id**: Account identifier used for account-level grouping and analysis within the billing hierarchy.\n- **group_id**: Group identifier for organizing and aggregating accounts into logical groupings.\n-**CAG**: calculated column .concatenate carrier id , account id and group id to derive CAG\n\n', 'score': 0.1}]
+
+async def get_metadata(self, state: Dict, selected_dataset: list) -> Dict:
+        """Extract metadata with mandatory embeddings from single JSON file"""
+        try:
+            current_question = state.get('rewritten_question', state.get('current_question', ''))
+            embedding_idx = "prd_optumrx_orxfdmprdsa.rag.column_embeddings_pbm_idx"
+            
+            tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
+            print(f'📊 Tables selected: {tables_list}')
+            
+            # ===== STEP 1: Load Mandatory Embeddings (Cached - Fast!) =====
+            mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list)
+            print('mandatory context',mandatory_contexts)
+            # ===== STEP 2: Get Vector Search Results =====
+            vector_results = await self.db_client.sp_vector_search_columns(
+                query_text=current_question,
+                tables_list=tables_list,
+                num_results_per_table=10,
+                index_name=embedding_idx
+            )
+            print('vector results',vector_results)
+            # ===== STEP 3: Group Vector Results =====
+            vector_contexts_by_table = {}
+            for result in vector_results:
+                table = result['table_name']
+                if table not in vector_contexts_by_table:
+                    vector_contexts_by_table[table] = []
+                vector_contexts_by_table[table].append(result['llm_context'])
+            
+            # ===== STEP 4: Merge & Deduplicate =====
+            merged_contexts_by_table = {}
+            
+            for table in tables_list:
+                seen_columns = set()
+                merged_contexts_by_table[table] = []
+                
+                # Add mandatory first
+                if table in mandatory_contexts:
+                    for ctx in mandatory_contexts[table]:
+                        col_name = ctx.split('**')[1].split(':')[0].strip() if ctx.startswith('**') and ':' in ctx else None
+                        if col_name:
+                            seen_columns.add(col_name)
+                        merged_contexts_by_table[table].append(ctx)
+                
+                # Add vector results (skip duplicates)
+                if table in vector_contexts_by_table:
+                    for ctx in vector_contexts_by_table[table]:
+                        col_name = ctx.split('**')[1].split(':')[0].strip() if ctx.startswith('**') and ':' in ctx else None
+                        if col_name and col_name not in seen_columns:
+                            merged_contexts_by_table[table].append(ctx)
+                            seen_columns.add(col_name)
+            
+            # ===== STEP 5: Build Metadata =====
+            metadata = ""
+            for table in tables_list:
+                if table in merged_contexts_by_table and merged_contexts_by_table[table]:
+                    metadata += f"\n## Table: {table}\n\n"
+                    for ctx in merged_contexts_by_table[table]:
+                        metadata += ctx + "\n"
+                    metadata += "\n"
+            print('metadata',metadata)
+            return {
+                'status': 'success',
+                'metadata': metadata,
+                'error': False
+            }
+            
+        except Exception as e:
+            print(f"❌ Metadata extraction failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                'status': 'error',
+                'metadata': '',
+                'error': True,
+                'error_message': f"Metadata extraction failed: {str(e)}"
+            }

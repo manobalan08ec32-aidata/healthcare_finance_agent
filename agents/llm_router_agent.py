@@ -370,13 +370,14 @@ class LLMRouterAgent:
             tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
             print('tables_list', tables_list)
             
-            cluster_results = await self.db_client.vector_search_columns(
+            cluster_results = await self.db_client.sp_vector_search_columns(
                 query_text=current_question,
-                num_results=20,
+                tables_list=tables_list,
+                num_results_per_table=20,
                 index_name=embedding_idx,
-                tables_list=tables_list
+                
             )
-
+            print('vector results', cluster_results)
             # Group llm_context by table_name and build markdown metadata
             clusters_by_table = {}
             for cluster in cluster_results:
@@ -1790,6 +1791,53 @@ SELECTED FILTER CONTEXT (from user clarification):
             'errors_history': errors_history
         }
 
+    async def _validate_fixed_sql(self, fixed_sql: str, original_sql: str, error_msg: str) -> Dict[str, Any]:
+        """
+        Guardrail validation to prevent embarrassing SQL outputs
+        Returns dict with success=False if guardrails are violated
+        """
+        forbidden_patterns = [
+            'show tables',
+            'show databases',
+            'describe table',
+            'describe ',
+            'information_schema.tables',
+            'information_schema.columns',
+            'show schemas',
+            'list tables'
+        ]
+        
+        sql_lower = fixed_sql.lower().strip()
+        
+        # Check for forbidden patterns
+        for pattern in forbidden_patterns:
+            if pattern in sql_lower:
+                print(f"🚫 GUARDRAIL VIOLATION: Blocked '{pattern}' in LLM response")
+                print(f"❌ Original error was: {error_msg}")
+                
+                return {
+                    'success': False,
+                    'error': f"Guardrail triggered: LLM attempted to generate '{pattern}' instead of fixing the query. This is not allowed.",
+                    'violated_pattern': pattern,
+                    'original_sql': original_sql
+                }
+        
+        # Additional check: if it's a table not found error, ensure the fixed SQL 
+        # still references a table (not just a utility query)
+        table_not_found_indicators = ['table not found', 'table does not exist', 'no such table', 'invalid table name']
+        if any(indicator in error_msg.lower() for indicator in table_not_found_indicators):
+            # Check if the fixed SQL is suspiciously short or doesn't contain FROM
+            if len(sql_lower) < 20 or 'from' not in sql_lower:
+                print(f"🚫 GUARDRAIL VIOLATION: Fixed SQL too short or missing FROM clause for table-not-found error")
+                return {
+                    'success': False,
+                    'error': "Guardrail triggered: Invalid fix for table-not-found error. Fixed query must contain valid FROM clause.",
+                    'original_sql': original_sql
+                }
+        
+        return {'success': True, 'fixed_sql': fixed_sql}
+
+
     async def _fix_sql_with_llm_async(self, failed_sql: str, error_msg: str, errors_history: List[str], context: Dict) -> Dict[str, Any]:
         """Use LLM to fix SQL based on error with enhanced prompting and retry logic async"""
 
@@ -1821,8 +1869,8 @@ SELECTED FILTER CONTEXT (from user clarification):
         ==============================
         1. TIMEOUT / TRANSIENT EXECUTION ERRORS
             - If the ERROR MESSAGE indicates a timeout or transient execution condition (contains ANY of these case-insensitive substrings: 
-               "timeout", "timed out", "cancelled due to timeout", "query exceeded", "network timeout", "request timed out", "socket timeout"),
-               then DO NOT modify the SQL. Return the ORIGINAL FAILED SQL verbatim as the fixed version. (Root cause is environmental, not syntax.)
+            "timeout", "timed out", "cancelled due to timeout", "query exceeded", "network timeout", "request timed out", "socket timeout"),
+            then DO NOT modify the SQL. Return the ORIGINAL FAILED SQL verbatim as the fixed version. (Root cause is environmental, not syntax.)
             - Still wrap it in <sql> tags exactly as required.
 
         2. COLUMN NOT FOUND / INVALID IDENTIFIER
@@ -1832,7 +1880,21 @@ SELECTED FILTER CONTEXT (from user clarification):
             - Change only what is required; keep all other logic intact.
 
         3. TABLE NOT FOUND / TABLE DOES NOT EXIST
-            - If the ERROR MESSAGE indicates a table does not exist (contains ANY of these case-insensitive substrings: "table not found", "table does not exist", "no such table", "invalid table name"), DO NOT generate a SHOW TABLE or invent a new query. DO NOT switch to a different table unless the metadata clearly provides a valid alternative table name that matches the user's original intent. Only fix the current query using available metadata. Never create a new query or show table statement.
+            ⚠️ CRITICAL PROHIBITION:
+            - If the ERROR MESSAGE indicates a table does not exist (contains ANY of these case-insensitive substrings: "table not found", "table does not exist", "no such table", "invalid table name"):
+            
+            🚫 ABSOLUTELY FORBIDDEN - DO NOT GENERATE:
+                - SHOW TABLES
+                - SHOW DATABASES  
+                - DESCRIBE TABLE
+                - Information schema queries
+                - Any query that lists or discovers tables
+            
+            ✅ ONLY ALLOWED OPTIONS:
+                a) If TABLE METADATA contains a similarly named valid table → Replace with that exact table name
+                b) If no valid alternative exists → Return ORIGINAL FAILED SQL unchanged with a SQL comment explaining why
+            
+            - The query MUST still attempt to answer the ORIGINAL USER QUESTION using only tables in TABLE METADATA
 
         4. OTHER ERROR TYPES (syntax, mismatched types, aggregation issues, grouping issues, function misuse, alias conflicts, etc.)
             - Rewrite or minimally adjust the SQL to resolve the issue while preserving the analytical intent of the ORIGINAL USER QUESTION.
@@ -1843,18 +1905,49 @@ SELECTED FILTER CONTEXT (from user clarification):
             - Never fabricate table or column names not present in metadata.
             - Never remove necessary GROUP BY columns required for non-aggregated selected columns.
             - Never switch to a different table unless clearly required to satisfy a missing valid column.
-            - Never generate a SHOW TABLE or any query unrelated to the user's original question.
+            - Never generate SHOW TABLES, DESCRIBE, or any schema discovery query.
 
         6. ALWAYS:
             - Preserve filters, joins, and calculation intent unless they reference invalid columns.
             - Use consistent casing and UPPER() comparisons for string equality.
             - Include replaced column(s) in SELECT list if they are used in filters or aggregations.
 
-        DECISION PATH SUMMARY YOU MUST FOLLOW BEFORE OUTPUT:
-            IF timeout-related → return original query unchanged.
-            ELSE IF column-not-found → surgically replace invalid column(s) using metadata-driven best match.
-            ELSE IF table-not-found → fix the query using only available metadata, do NOT generate a new query or SHOW TABLE statement.
-            ELSE → intelligently fix / rewrite while preserving intent.
+        ==============================
+        EXAMPLE: TABLE NOT FOUND ERROR
+        ==============================
+        ❌ WRONG - THIS WILL BE REJECTED:
+        <sql>
+        SHOW TABLES;
+        </sql>
+
+        ✅ CORRECT - Return original with comment:
+        <sql>
+        -- Table 'sales_2024' not found in metadata. Returning original query.
+        -- Available tables should be verified in TABLE METADATA.
+        SELECT * FROM sales_2024 WHERE year = 2024;
+        </sql>
+
+        ✅ ALSO CORRECT - Use alternative from metadata:
+        <sql>
+        -- Replaced 'sales_2024' with 'sales_data' from available tables
+        SELECT * FROM sales_data WHERE year = 2024;
+        </sql>
+
+        ==============================
+        DECISION PATH (FOLLOW IN ORDER)
+        ==============================
+        IF timeout-related → return original query unchanged
+        ELSE IF column-not-found → replace invalid column with valid one from metadata  
+        ELSE IF table-not-found → use alternative from metadata OR return original with comment
+        ELSE → fix syntax/logic while preserving intent
+
+        ==============================
+        FINAL VALIDATION BEFORE OUTPUT
+        ==============================
+        ✓ Does SQL contain SHOW, DESCRIBE, or INFORMATION_SCHEMA? → If YES, REWRITE
+        ✓ Does SQL use only tables from TABLE METADATA? → If NO, return original
+        ✓ Does SQL answer the ORIGINAL USER QUESTION? → If NO, revise
+        ✓ Is it wrapped in <sql></sql> tags? → If NO, add them
 
         ==============================
         RESPONSE FORMAT
@@ -1882,6 +1975,15 @@ SELECTED FILTER CONTEXT (from user clarification):
                     if not fixed_sql:
                         raise ValueError("Empty fixed SQL query in XML response")
 
+                    # 🛡️ GUARDRAIL VALIDATION
+                    validation_result = await self._validate_fixed_sql(fixed_sql, failed_sql, error_msg)
+                    
+                    if not validation_result['success']:
+                        # Guardrail violated - return error immediately
+                        print(f"⛔ Guardrail check failed: {validation_result['error']}")
+                        return validation_result
+                    
+                    # Validation passed
                     return {
                         'success': True,
                         'fixed_sql': fixed_sql

@@ -1,182 +1,36 @@
-═══════════════════════════════════════════════════════════════════
-SECTION 5: CONTEXT INHERITANCE (FILL WHAT'S MISSING)
-═══════════════════════════════════════════════════════════════════
-
-### Step 1: Extract Components from Questions
-
-**From CURRENT question, identify what it explicitly mentions:**
-- **Metric**: revenue, expense, claims, billed amount, cost, volume, payments, utilization
-- **Carrier/Entity**: carrier names (carrier XYZ, carrier ABC), clients, partners, accounts
-- **Time Period**: quarters (Q1, Q2, Q3, Q4), months (July, August), years (2024, 2025)
-- **Geography**: regions, states, countries (North region, California, Texas)
-- **Line of Business**: Commercial, Medicare, Medicaid, segments
-- **Filters**: drug names (covid vaccine, Humira), therapy classes, categories, specific items
-- **Aggregate Signals**: "as a whole", "overall", "total", "top N", "all carriers", "all customers"
-
-**From HISTORY question (last rewritten question), identify:**
-- Same components as above
-
-### Step 2: Determine Question Type
-
-**NEW QUESTION (no inheritance):**
-- Completely different topic with no semantic overlap (weather, sports, non-healthcare)
-- Current has ALL required components = COMPLETE question:
-  - Has metric + scope (carrier/geography/LOB) + time = complete
-  - Example: "What is claims data for carrier ABC for Q2 2025" (has everything)
-- No relationship to history
-
-**FOLLOW-UP QUESTION (fill missing components):**
-- Current is missing one or more components (metric, carrier, time, etc.)
-- Semantically related to history (same domain, continuation)
-- Implicit continuation of previous analysis
-
-### Step 3: Fill Missing Components
-
-**IF NEW QUESTION:**
-→ Use current question as-is, no inheritance, no filling
-
-**IF FOLLOW-UP QUESTION:**
-→ Fill missing components from history using these rules:
-
-**Filling Rules:**
-1. **Current Always Wins**: If current mentions a component, use current's value (don't override with history)
-   - Example: Current says "carrier ABC", don't use history's "carrier XYZ"
-
-2. **Fill Only What's Missing**: Look at what current lacks and fill from history
-   - Missing metric → fill from history
-   - Missing carrier → fill from history
-   - Missing time → fill from history
-   - Missing filter → fill from history
-
-3. **Component Replacement**: If current mentions same TYPE of component but different value, REPLACE it
-   - History: "carrier XYZ", Current: "carrier ABC" → Use ABC (replace)
-   - History: "Q1", Current: "Q2" → Use Q2 (replace)
-
-4. **Pronouns Fill Everything**: If current has pronouns ("that", "it", "those", "this"), fill ALL components from history
-   - "why is that high" → inherit everything (metric + carrier + time + filter)
-
-### Step 4: Handle Edge Cases
-
-**Edge Case 1: Strong Aggregate Signals Override Scope**
-
-If current has strong aggregate signals:
-- "overall", "all carriers", "all customers", "across the board", "unfiltered", "complete", "entire", "grand total"
-
-**Action:**
-→ Fill ONLY metric + time (if missing)
-→ DROP all scope filters (carriers, geography, LOB)
-→ DROP specific item filters (drugs, categories)
-
-**Why:** These signals mean user wants the BIG PICTURE without filters
-
-**Example:**
-History: "What is expense for carrier XYZ for Q3"
-Current: "as a whole"
-→ Strong aggregate signal detected
-→ Fill: metric (expense), time (Q3)
-→ Drop: carrier (XYZ)
-→ Result: "What is the expense as a whole for Q3"
-
-**Edge Case 2: Complete Questions Don't Fill**
-
-If current has ALL THREE core components:
-- Has metric (revenue, expense, claims, etc.)
-- Has scope (carrier/geography/LOB)
-- Has time (Q1, July, 2025)
-
-**Action:**
-→ Treat as NEW QUESTION
-→ NO filling from history
-
-**Why:** If user provides complete context, they're starting fresh
-
-**Example:**
-History: "What is expense for carrier XYZ"
-Current: "claims data for carrier ABC for Q2 2025"
-→ Complete question detected (has metric + carrier + time)
-→ No filling needed
-→ Result: "What is claims data for carrier ABC for Q2 2025"
-
-### Step 5: Construct Rewritten Question
-
-Combine current components + filled components → complete rewritten question
-
-**Professional Structure:**
-- Pattern: "What is the [metric] for [filters] for [scope] for [timeframe]"
-- Transform informal to formal: "I need expense" → "What is the expense..."
-- Proper grammar, capitalized first letter, trimmed spaces
-
-═══════════════════════════════════════════════════════════════════
-SECTION 6: QUESTION REWRITING (APPLY CONTEXT INHERITANCE)
-═══════════════════════════════════════════════════════════════════
-
-### Determine if Question Needs History
-
-**Self-Contained** (DON'T use history - treat as NEW):
-- Contains specific metric + scope + timeframe = COMPLETE
-- Completely different topic from previous questions
-- No semantic relationship to history
-
-**Incomplete** (USE history - FOLLOW-UP):
-- Contains pronouns: "that", "it", "those", "this"
-- Vague references: "why is that", "show me more", "what about"
-- Missing critical components: metric, carrier, time, or filter
-- Direct follow-ups: "for carrier ABC", "for Q2", "as a whole"
-
-### Rewriting Process
-
-1. **Extract components** from current and history (Section 5, Step 1)
-2. **Determine question type** - NEW or FOLLOW-UP (Section 5, Step 2)
-3. **Apply filling logic** if FOLLOW-UP (Section 5, Step 3)
-4. **Check edge cases** (Section 5, Step 4)
-5. **Build rewritten question** (Section 5, Step 5)
-
-**Temporal Enhancement:**
-- If month mentioned without year → add current year (2025 for now, update annually)
-- If "next [month]" → add next year
-- If "last [month]" → determine based on context
-- Don't modify if year already present
-
-**Quality Requirements:**
-- Length: 15-500 characters
-- Self-contained (readable without history)
-- Well-formed business question (not command or fragment)
-- Proper grammar, capitalized first letter, trimmed spaces
-
-### Examples
-
-### Examples
-
-**Example 1 - Fill Missing Components with Replacement:**
-History: "What is expense for carrier XYZ for Q3"
-Current: "for carrier ABC for Q4"
-→ Type: FOLLOW-UP (missing metric)
-→ Current has: carrier=ABC (replaces XYZ), time=Q4 (replaces Q3)
-→ Missing: metric
-→ Fill: metric=expense
-→ Result: "What is expense for carrier ABC for Q4"
-
-**Example 2 - Strong Aggregate Signal (Edge Case 1):**
-History: "What is expense for carrier XYZ for Q3"
-Current: "as a whole"
-→ Type: FOLLOW-UP with strong aggregate signal
-→ Current has: aggregate signal "as a whole"
-→ Missing: metric, time
-→ Fill: metric=expense, time=Q3
-→ Drop: carrier=XYZ (aggregate signal overrides scope)
-→ Result: "What is expense as a whole for Q3"
-
-**Example 3 - Complete Question (Edge Case 2):**
-History: "What is expense for carrier XYZ"
-Current: "claims data for carrier ABC for Q2 2025"
-→ Type: NEW QUESTION (has metric + carrier + time = complete)
-→ No filling needed
-→ Result: "What is claims data for carrier ABC for Q2 2025"
-
-**Example 4 - Pronoun (Fill Everything):**
-History: "What is billed amount for covid vaccines for carrier MDOVA"
-Current: "why is that high"
-→ Type: FOLLOW-UP with pronoun
-→ Current has: pronoun "that"
-→ Fill: everything (metric + filter + carrier)
-→ Result: "Why is billed amount for covid vaccines for carrier MDOVA high"
+col_embedding_content
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_amt | Revenue amount recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script. Essential for financial performance and pricing analytics.This is also called Client due amount
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | expense_amount | Expense or cost of goods sold for the claim. Pairs with revenue_amt for margin analysis and profitability calculations.This is called as app_due_amount or approved due amount
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | wac_amount | Wholesale Acquisition Cost reference for the dispensed drug.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | awp_cost_amount | Average Wholesale Price reference for the dispensed drug.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_per_script | Derived metric calculated as revenue_amt divided by unadjusted_script_count. Key performance indicator for per-script profitability and rate analysis.This revenue per script or rate is used for per-script profitability and rate analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | rate_variance | Derived metric calculated as (Prior Month Average Rate minus Current Month Average Rate) multiplied by Current Month Volume. Used for financial variance analysis.volume_variance | Derived metric calculated as (Prior Month Volume minus Current Month Volume) multiplied by Current Rate. Rate is revenue_amt divided by unadjusted_script_count. Volume is unadjusted_script_count|mix_variance | Derived metric calculated as Prior Month Revenue minus Current Month Revenue minus Rate Variance minus Volume Variance. Used for comprehensive financial variance decomposition
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | unadjusted_script_count | Raw script or claim count per event. Use for total volume reporting and as denominator for revenue_per_script calculations. Primary volume metric for utilization analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | adjusted_script_count | Adjusted script count that should not be used for raw script count or revenue per script analysis. Use only when adjusted volumes are specifically required.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | 30_days_script_count | Count of 30-day prescriptions. Complements 90_days_script_count for supply-mix insights and retail channel analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | 90_days_script_count | Count of 90-day prescriptions. Useful for mail-order channel analysis, adherence tracking, and long-term supply patterns.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_nbr | Unique claim identifier number. Do not use for calculations or counting. Use unadjusted_script_count for claim volume metrics.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_seq_nbr | Sequence number of transactions within the same claim_nbr such as original submission or reversal. Not used for aggregations or script counts.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_status_code | Processing status of the claim. Use P for Paid and X for Reversed. Always include both P and X together for net utilization and financial metrics. Values: P, X.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_id | Unique 5-6 digit client identifier used for client-level analysis and reporting. Sample values: PDIND, MDCSP, 57939.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_name | Client description or display name. Return alongside client_id for user-facing reports. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_type | Client type or segment classification. Used to identify the category of the client. Values: SECONDARY, PHARM TECH, MS UHCMB, WORK COMP, GOVERNMENT, HOSPISCRIPT, PUBLIC SECTOR COMPANIES, STRATEGIC SOLUTIONS, PAYER, WRAP, DIRECT EMPLOYER, MS WC, HEALTH PLAN, PROVIDER, REBATES, MCO, MS ONLY, MAPD, COE, TPA CLIENTS, OTHER, UMR, LABOR TRUST, FMS ONLY, EMPLOYER CARVE OUT, DISCOUNT CARD.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | carrier_id | Identifier of the insurance carrier administering the plan. Part of the Carrier-Account-Group hierarchy for organizational reporting.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | account_id | Unique employer account identifier under which the policy is issued. Part of the Carrier-Account-Group hierarchy.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | group_id | Group or subgroup identifier within the account. Part of the Carrier-Account-Group hierarchy for detailed organizational segmentation.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | CAG | Derived metric created by concatenating carrier_id, account_id, and group_id. Used for Carrier-Account-Group level reporting and analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | product_category | Category of product or service for each claim. Identifies claim channel or product type. Use for channel performance and product mix analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business | Line of business identifier or code. Distinct from client_type. Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External. Use when user asks about external business or LOB segmentation.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business_desc | Detailed descriptive name of the line of business. Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_name | Dispensing pharmacy or provider name. Used for provider-level performance analysis and network optimization.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_npi_no | National Provider Identifier NPI of the dispensing pharmacy or provider. Standard healthcare provider identifier for pharmacy analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_type | Pharmacy ownership type indicator. Used to identify whether pharmacy is Optum owned internal or external non-Optum pharmacies. Values: EXTERNAL-NON OPTUM OWNED, INTERNAL OPTUM OWNED.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | drug_name | Name of the dispensed drug or medication. Use for molecule-level trends, formulary analysis, and drug-specific financial reporting.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | therapy_class_name | Therapeutic class or category of the drug. Choose class or specific drug based on the question. Sample classes: Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents. Use LIKE operator for generic GLP-1 queries.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | brand_vs_generic_ind | Product type indicator showing whether drug is Brand or Generic. Drives brand/generic mix analysis and Generic Dispense Rate calculations. Values: Brand, Generic.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | gpi_no | Generic Product Identifier. Standardized drug classification code used for grouping and therapeutic equivalency analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | DRUG_MANUFCTR_NM | Drug manufacturer name. Supports brand and manufacturer market-share analysis and pharmaceutical company performance tracking.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | GDR_Ratio | Generic Dispense Rate derived metric. Calculates the percentage of generic drug scripts by dividing count of scripts where brand_vs_generic_ind equals Generic by total script volume.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_sex | Member sex or gender. Contains values M for Male or F for Female. Used for sex-level demographic segmentation and behavioral analysis.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_dt_of_brth | Member date of birth in YYYY-MM-DD format. Enables age-based segmentation, cohort analysis, and demographic reporting.
+prd_optumrx_orxfdmprdsa.rag.pbm_claims | state_cd | Two-letter state code where claim was processed or pharmacy is located. Sample values: TX, CA, MN.

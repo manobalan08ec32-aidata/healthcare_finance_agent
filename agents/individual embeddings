@@ -198,3 +198,105 @@ IDENTIFIER: Generic Product Identifier code. Standardized pharmaceutical classif
 
 DRUG_MANUFCTR_NM
 DESCRIPTIVE LABEL: Pharmaceutical manufacturer or company name. Drug producer or supplier name.
+
+Cost_Percent
+DERIVED METRIC: Cost as a percentage of revenue. Calculated as COGS divided by Revenues. Cost structure ratio metric.
+
+Gross_Margin
+DERIVED METRIC: Gross margin amount in dollars. Calculated as Revenues minus COGS. Primary profitability metric.
+
+Gross_Margin_Percent
+DERIVED METRIC: Gross margin as a percentage of revenue. Calculated as Gross Margin divided by Revenues. Profitability ratio metric.
+
+Operating_Expenses_Percent
+DERIVED METRIC: Operating expenses as a percentage of revenue. Calculated as SG&A divided by Revenues. Operating expense ratio metric.
+
+Operating_Cost_Percent
+DERIVED METRIC: Total operating cost as a percentage of revenue. Calculated as COGS plus SG&A divided by Revenues. Total cost structure ratio.
+
+IOI_Percent
+DERIVED METRIC: Internal Operating Income as a percentage of revenue. Calculated as IOI divided by Revenues. Operating profitability ratio metric.
+
+Revenue_per_Script_Unadj
+DERIVED METRIC: Revenue per unadjusted script in dollars. Calculated as Revenues divided by Unadjusted Scripts. Also called rate. Unit revenue metric.
+
+Cost_per_Script_Unadj
+DERIVED METRIC: Cost per unadjusted script in dollars. Calculated as COGS divided by Unadjusted Scripts. Unit cost metric.
+
+Margin_per_Script_Unadj
+DERIVED METRIC: Margin per unadjusted script in dollars. Calculated as Revenues minus COGS divided by Unadjusted Scripts. Unit margin metric.
+
+Op_Exp_per_Script_Unadj
+DERIVED METRIC: Operating expense per unadjusted script in dollars. Calculated as SG&A divided by Unadjusted Scripts. Unit operating expense metric.
+
+Op_Cost_per_Script_Unadj
+DERIVED METRIC: Operating cost per unadjusted script in dollars. Calculated as COGS plus SG&A divided by Unadjusted Scripts. Total unit cost metric.
+
+IOI_per_Script_Unadj
+DERIVED METRIC: Internal Operating Income per unadjusted script in dollars. Calculated as IOI divided by Unadjusted Scripts. Unit operating income metric.
+
+Revenue_per_Script_Adj
+DERIVED METRIC: Revenue per adjusted script in dollars. Calculated as Revenues divided by Adjusted Scripts. Normalized unit revenue metric.
+
+Cost_per_Script_Adj
+DERIVED METRIC: Cost per adjusted script in dollars. Calculated as COGS divided by Adjusted Scripts. Normalized unit cost metric.
+
+Margin_per_Script_Adj
+DERIVED METRIC: Margin per adjusted script in dollars. Calculated as Revenues minus COGS divided by Adjusted Scripts. Normalized unit margin metric.
+
+Op_Exp_per_Script_Adj
+DERIVED METRIC: Operating expense per adjusted script in dollars. Calculated as SG&A divided by Adjusted Scripts. Normalized unit operating expense metric.
+
+Op_Cost_per_Script_Adj
+DERIVED METRIC: Operating cost per adjusted script in dollars. Calculated as COGS plus SG&A divided by Adjusted Scripts. Normalized total unit cost metric.
+
+IOI_per_Script_Adj
+DERIVED METRIC: Internal Operating Income per adjusted script in dollars. Calculated as IOI divided by Adjusted Scripts. Normalized unit operating income metric.
+
+rate_variance
+DERIVED METRIC: Rate variance amount from prior month to current month. Calculated as prior month rate minus current month rate multiplied by current volume. Rate-driven variance component.
+
+volume_variance
+DERIVED METRIC: Volume variance amount from prior month to current month. Calculated as prior month volume minus current month volume multiplied by current rate. Volume-driven variance component.
+
+mix_variance
+DERIVED METRIC: Mix variance amount from revenue decomposition. Calculated as prior month revenue minus current month revenue minus rate variance minus volume variance. Mix-driven variance component.
+
+Utilization_PMPM_Unadjusted
+DERIVED METRIC: Per member per month utilization using unadjusted scripts. Calculated as Unadjusted Scripts divided by Total Membership. Member utilization rate metric.
+
+Utilization_PMPM_Adjusted
+DERIVED METRIC: Per member per month utilization using adjusted scripts. Calculated as Adjusted Scripts divided by Total Membership. Normalized member utilization rate metric.
+
+SP_Capture_Percent
+DERIVED METRIC: Specialty pharmacy capture rate percentage. Calculated as ORx Capture Count divided by total capture count. Specialty channel penetration metric.
+
+Generic_Penetration_Percent
+DERIVED METRIC: Generic drug utilization rate percentage. Calculated as Generic Scripts divided by Unadjusted Scripts. Generic versus brand mix ratio metric.
+
+line_of_business
+CLASSIFICATION: Business or customer segment identifier. Values include C&S for Community and State, E&I for Employer and Individual, M&R for Medicare and Retirement, External, and Optum. Business portfolio segment.
+
+product_category
+CLASSIFICATION: High-level product or service category. HDP means Home Delivery or Mail, SP means Specialty. Top-level product classification.
+
+product_sub_category_lvl_1
+CLASSIFICATION: First-level product subcategory. Mid-level product classification under product category.
+
+product_sub_category_lvl_2
+CLASSIFICATION: Second-level product subcategory. Most granular product classification level.
+
+year
+TEMPORAL FIELD: Four-digit calendar year. Year dimension for time-based analysis.
+
+month
+TEMPORAL FIELD: Numeric month from 1 to 12. Month dimension for time-based analysis.
+
+quarter
+TEMPORAL FIELD: Calendar quarter identifier. Values: Q1, Q2, Q3, Q4. Quarter dimension for time-based analysis.
+
+ora_client_id
+PRIMARY IDENTIFIER: Unique 5-6 digit client identifier code. Only available in Actuals GAAP ledger, NULL in Forecast or Budget. Client-level identifier for actual results only.
+
+ora_client_description
+DESCRIPTIVE LABEL: Client name or description. Display label for client identification. Only available for Actuals data.

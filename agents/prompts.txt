@@ -1,36 +1,110 @@
-col_embedding_content
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_amt | Revenue amount recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script. Essential for financial performance and pricing analytics.This is also called Client due amount
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | expense_amount | Expense or cost of goods sold for the claim. Pairs with revenue_amt for margin analysis and profitability calculations.This is called as app_due_amount or approved due amount
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | wac_amount | Wholesale Acquisition Cost reference for the dispensed drug.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | awp_cost_amount | Average Wholesale Price reference for the dispensed drug.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | revenue_per_script | Derived metric calculated as revenue_amt divided by unadjusted_script_count. Key performance indicator for per-script profitability and rate analysis.This revenue per script or rate is used for per-script profitability and rate analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | rate_variance | Derived metric calculated as (Prior Month Average Rate minus Current Month Average Rate) multiplied by Current Month Volume. Used for financial variance analysis.volume_variance | Derived metric calculated as (Prior Month Volume minus Current Month Volume) multiplied by Current Rate. Rate is revenue_amt divided by unadjusted_script_count. Volume is unadjusted_script_count|mix_variance | Derived metric calculated as Prior Month Revenue minus Current Month Revenue minus Rate Variance minus Volume Variance. Used for comprehensive financial variance decomposition
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | unadjusted_script_count | Raw script or claim count per event. Use for total volume reporting and as denominator for revenue_per_script calculations. Primary volume metric for utilization analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | adjusted_script_count | Adjusted script count that should not be used for raw script count or revenue per script analysis. Use only when adjusted volumes are specifically required.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | 30_days_script_count | Count of 30-day prescriptions. Complements 90_days_script_count for supply-mix insights and retail channel analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | 90_days_script_count | Count of 90-day prescriptions. Useful for mail-order channel analysis, adherence tracking, and long-term supply patterns.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_nbr | Unique claim identifier number. Do not use for calculations or counting. Use unadjusted_script_count for claim volume metrics.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_seq_nbr | Sequence number of transactions within the same claim_nbr such as original submission or reversal. Not used for aggregations or script counts.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | claim_status_code | Processing status of the claim. Use P for Paid and X for Reversed. Always include both P and X together for net utilization and financial metrics. Values: P, X.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_id | Unique 5-6 digit client identifier used for client-level analysis and reporting. Sample values: PDIND, MDCSP, 57939.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_name | Client description or display name. Return alongside client_id for user-facing reports. Sample values: MDOVA OVATIONS MAPD/MA ONLY/RDS, PDIND PDP INDIVIDUAL.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | client_type | Client type or segment classification. Used to identify the category of the client. Values: SECONDARY, PHARM TECH, MS UHCMB, WORK COMP, GOVERNMENT, HOSPISCRIPT, PUBLIC SECTOR COMPANIES, STRATEGIC SOLUTIONS, PAYER, WRAP, DIRECT EMPLOYER, MS WC, HEALTH PLAN, PROVIDER, REBATES, MCO, MS ONLY, MAPD, COE, TPA CLIENTS, OTHER, UMR, LABOR TRUST, FMS ONLY, EMPLOYER CARVE OUT, DISCOUNT CARD.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | carrier_id | Identifier of the insurance carrier administering the plan. Part of the Carrier-Account-Group hierarchy for organizational reporting.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | account_id | Unique employer account identifier under which the policy is issued. Part of the Carrier-Account-Group hierarchy.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | group_id | Group or subgroup identifier within the account. Part of the Carrier-Account-Group hierarchy for detailed organizational segmentation.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | CAG | Derived metric created by concatenating carrier_id, account_id, and group_id. Used for Carrier-Account-Group level reporting and analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | product_category | Category of product or service for each claim. Identifies claim channel or product type. Use for channel performance and product mix analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business | Line of business identifier or code. Distinct from client_type. Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External. Use when user asks about external business or LOB segmentation.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | line_of_business_desc | Detailed descriptive name of the line of business. Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_name | Dispensing pharmacy or provider name. Used for provider-level performance analysis and network optimization.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_npi_no | National Provider Identifier NPI of the dispensing pharmacy or provider. Standard healthcare provider identifier for pharmacy analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | pharmacy_type | Pharmacy ownership type indicator. Used to identify whether pharmacy is Optum owned internal or external non-Optum pharmacies. Values: EXTERNAL-NON OPTUM OWNED, INTERNAL OPTUM OWNED.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | drug_name | Name of the dispensed drug or medication. Use for molecule-level trends, formulary analysis, and drug-specific financial reporting.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | therapy_class_name | Therapeutic class or category of the drug. Choose class or specific drug based on the question. Sample classes: Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors & Combos, GLP-1 Anti-Obesity Agents. Use LIKE operator for generic GLP-1 queries.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | brand_vs_generic_ind | Product type indicator showing whether drug is Brand or Generic. Drives brand/generic mix analysis and Generic Dispense Rate calculations. Values: Brand, Generic.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | gpi_no | Generic Product Identifier. Standardized drug classification code used for grouping and therapeutic equivalency analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | DRUG_MANUFCTR_NM | Drug manufacturer name. Supports brand and manufacturer market-share analysis and pharmaceutical company performance tracking.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | GDR_Ratio | Generic Dispense Rate derived metric. Calculates the percentage of generic drug scripts by dividing count of scripts where brand_vs_generic_ind equals Generic by total script volume.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_sex | Member sex or gender. Contains values M for Male or F for Female. Used for sex-level demographic segmentation and behavioral analysis.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | mbr_dt_of_brth | Member date of birth in YYYY-MM-DD format. Enables age-based segmentation, cohort analysis, and demographic reporting.
-prd_optumrx_orxfdmprdsa.rag.pbm_claims | state_cd | Two-letter state code where claim was processed or pharmacy is located. Sample values: TX, CA, MN.
+revenue_amt
+PRIMARY METRIC: Total revenue amount in dollars recognized for the claim. Essential metric for financial performance analysis, profitability tracking, and pricing analytics. Also called client due amount. Use with script count to calculate revenue per script.
+
+expense_amount
+PRIMARY METRIC: Total expense or cost of goods sold for the claim in dollars. Essential for margin analysis and profitability calculations. Also called approved due amount or app due amount. Pair with revenue amount for margin calculations.
+
+wac_amount
+COST REFERENCE: Wholesale Acquisition Cost pricing reference in dollars. Used for pharmaceutical cost benchmarking and pricing analysis.
+
+awp_cost_amount
+COST REFERENCE: Average Wholesale Price cost metric in dollars. Used for pharmaceutical pricing analysis and cost comparisons.
+
+revenue_per_script
+DERIVED KPI: Revenue per script calculated as revenue amount divided by unadjusted script count. Key performance indicator for per-script profitability analysis and rate evaluation. Also called rate.
+
+rate_variance
+DERIVED METRIC: Financial variance calculated as prior month average rate minus current month average rate multiplied by current month volume. Used for rate-driven financial variance analysis.
+
+volume_variance
+DERIVED METRIC: Financial variance calculated as prior month volume minus current month volume multiplied by current rate. Rate is revenue amount divided by unadjusted script count. Volume is unadjusted script count. Used for volume-driven financial variance analysis.
+
+mix_variance
+DERIVED METRIC: Financial variance calculated as prior month revenue minus current month revenue minus rate variance minus volume variance. Used for comprehensive mix-driven financial variance decomposition.
+
+unadjusted_script_count
+PRIMARY VOLUME METRIC: Raw script count or claim count per event. The standard volume metric for utilization analysis and reporting. Use as denominator for revenue per script calculations. Always use this for total volume and script count queries.
+
+adjusted_script_count
+ALTERNATIVE VOLUME METRIC: Adjusted script count metric. Do not use for standard script count or revenue per script analysis. Only use when specifically requesting adjusted volume calculations.
+
+30_days_script_count
+SEGMENTED VOLUME: Count of 30-day supply prescriptions. Used for retail channel analysis and supply mix insights. Complements 90-day script count.
+
+90_days_script_count
+SEGMENTED VOLUME: Count of 90-day supply prescriptions. Used for mail-order channel analysis, adherence tracking, and long-term supply pattern evaluation.
+
+claim_nbr
+IDENTIFIER: Unique claim transaction identifier. Do not use for counting or volume calculations. Use unadjusted script count for claim volume metrics.
+
+claim_seq_nbr
+IDENTIFIER: Sequence number for transactions within the same claim such as original submission or reversal. Not used for aggregations or volume counts.
+
+claim_status_code
+STATUS INDICATOR: Processing status of the claim transaction. Use P for Paid and X for Reversed claims. Always include both P and X together for net utilization and financial metrics to get accurate totals.
+
+client_id
+PRIMARY IDENTIFIER: Unique 5-6 digit client identifier code for client-level analysis and reporting. Use for client segmentation and performance tracking.
+
+client_name
+DESCRIPTIVE LABEL: Client descriptive name or display label. Return alongside client identifier for user-facing reports and dashboards. Used for client identification in reports.
+
+client_type
+CLASSIFICATION: Client type or business segment classification. Used to categorize clients into business segments like health plan, employer, government, payer, Medicare, or commercial categories.
+
+carrier_id
+ORGANIZATIONAL IDENTIFIER: Insurance carrier identifier administering the benefit plan. Top level of the Carrier-Account-Group organizational hierarchy. Use for carrier-level performance analysis.
+
+account_id
+ORGANIZATIONAL IDENTIFIER: Employer account identifier under which the policy is issued. Middle level of the Carrier-Account-Group organizational hierarchy. Use for account-level analysis.
+
+group_id
+ORGANIZATIONAL IDENTIFIER: Group or subgroup identifier within the employer account. Bottom level of the Carrier-Account-Group organizational hierarchy for detailed organizational segmentation.
+
+CAG
+DERIVED IDENTIFIER: Carrier-Account-Group concatenated identifier combining carrier, account, and group. Used for detailed organizational hierarchy reporting and analysis.
+
+product_category
+CLASSIFICATION: Product or service category classification for each claim. Identifies the distribution channel or product type. Use for channel performance and product mix analysis.
+
+line_of_business
+CLASSIFICATION: Business line identifier or code distinguishing commercial, Medicare, Medicaid, and other business segments. Use when analyzing external business, LOB segmentation, or business line performance.
+
+line_of_business_desc
+DESCRIPTIVE LABEL: Detailed descriptive name of the business line such as Medicare Advantage, Prescription Drug Plan, Employer and Individual, Community and State, or External. Use for business line reporting and segmentation.
+
+pharmacy_name
+DESCRIPTIVE LABEL: Dispensing pharmacy or provider name. Used for pharmacy-level performance analysis, network optimization, and provider performance tracking.
+
+pharmacy_npi_no
+IDENTIFIER: National Provider Identifier NPI of the dispensing pharmacy or provider. Standard healthcare provider identifier for pharmacy analysis and provider tracking.
+
+pharmacy_type
+CLASSIFICATION: Pharmacy ownership type indicator distinguishing Optum-owned internal pharmacies from external non-Optum pharmacies. Used for internal versus external network performance analysis.
+
+drug_name
+PRIMARY IDENTIFIER: The actual pharmaceutical medication or product name dispensed to the patient. Main identifier for molecule-level trends, formulary analysis, therapy utilization, and product-specific financial reporting. Use this for all medication or pharmaceutical queries.
+
+therapy_class_name
+CLASSIFICATION: Therapeutic class or clinical category of the medication such as Oncology, GLP-1 Receptor Agonists, SGLT-2 Inhibitors, or Diabetes medications. Use for therapeutic area analysis and clinical category trends. Choose between specific medication name or therapeutic class based on query scope.
+
+brand_vs_generic_ind
+CLASSIFICATION: Product type indicator showing whether medication is Brand or Generic formulation. Essential for brand versus generic mix analysis and Generic Dispense Rate calculations.
+
+gpi_no
+IDENTIFIER: Generic Product Identifier standardized classification code. Used for medication grouping, therapeutic equivalency analysis, and standardized product categorization.
+
+DRUG_MANUFCTR_NM
+DESCRIPTIVE LABEL: Pharmaceutical manufacturer or company name producing the medication. Used for manufacturer market share analysis, pharmaceutical company performance tracking, and supplier analysis.
+
+GDR_Ratio
+DERIVED KPI: Generic Dispense Rate percentage calculated as count of generic scripts divided by total script volume. Key performance indicator for generic utilization and formulary effectiveness.
+
+mbr_sex
+DEMOGRAPHIC: Member sex or gender with values Male or Female. Used for gender-based demographic segmentation, utilization analysis, and behavioral pattern identification.
+
+mbr_dt_of_brth
+DEMOGRAPHIC: Member date of birth in standard date format. Enables age-based segmentation, generational cohort analysis, and demographic reporting.
+
+state_cd
+GEOGRAPHIC: Two-letter state code where claim was processed or pharmacy is located. Used for geographic analysis, regional performance tracking, and state-level reporting.

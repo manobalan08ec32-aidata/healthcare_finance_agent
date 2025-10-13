@@ -1,3 +1,167 @@
+followup_prompt = f"""
+You are generating intelligent follow-up questions for healthcare finance analysis.
+
+CONTEXT:
+Current Question: "{current_question}"
+Last 3 Questions: "{narrative_response_hist}"
+Question History: {recent_user_questions}
+Domain: {domain_selection}
+Metadata: {metadata}
+
+==============================
+CRITICAL RULES
+==============================
+
+# Complete Question Structure (MANDATORY)
+
+Every question MUST have: [Metric] + [Dimension] + [Time Context]
+
+Format: "[Action] [metric] by [dimension] for [time]"
+
+Examples:
+✅ "Show revenue by clients for Q3 2024"
+✅ "Break down cost per script by therapy classes in September 2024"
+✅ "Compare scripts for Q3 2024 vs Q3 2023 by line of business"
+
+❌ "Show revenue trends" (missing dimension and time)
+❌ "Break down by clients" (missing metric and time)
+
+# Canonical Names (Business-Friendly)
+
+Use natural terms, NOT technical field names:
+
+**Dimensions:** "clients" (not client_name), "therapy classes" (not therapy_class_name), "drugs" (not drug_name), "line of business" (not line_of_business), "product category" (not product_category), "pharmacy type" (not pharmacy_type), "brand vs generic" (not brand_vs_generic_ind), "states" (not state_cd)
+
+**Metrics:** "revenue" (not revenue_amt), "cost" (not expense_amt), "scripts" (not unadjusted_script_count), "revenue per script" or "rate" (not revenue_per_script), "margin" (not gross profit)
+
+# Time Period Preservation
+
+- Extract time from current question: "Q3 2024", "September 2024", "last two months"
+- Apply SAME time to ALL follow-ups unless suggesting comparisons
+- For comparisons: "Compare Q3 2024 vs Q3 2023"
+- NEVER omit time context
+
+# Investigation Flow
+
+**Follow Playbook Sequence:**
+- Use `recommended_investigation_flow` or `investigation_sequence` from metadata
+- Progress through levels systematically (don't skip or jump randomly)
+- Apply `pattern_recognition` guidance based on last answer
+
+**Analyze Last Answer:**
+- Patterns: concentration vs dispersed, top drivers identified
+- Metrics: which moved (rate/volume/cost/margin)
+- Stage: early/mid/mature investigation
+
+**Question Distribution:**
+- 2 questions: Current depth (explore different dimensions)
+- 1 question: Next level (drill deeper or pivot to complementary)
+
+**If high concentration (top 5-10 = >70%):** Drill into specific entities
+**If dispersed pattern:** Suggest segment aggregations or pivot
+**If investigation mature:** Pivot to complementary table
+
+# Complementary Table
+
+**When metadata has `complementary_table`:**
+- Generate from BOTH primary and complementary tables
+- Use complementary table's dimensions/metrics
+
+**Question Split by Stage:**
+- Early: 3 primary
+- Mid: 2 primary + 1 complementary
+- Mature: 1 primary + 2 complementary
+
+**Pivot Format:**
+"Show [metric] by [complementary dimension] in [complementary table] for [same time]"
+
+Example: "Show revenue by clients in claims for Q3 2024"
+
+# Entity References
+
+**Use specific values ONLY when narrative includes attribute context:**
+✅ "Client MDOVA", "Drug MOUNJARO", "Line of Business Commercial"
+✅ "Show revenue for Client MDOVA by therapy classes in Q3 2024"
+
+**Use generic dimensions when:**
+❌ Narrative has isolated values: "MDOVA" without "Client"
+❌ Unclear which column value belongs to
+→ Use "by clients" instead
+
+# Domain Product Filtering
+
+- **PBM Network:** Only PBM categories, NEVER Home Delivery/Specialty
+- **Optum Pharmacy:** Only Home Delivery/Specialty, NEVER PBM
+
+# NEVER Generate (Critical Avoidance)
+
+❌ Why/because: "Why did revenue decline?", "What caused variance?"
+❌ Drill-through: "Show details", "Drill into this"
+❌ Vague: "Dig deeper", "Analyze further", "Investigate"
+❌ Causal: "What's driving?", "What factors contributed?"
+❌ Incomplete: Missing metric, dimension, or time
+
+✅ ONLY Generate: Observable fact questions with complete structure
+
+# Constraints
+
+- Check `questions_history` - avoid duplicates or semantically similar
+- Use "top 20" or "bottom 20" (not top 5 or 10)
+- Preserve scope: time, filters, dimensional focus
+- Verify dimensions/metrics exist in metadata
+- Advance investigation, don't restate
+
+==============================
+RESPONSE FORMAT
+==============================
+Exactly 3 questions. Valid JSON only. No markdown or extra text.
+
+{{
+    "followup_questions": [
+        "Show [metric] by [dimension] for [time]",
+        "What is the [metric] by [dimension] for [time]",
+        "Break down [metric] by [dimension] for [time]"
+    ]
+}}
+
+==============================
+EXAMPLES
+==============================
+
+**Early Stage:**
+Current: "What is revenue for Q3 2024?"
+{{
+    "followup_questions": [
+        "Show revenue by product category for Q3 2024",
+        "Break down revenue by line of business for Q3 2024",
+        "What is the revenue per script by product category for Q3 2024"
+    ]
+}}
+
+**Mid Stage (Concentration Found):**
+Current: "Show revenue by clients for Q3 2024"
+Discovered: Top 5 clients = 75% of decline
+{{
+    "followup_questions": [
+        "Show revenue by therapy classes for top 5 clients in Q3 2024",
+        "Break down scripts by clients for Q3 2024",
+        "What is the revenue by clients in claims for Q3 2024"
+    ]
+}}
+
+**Mature Stage (Pivot to Complementary):**
+Current: "Break down revenue variance by product category for Q3 2024"
+Discovered: Specialty has largest variance
+{{
+    "followup_questions": [
+        "Show revenue by clients in claims for Specialty in Q3 2024",
+        "Break down revenue by therapy classes in claims for Q3 2024",
+        "What is the brand vs generic mix in claims for Q3 2024"
+    ]
+}}
+
+"""
+
 {
     "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": {
         "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",

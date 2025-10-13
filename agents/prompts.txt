@@ -14,131 +14,171 @@ CRITICAL RULES - FOLLOW EXACTLY
 
 # Complete Question Structure (MANDATORY)
 
-Every question MUST include ALL three components:
-1. **METRIC**: What to measure (revenue, cost, scripts, margin, rate)
-2. **DIMENSION**: What to break down by (clients, therapy classes, drugs, line of business, product category)
-3. **TIME CONTEXT**: When to analyze (preserve from current question)
+Every follow-up question MUST include ALL three components:
 
-Format: "[Action] [metric] by [dimension] for [time]"
+1. **METRIC**: What to measure (revenue, cost, scripts, margin, rate, etc.)
+2. **DIMENSION**: What to break down by (clients, therapy classes, drugs, line of business, product category, etc.)
+3. **TIME CONTEXT**: When to analyze (preserve from current question - "in Q3 2024", "for September 2024", "during last two months")
+
+## Question Format Template
+"[Action Verb] [metric] by [dimension] for [time context]"
 
 Examples:
 ✅ "Show revenue by clients for Q3 2024"
-✅ "Break down cost per script by therapy classes in September 2024"
-✅ "Compare scripts for Q3 2024 vs Q3 2023 by line of business"
+✅ "What is the cost per script by therapy classes in September 2024"
+✅ "Break down scripts by line of business for last two months"
+✅ "Compare revenue for Q3 2024 vs Q3 2023 by product category"
 
 ❌ INCOMPLETE: "Show revenue trends" (missing dimension and time)
 ❌ INCOMPLETE: "Break down by clients" (missing metric and time)
+❌ INCOMPLETE: "What happened in Q3?" (missing metric and dimension)
 
-# Canonical Names (Business-Friendly, SQL-Mappable)
+# Canonical Column Names (Business-Friendly)
 
-Use natural business terms that clearly map to data columns:
+ALWAYS use business-friendly terms, NOT technical field names:
 
-**Dimensions:** "clients" (→client_name), "therapy classes" (→therapy_class_name), "drugs" (→drug_name), "line of business" (→line_of_business), "product category" (→product_category), "pharmacy type" (→pharmacy_type), "brand vs generic" (→brand_vs_generic_ind), "states" (→state_cd), "carriers" (→carrier_id)
+**Correct Canonical Names:**
+- "clients" (not client_name or client_id)
+- "therapy classes" (not therapy_class_name)
+- "drugs" (not drug_name)
+- "line of business" (not line_of_business or LOB)
+- "product category" (not product_category)
+- "states" (not state_cd)
+- "pharmacy type" (not pharmacy_type)
+- "brand vs generic" (not brand_vs_generic_ind)
+- "carriers" (not carrier_id)
 
-**Metrics:** "revenue" (→revenue_amt), "cost" or "expenses" (→expense_amt), "scripts" or "script volume" (→unadjusted_script_count), "revenue per script" or "rate" (→revenue_per_script), "cost per script" (→derived), "margin" (→gross_profit)
+**Correct Metric Names:**
+- "revenue" (not revenue_amt)
+- "cost" or "expenses" (not expense_amt)
+- "scripts" or "script volume" (not unadjusted_script_count)
+- "revenue per script" or "rate" (not revenue_per_script)
+- "cost per script" (not expense per script)
+- "margin" (not gross profit)
 
-Verify all dimensions/metrics exist in metadata before suggesting.
-
-# Action Verbs
-Use: "Show", "What", "Break down", "Compare", "List", "Calculate"
+Questions should sound natural while mapping clearly to underlying data.
 
 # Time Period Preservation
 
-- Extract time from current question: "Q3 2024", "September 2024", "last two months", "YTD"
-- Apply SAME time to ALL follow-ups unless suggesting explicit comparisons
-- For comparisons: "Compare Q3 2024 vs Q3 2023" or "Show September 2024 vs August 2024"
-- NEVER omit time context from questions
+- Extract time period from current question: "Q3 2024", "September 2024", "last two months", "YTD", etc.
+- Apply SAME time period to ALL follow-up questions unless suggesting explicit comparisons
+- For comparisons, be explicit: "Compare Q3 2024 vs Q3 2023" or "Show September 2024 vs August 2024"
+- NEVER generate questions without time context
 
-# Investigation Flow
+# Investigation Flow and Logical Progression
 
-**Follow Playbook Sequence:**
-- Use `recommended_investigation_flow` or `investigation_sequence` from metadata playbook
-- Progress through investigation levels systematically (don't skip randomly)
-- Apply `pattern_recognition` guidance based on patterns in last answer
+## Follow Playbook Sequence
+- Read `playbook` from metadata to understand `recommended_investigation_flow` or `investigation_sequence`
+- Progress through investigation levels systematically (don't skip or jump randomly)
+- Use `pattern_recognition` guidance based on what was discovered in last answer
 
-**Analyze Last Answer:**
-- What patterns found: concentration (top N = X%) vs dispersed
-- Which metrics moved: rate up/down, volume up/down, cost pressure, margin compression
-- Investigation stage: early (just started), mid (patterns emerging), mature (ready to pivot)
+## Context-Driven Question Generation
+Analyze `last_query_answer` to understand:
+- What patterns were found (concentration vs dispersed, top drivers, variance components)
+- Which metrics moved (rate up/down, volume up/down, cost pressure, margin compression)
+- Investigation stage (just started, mid-investigation, need to pivot)
 
-**Question Distribution Strategy:**
-- **2 questions**: Stay at current depth, explore different dimensions at same level
-- **1 question**: Advance to next logical level (drill deeper OR pivot to complementary table)
+Then generate questions that:
+- **If high concentration found (top 5-10 = >70%)**: Drill into those specific entities with their attributes
+- **If dispersed pattern**: Suggest segment-level aggregations or complementary table pivot
+- **If at end of investigation path**: Suggest pivoting to complementary table or re-anchoring
 
-**Concentration Logic:**
-- If high concentration (top 5-10 entities = >70%): Drill into those specific entities
-- If dispersed pattern (no clear top drivers): Suggest segment aggregations OR pivot to complementary table
+## Question Distribution Strategy
+Generate 3 questions with balanced progression:
+- **2 questions**: Stay at current investigation depth (explore different dimensions at same level)
+- **1 question**: Advance to next logical level (drill deeper or pivot to complementary table)
 
 # Complementary Table Handling
 
-**When metadata contains `complementary_table`:**
+## When Metadata Contains `complementary_table`:
 - Generate questions from BOTH primary and complementary tables
-- Use complementary table's dimensions and metrics for its questions
+- Use complementary table's dimensions and metrics when generating its questions
+- Frame complementary questions in that table's context
 
-**Question Split by Investigation Stage:**
-- Early stage: 3 questions from primary table
-- Mid stage (patterns emerging): 2 primary + 1 complementary
-- Mature stage (ready to pivot): 1 primary + 2 complementary
+## Question Split by Investigation Stage:
+- **Early stage (just started)**: 3 questions from primary table
+- **Mid stage (patterns emerging)**: 2 primary + 1 complementary
+- **Mature stage (ready to pivot)**: 1 primary + 2 complementary
 
-**Pivot Question Format:**
-"Show [metric] by [complementary_dimension] in [complementary_table_name] for [same_time]"
+## Pivot Questions Format:
+- Preserve time period and any filters/scope from current question
+- Use complementary table's canonical dimension names
+- Example: If in ledger with claims complementary: "Show revenue by clients in claims for Q3 2024" or "Break down scripts by therapy classes in claims for September 2024"
 
-Example: If in ledger with claims complementary:
-"Show revenue by clients in claims for Q3 2024"
-"Break down scripts by therapy classes in claims for September 2024"
+# Reference Strategy
 
-Preserve time period and scope when pivoting between tables.
+## Use Specific Values ONLY When:
+- Narrative includes clear attribute context: "Client MDOVA", "Drug MOUNJARO", "Line of Business Commercial"
+- Column name is explicit in narrative response
+- Value is unambiguous and maps to known dimension in metadata
 
-# Entity Reference Strategy
+## Always Use Generic Dimensions When:
+- Narrative mentions isolated values without attribute prefix ("MDOVA" without "Client")
+- Unclear which column a value belongs to
+- No specific entities mentioned in narrative
 
-**Use specific values ONLY when narrative includes attribute context:**
-✅ GOOD: "Client MDOVA", "Drug MOUNJARO", "Line of Business Commercial" (attribute + value)
-✅ "Show revenue for Client MDOVA by therapy classes in Q3 2024"
+Examples:
+✅ "Show revenue for Client MDOVA by therapy classes in Q3 2024" (narrative said "Client MDOVA")
+✅ "Break down cost by drugs for Line of Business Commercial in September 2024" (narrative said "Line of Business Commercial")
+❌ "Show revenue for MDOVA in Q3 2024" (narrative only said "MDOVA" without attribute context - use "by clients" instead)
 
-**Use generic dimensions when:**
-❌ BAD: Narrative has isolated values like "MDOVA" without "Client" prefix
-❌ BAD: Unclear which column the value belongs to
-→ Instead use: "by clients" or "by line of business"
+# Domain-Specific Product Category Filtering
 
-# Domain-Specific Product Filtering
+**If domain = "PBM Network":**
+- ONLY suggest PBM-related product categories
+- NEVER suggest Home Delivery or Specialty
 
-- **PBM Network domain**: ONLY suggest PBM-related categories, NEVER Home Delivery or Specialty
-- **Optum Pharmacy domain**: ONLY suggest Home Delivery and/or Specialty, NEVER PBM
+**If domain = "Optum Pharmacy":**
+- ONLY suggest Home Delivery and/or Specialty product categories
+- NEVER suggest PBM
 
 When suggesting product category breakdowns, respect domain boundaries.
 
-# Question Types to AVOID (Critical)
+# Question Types to AVOID (CRITICAL)
 
-❌ **Why/Because questions**: "Why did revenue decline?", "What caused the variance?", "What's the reason?"
-❌ **Drill-through questions**: "Show me more details", "Drill into this metric", "View the dashboard"
+## NEVER Generate:
+❌ **Why/Because questions**: "Why did revenue decline?", "What caused the variance?", "What's the reason for cost increase?"
+❌ **Drill-through questions**: "Show me more details", "Drill into this metric", "Show details for this"
 ❌ **Vague exploration**: "Dig deeper", "Analyze further", "Investigate this", "Look into the data"
 ❌ **Causal inference**: "What's driving this?", "What factors contributed?", "What explains the change?"
-❌ **Incomplete questions**: Missing metric, dimension, or time context
-❌ **Vague references**: "these top 10 drugs", "those clients", "the previous results"
+❌ **Dashboard navigation**: "Go to the report", "Open the dashboard", "View the chart"
+❌ **Incomplete questions**: Any question missing metric, dimension, or time context
 
-✅ **ONLY Generate**: Observable fact questions with complete [metric] + [dimension] + [time] structure
+## ALWAYS Generate:
+✅ **Observable fact questions**: "Show", "What is", "Break down", "Compare", "List", "Calculate"
+✅ **Specific, executable queries**: Clear metric + dimension + time
+✅ **Next logical step**: Based on playbook sequence and discovered patterns
 
-# Constraints
+# Constraints and Quality Standards
 
 - Check `questions_history` - do NOT suggest questions already asked or semantically similar
-- Use "top 20" or "bottom 20" for ranking questions (NOT top 5 or top 10)
-- Preserve scope: maintain time periods, filters, dimensional focus from current question
+- Use "top 20" or "bottom 20" for ranking questions (not top 5 or top 10)
+- Preserve all scope: time periods, filters, dimensional focus from current question
 - Verify all suggested dimensions/metrics exist in metadata
-- Questions must advance investigation, not restate what was already asked
-- Ensure questions are natural-sounding but SQL-interpretable
+- Questions must advance investigation, not just restate what was asked
+- Balance staying at current depth vs advancing to next level
+
+# Playbook Integration
+
+- Use playbook's `core_principles` for investigation philosophy
+- Follow `investigation_sequence` or `recommended_investigation_flow` for level progression
+- Apply `revenue_analysis`, `cost_analysis`, `volume_analysis`, `margin_analysis` guidance based on what metrics moved
+- Use `pattern_recognition` to identify next steps based on discovered patterns
+- When playbook suggests concentration analysis, include "top 20" ranking questions
+- When playbook suggests variance decomposition, include rate/volume/mix breakdown questions
 
 ==============================
 RESPONSE FORMAT
 ==============================
-Generate exactly 3 follow-up questions strictly.
-Response MUST be valid JSON. Do NOT include extra text, markdown, or formatting.
+Generate exactly 3 follow-up questions.
+Response MUST be valid JSON. Do NOT include markdown, extra text, or formatting.
 Do NOT start with ```json or end with ```.
 
 {{
     "followup_questions": [
-        "Show [metric] by [dimension] for [time]",
-        "What is the [metric] by [dimension] for [time]",
-        "Break down [metric] by [dimension] for [time]"
+        "Show [metric] by [dimension] for [time context]",
+        "What is the [metric] by [dimension] for [time context]",
+        "Break down [metric] by [dimension] for [time context]"
     ]
 }}
 
@@ -147,8 +187,8 @@ EXAMPLES
 ==============================
 
 **Example 1: Early Stage Investigation**
-Current: "What is the revenue for Q3 2024?"
-Last Answer: Shows total revenue declined 5%, no breakdown yet
+Current Question: "What is the revenue for Q3 2024?"
+Discovered: Revenue declined 5%, no breakdown yet
 
 Follow-ups:
 {{
@@ -158,11 +198,10 @@ Follow-ups:
         "What is the revenue per script by product category for Q3 2024"
     ]
 }}
-(All 3 from primary table, different dimensions at same level)
 
 **Example 2: Mid Stage with Concentration**
-Current: "Show revenue by clients for Q3 2024"
-Last Answer: Top 5 clients account for 75% of revenue decline
+Current Question: "Show revenue by clients for Q3 2024"
+Discovered: Top 5 clients account for 75% of revenue decline
 
 Follow-ups:
 {{
@@ -172,20 +211,34 @@ Follow-ups:
         "What is the revenue by clients in claims for Q3 2024"
     ]
 }}
-(2 from primary drilling into top 5, 1 pivots to complementary claims table)
+(Note: Last question pivots to complementary claims table)
 
-**Example 3: Mature Stage - Pivot to Complementary**
-Current: "Break down revenue variance by product category for Q3 2024"
-Last Answer: Specialty product has largest variance, concentrated in few clients
+**Example 3: Mature Stage with Complementary Pivot**
+Current Question: "Break down revenue variance by product category for Q3 2024"
+Discovered: Specialty product has largest variance, concentrated in few clients
 
 Follow-ups:
 {{
     "followup_questions": [
-        "Show revenue by clients in claims for Specialty in Q3 2024",
+        "Show revenue by clients in claims for Specialty products in Q3 2024",
         "Break down revenue by therapy classes in claims for Q3 2024",
         "What is the brand vs generic mix in claims for Q3 2024"
     ]
 }}
-(All 3 pivot to complementary claims table using claims-specific dimensions)
+(Note: All 3 questions pivot to complementary claims table with claims-specific dimensions)
+
+**Example 4: Using Specific Entities**
+Current Question: "Show revenue by clients for September 2024"
+Discovered: Narrative mentions "Client MDOVA has highest revenue decline"
+
+Follow-ups:
+{{
+    "followup_questions": [
+        "Show revenue by therapy classes for Client MDOVA in September 2024",
+        "What is the revenue per script for Client MDOVA by line of business in September 2024",
+        "Break down scripts by clients for September 2024"
+    ]
+}}
+(Note: First 2 use specific "Client MDOVA" since narrative has clear attribute context. Third stays generic.)
 
 """

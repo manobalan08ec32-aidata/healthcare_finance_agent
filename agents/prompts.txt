@@ -1,497 +1,123 @@
-{
-    "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": {
-        "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
-        "playbook": {
-            "core_principles": "Stay in ledger first before pivoting to claims. Offer HDP/SP/PBM split (product_category breakdown) for headline metrics for the same period. Preserve any scope dimensions from user's question (LOB, product, time period). Prefer executable verbs: Show/Break/Decompose/List/Compare with real ledger dimensions and measures. Focus on WHAT-type observable facts, not why/because questions.",
-            "revenue_analysis": "When metric_type='Revenues' amount_or_count moves, examine volume (metric_type='Unadjusted Scripts') and rate (Revenue_per_Script_Unadj or calculate from revenues/scripts) separately, then decompose via rate_variance/volume_variance/mix_variance. Rate drivers include product_category mix shifts (Specialty typically higher rate than PBM), line_of_business rate differences, product_sub_category changes. Volume drivers include line_of_business volume trends (E&I vs Medicare vs External), product_category volume shifts (PBM vs Home Delivery vs Specialty), product_sub_category_lvl_1 changes (Core PBM vs Community Pharmacies). Mix drivers include product hierarchy redistribution, LOB mix changes, sub-category level shifts. Always break down by product_category first for any revenue variance, then drill to product_sub_category_lvl_1 if concentrated. Use top/bottom analysis by line_of_business or product to find concentrated drivers.",
-            "cost_analysis": "When metric_type='COGS Post Reclass' amount_or_count moves, start with cost rate check (Cost_per_Script_Unadj or calculate COGS/Scripts), then examine if script volume (metric_type='Unadjusted Scripts') changed causing cost changes. Check product_category cost trends as Specialty typically has highest cost per script, followed by Home Delivery, then PBM. Break down by product_sub_category_lvl_1 to identify which channel driving cost pressure (Core Specialty vs Infusion vs Core HDP vs Core PBM vs Community Pharmacies). Compare line_of_business cost patterns as different LOBs may have different product mixes affecting overall cost. Investigate product_sub_category_lvl_2 for detailed channel-level cost drivers when variance concentrated. If cost per script rising uniformly, suggest pivoting to claims for pharmacy_type (internal vs external) and brand/generic mix analysis not available in ledger.",
-            "margin_analysis": "When metric_type='Gross Profit Post Reclass' or 'Gross Profit Pre Reclass' or 'IOI' amount_or_count moves, decompose into revenue and cost components separately. Show metric_type='Revenues' and 'COGS Post Reclass' side by side to identify if margin pressure from revenue decline, cost increase, or both. Calculate margin rate metrics (Margin_per_Script_Unadj, IOI_per_Script_Unadj) to understand per-unit profitability trends. Break down margin by product_category (PBM vs Home Delivery vs Specialty) as each has different margin profiles. Compare line_of_business margin trends (E&I FI vs E&I ASO vs PDP vs MAPD vs C&S) to identify which segment has highest margin compression. If Operating Earnings declining, also check metric_type='SG&A Post Reclass' to see if operating expenses increasing beyond gross margin issues. Show daily trend within the month if Gross Margin % or Revenues moved significantly.",
-            "script_volume_analysis": "When metric_type='Unadjusted Scripts' or '30 Day Scripts' or '90 Day Scripts' amount_or_count moves, first compare metric_type='30 Day Scripts' vs '90 Day Scripts' trends to check if supply days mix shifting (retail to mail order or vice versa). Note that shift from 30-day to 90-day reduces script count but may be volume-neutral from a supply perspective. Break down by product_category to identify if volume change concentrated in PBM, Home Delivery, or Specialty. Compare line_of_business script trends (E&I vs Medicare Advantage vs PDP vs C&S vs External) to see which business segment driving volume change. Drill to product_sub_category_lvl_1 (Core PBM vs Community Pharmacies vs Core HDP vs Core Specialty vs Other Products) if variance concentrated. If metric_type='Total Membership' available, show membership trend alongside scripts to calculate scripts per member proxy and understand if volume decline due to membership loss or utilization decline. Offer YoY same-month comparison for seasonal context.",
-            "operating_metrics_analysis": "When metric_type='SG&A Post Reclass' or 'Operating Earnings' or 'Corporate Costs' amount_or_count moves, break down by product_category and line_of_business to identify segment attribution. Compare Operating_Expenses_Percent or Operating_Cost_Percent trends to understand if expense growth outpacing revenue. For metric_type='Total Workforce FTE', compare headcount trends against volume and revenue trends to understand productivity metrics. When operating earnings under pressure, show both revenue and operating expense components, then suggest drilling into specific cost categories or product segments driving the variance.",
-            "forecast_variance_analysis": "When comparing ledger='Actuals (GAAP)' vs 'Budget' or any forecast cycle ('8+4 Forecast', '5+7 Forecast', '2+10 Forecast'), ALWAYS include GROUP BY metric_type in the query to ensure accurate comparison since amount_or_count represents different metrics based on metric_type dimension. Rank metric_type by absolute variance amount to identify which metrics missed or beat expectations (Revenues, COGS, Scripts, Margins, etc). Break down the largest variance metric by product_category and line_of_business to understand segment attribution. Show month-by-month actual vs forecast trend to check if variance accelerating or one-time event. If comparing to Budget and variance is large, check latest forecast cycle (2+10 Forecast is most recent, then 5+7, then 8+4) to see if re-forecast already adjusted expectations. Compare Actuals vs Budget vs Latest Forecast progression to understand expectation evolution. For Revenues or Scripts variances, decompose into volume and rate components at product or LOB level .INVESTIGATION SEQUENCE for forecast variance: (1) metric_type identification - ALWAYS GROUP BY metric_type first, rank by absolute variance, identify which metrics missed or beat forecast. (2) product_category attribution - break down largest variance metric by product (PBM vs Home Delivery vs Specialty) to identify concentration. (3) line_of_business attribution - show LOB contribution to variance (E&I vs Medicare vs External). (4) product hierarchy drill - if concentrated in one product, drill to product_sub_category_lvl_1 and lvl_2 for channel detail. (5) time pattern analysis - show month-by-month Actuals vs Forecast trend to determine if variance accelerating, one-time, or building over time. (6) volume vs rate decomposition - for Revenues or Scripts variance, separate volume component (Scripts variance) from rate component (Revenue per Script variance) to understand driver. (7) forecast cycle context - compare Budget vs 8+4 Forecast vs 5+7 Forecast vs 2+10 Forecast vs Actuals progression to see if re-forecasts caught the trend. (8) related metrics cross-check - if Revenues missed, verify if Scripts also missed (volume-driven) or Scripts on-target (rate-driven); if Margin missed, check Revenues and COGS separately; if available check Total Membership for member volume context. IMPORTANT: Claims table does NOT have forecast/budget data - it only has actuals. Therefore, when Actuals miss Forecast at ledger level, pivot to claims ONLY to analyze the actuals data at granular level (client, therapy, drug, pharmacy, brand/generic) to understand WHAT happened in actuals that differed from forecast assumptions. Do not attempt forecast comparison in claims - use claims to deeply investigate the actual performance drivers that caused the ledger-level forecast variance",
-            "time_and_trend_analysis": "Always offer YoY same-month comparison for seasonal context and year-over-year growth rates. If Gross Margin % or Revenues moved significantly, show daily trend within the same month using transaction_date to identify if change was gradual or sudden spike/drop. For quarter analysis, show month-by-month progression within quarter to understand timing and pattern. Compare multiple time periods (current month vs prior month vs same month prior year) to distinguish trend vs seasonality vs anomaly. When monthly variance exists, consider suggesting weekly or daily granularity for volatility investigation.",
-            "dimension_navigation": "For product hierarchy, drill from product_category (PBM/Home Delivery/Specialty) to product_sub_category_lvl_1 (Core PBM, Community Pharmacies, Core HDP, Core Specialty, Other Products, RVOH, Hospice, Workers Comp) to product_sub_category_lvl_2 (divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Core HDP, CP Core, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products) when drilling down for concentrated drivers. For line_of_business dimension, use abbreviated codes (E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External) for filtering and grouping. When analyzing specific product or LOB that's already scoped in user's question, preserve that scope in all follow-up suggestions.",
-            "pattern_recognition": "When rate increases but volume decreases (revenue may be flat or slightly down): suggest checking metric_type='Total Membership' trend as membership proxy, examine Cost_per_Script trend to see if cost also increasing (margin may be stable despite volume decline), then break down by product_category to see which segment showing this pattern. When both rate and volume decline (revenue significantly down): highlight top/bottom line_of_business or product_category contributions to identify concentrated drivers, consider showing daily or weekly trend within month for timing patterns, suggest checking if specific product_sub_category_lvl_1 driving both declines. When mix variance is large (product or LOB mix shifting): focus on product_category or product_sub_category_lvl_1 redistribution, compare current period vs prior period product mix percentages, identify which products gaining or losing share. When margin compressing: decompose into revenue decline vs cost increase components, show which product_category has highest margin pressure, check if Operating_Expenses_Percent also increasing for SG&A pressure beyond COGS.",
-            "pivot_to_claims_guidance": "Pivot from ledger to claims when variance is concentrated in specific product_category and need client/pharmacy/therapy granularity not available in ledger (>70% variance from one product). When rate variance requires investigation into brand/generic mix (GDR), therapy class composition, or pharmacy channel (internal vs external) that ledger doesn't provide. When volume variance needs client-level attribution, claim status/quality investigation, or therapy class trends. When cost variance needs drug-level pricing (wac_amount, awp_cost_amount), brand/generic cost differences, or pharmacy type cost analysis. When need to validate if specific patterns are driven by client concentration, therapy mix shifts, or operational factors like claim reversals. Do not imply any join between ledger and claims - they are complementary views of the business for the same conceptual scope and time period.",
-            "optional_dimensions_and_angles": "Consider breaking down by multiple dimensions simultaneously when variance concentrated: product_category by line_of_business matrix, product_sub_category_lvl_1 by ledger type (Actuals vs Forecast), line_of_business trends across multiple quarters. For Pareto analysis, show top N product_sub_categories or line_of_business contributing X% of total (e.g., top 5 = 80% of revenue). When analyzing specific products like Specialty, consider suggesting focus on product_sub_category_lvl_2 for Core Specialty vs Infusion breakdown. For forecast analysis, compare across all ledger types (Actuals, Budget, 8+4, 5+7, 2+10) to understand expectation progression throughout the year."
-        },
-        "dimensions": [
-            {
-                "field_name": "ledger",
-                "description": "Ledger type: Actuals (GAAP), Budget, or forecast cycle. Default to Actuals (GAAP) if not specified.",
-                "distinct_values": [
-                    "Actuals (GAAP)",
-                    "Budget",
-                    "8+4 Forecast",
-                    "5+7 Forecast",
-                    "2+10 Forecast"
-                ]
-            },
-            {
-                "field_name": "metric_type",
-                "description": "Important metric types for financial and operational reporting. Always use GROUP BY on this column for actuals vs forecast vs budget comparisons.",
-                "distinct_values": [
-                    "COGS Post Reclass",
+ 
+        followup_prompt = f"""
+               You are generating intelligent follow-up questions for healthcare finance analysis to help users drill down deeper into their data.
 
-                    "SG&A Post Reclass",
-                    "IOI",
+            CURRENT CONTEXT:
+            Current Question: "{current_question}"
 
-                    "Revenues",
+            Last 3 questions summary: "{narrative_response_hist}"
 
-                    "90 Day Scripts",
-                    "Unadjusted Scripts",
-       
-                    "Total Membership",
-       
-                ]
-            },
-            {
-                "field_name": "line_of_business",
-                "description": "Line of business identifier.",
-                "distinct_values": [
-                    "E&I FI",
-                    "E&I ASO",
-                    "C&S",
-                    "PDP",
-                    "MAPD",
-                    "E&I UMR",
-                    "External"
-                ]
-            },
-            {
-                "field_name": "product_category",
-                "description": "Category of product or service.",
-                "distinct_values": [
-                    "PBM",
-                    "Home Delivery",
-                    "Specialty"
-                ]
-            },
-            {
-                "field_name": "product_sub_category_lvl_1",
-                "description": "First-level subcategory under product_category.",
-                "distinct_values": [
-                    "Home Delivery",
-                    "Specialty",
-                    "Core PBM",
-                    "Other Products",
-                    "Community Pharmacies",
-                    "RVOH",
-                    "Hospice",
-                    "Workers Comp"
-                ]
-            },
-            {
-                "field_name": "product_sub_category_lvl_2",
-                "description": "Second-level subcategory for more granularity.",
-                "distinct_values": [
-                    "divvyDOSE",
-                    "Retail Other",
-                    "GPO",
-                    "Optum Store",
-                    "Infusion",
-                    "Unknown",
-                    "Workers Comp",
-                    "Healthline/Healthgrades",
-                    "Core HDP",
-                    "CP Core",
-                    "Mfr Discount",
-                    "Hospice",
-                    "RVOH Corp",
-                    "Core Specialty",
-                    "Prior Auth",
-                    "Distribution",
-                    "Frontier",
-                    "PharmScript",
-                    "Retail",
-                    "Prevention",
-                    "CPS Solutions",
-                    "Nuvaila",
-                    "Admin Fees",
-                    "Optum Perks",
-                    "Other Products"
-                ]
-            }
-        ],
-        "metrics": [
-            {
-                "field_name": "amount_or_count",
-                "description": "Contains either amount or count values for each metric type. Must not be aggregated without appropriate filters or grouping by metric_type."
-            },
-			
-			{
-                "field_name": "rate or revenue per script",
-                "description": "Contains revenue per script metric."
-            },
-			
-            {
-                "field_name": "rate_variance",
-                "description": "Derived metric: (Prior Month Avg Rate - Current Month Avg Rate) × Current Month Volume",
-                "is_derived": true
-            },
-            {
-                "field_name": "volume_variance",
-                "description": "Derived metric: (Prior Month Volume - Current Month Volume) × Current Rate",
-                "is_derived": true
-            },
-            {
-                "field_name": "mix_variance",
-                "description": "Derived metric: Prior Month Revenue - Current Month Revenue - Rate Variance - Volume Variance",
-                "is_derived": true
-            }
-        ],
-        "complementary_table": {
-            "table_name": "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims",
-            "relationship": "complementary",
-            "playbook": {
-                "recommended_investigation_flow": {
-                    "description": "When pivoting from ledger to claims, follow this progressive drill-down sequence to systematically identify drivers",
-                    "sequence": "client_name → carrier_id → therapy_class_name → drug detail → brand_vs_generic_ind → claim_status_code → member demographics",
-                    "level_1_client": "Start with client_name to identify which customers driving variance. Show top 10 clients by delta revenue/scripts. Calculate rate_variance, volume_variance, mix_variance by client. Assess concentration - do top 5-10 clients account for >70% of variance?",
-                    "level_2_carrier": "If client-level shows concentration, examine carrier_id patterns. Check if multiple high-variance clients belong to same carrier indicating carrier-level dynamics rather than individual client issues.",
-                    "level_3_therapy_class": "Investigate therapy_class_name to understand drug category drivers. List therapies by revenue contribution, delta revenue, delta rate. Identify if specialty categories (Oncology, GLP-1) driving variance.",
-                    "level_4_drug_detail": "For high-impact therapy classes, drill into specific drug detail within those therapy categories. Show top drugs by volume and revenue within the therapy class. Examine pricing trends (wac_amount, awp_cost_amount) for specific drugs.",
-                    "level_5_brand_generic": "Check brand_vs_generic_ind mix impact. Calculate GDR_Ratio (Generic Dispense Rate) trend. Show if brand penetration increasing (GDR declining) which drives rate up and cost up. Quantify brand vs generic revenue and cost contribution.",
-                    "level_6_claim_status": "Verify claim_status_code patterns to rule out operational issues. Calculate reversal rate (X / P ratio). Check if reversal patterns unusual for specific clients or therapies. Ensure using P and X together for net activity analysis.",
-                    "level_7_demographics": "If variance not explained by above levels, examine member demographics. Show mbr_sex distribution for gender patterns. Calculate age cohorts from mbr_dt_of_brth for age-based utilization. Useful for therapies with demographic skew.",
-                    "flexibility_note": "This sequence provides a systematic framework but can be adapted based on context. If ledger already identified product-level pattern, may start at therapy_class level. If client already scoped in question, start at therapy or brand/generic level. Use judgment to skip levels when appropriate."
-                },
-                "core_principles": "Pivot to claims to inspect drivers for the same conceptual scope as ledger analysis - do not imply any join between tables. Preserve time period and any LOB/product scope from ledger query. Focus on granular drivers not available in ledger: client_name, therapy_class_name, pharmacy_type, brand_vs_generic_ind, state_cd, and member demographics. Prefer executable verbs: Show/Break/Decompose/List/Compare. Focus on WHAT-type observable facts, not why/because questions.",
-                "revenue_deep_dive": "After ledger shows revenue variance by product/LOB, pivot to claims for client and therapy-level attribution. Calculate rate_variance, volume_variance, mix_variance at client_name level for the same time period to identify which clients driving ledger variance. Show revenue_per_script (revenue_amt / unadjusted_script_count) trends by top clients to understand rate drivers. List top 10 clients by revenue contribution and by delta revenue to find concentrated drivers. Investigate brand_vs_generic_ind mix shift by calculating GDR_Ratio (Generic Dispense Rate = count where brand_vs_generic_ind='Generic' / total scripts) trend - declining GDR means more brand which typically increases revenue_per_script. Compare brand vs generic script volume and revenue contribution to quantify mix impact. List therapy_class_name by revenue change and by rate change to identify which drug categories driving variance - check if GLP-1, Oncology, or other high-cost specialty therapies growing. Show pharmacy_type (Internal Optum Owned vs External) revenue and rate trends to understand channel impact. For clients with largest variance, drill into their therapy_class_name distribution and brand/generic mix to understand client-specific drivers.",
-                "cost_deep_dive": "After ledger shows COGS variance by product/LOB, pivot to claims for drug pricing and channel cost investigation. Show wac_amount (Wholesale Acquisition Cost) and awp_cost_amount (Average Wholesale Price) trends over time to identify if drug pricing pressure exists - rising wholesale prices indicate manufacturer price increases. Calculate average expense_amt per script (expense_amt / unadjusted_script_count) trend to understand unit cost changes. Check brand_vs_generic_ind mix by calculating GDR_Ratio trend - declining GDR (more brand dispensing) significantly increases cost per script as brand drugs cost more than generics. Show cost per script difference between brand_vs_generic_ind='Brand' vs 'Generic' to quantify the brand premium. List therapy_class_name by average expense_amt per script to identify high-cost therapies - Oncology, specialty injectables, and GLP-1 drugs typically have highest cost. Show volume growth in high-cost therapy classes to understand if therapy mix shifting toward expensive drugs. Compare expense_amt per script by pharmacy_type (Internal vs External) as external pharmacies typically have higher cost structure. Break down by client_name to identify if specific clients or client_type have different cost structures or contracts affecting overall cost.",
-                "volume_deep_dive": "After ledger shows script volume variance by product/LOB, pivot to claims for operational and client-level investigation. First check supply days mix by comparing 30_days_script_count vs 90_days_script_count trends - shift from 30-day to 90-day supply reduces script count but may be volume-neutral (same days supply). Calculate 90-day script percentage trend to quantify this mix shift. Check claim_status_code distribution focusing on P (Paid) and X (Reversed) to understand net utilization - calculate reversal rate (X count / P count) trend to see if reversals increasing which would indicate operational or data quality issues. Always filter to claim_status_code IN ('P','X') for utilization/financial analysis. Show daily unadjusted_script_count pattern using submit_date to identify anomalies, missing days, or sudden drops. List top clients by script volume decline (delta unadjusted_script_count) to identify if volume loss concentrated in few clients. Show client_type volume trends to see if specific customer segments declining (e.g., EMPLOYER vs HEALTH PLAN vs GOVERNMENT). Break down by line_of_business_desc for detailed business segment understanding. List therapy_class_name volume trends to understand if specific drug categories declining. Show state_cd geographic patterns if volume concentrated in specific regions. Compare adjusted_script_count vs unadjusted_script_count to understand normalization impact, though this is usually minor.",
-                "client_attribution_analysis": "When investigating client-level drivers, show client_name revenue, scripts (unadjusted_script_count), and revenue_per_script trends. Calculate rate_variance, volume_variance, mix_variance for each top client to understand their individual variance components. For clients with large variance, break down their therapy_class_name distribution to see if specific therapies driving their performance. Show client's brand_vs_generic_ind mix (GDR_Ratio) compared to overall average to identify if generic substitution differs. If variance concentrated in few clients (top 5-10 clients drive >70-80% of total variance), drill into their account_id and group_id breakdown using CAG (carrier_id + account_id + group_id) concatenation for benefit design level analysis. Compare client's pharmacy_type utilization (Internal vs External) to understand channel preference. Show client's line_of_business or client_type to understand business segment context.",
-                "therapy_and_drug_analysis": "List therapy_class_name ranked by revenue contribution, script volume, and revenue_per_script to understand drug category portfolio. Show therapy classes with largest delta revenue, delta scripts, and delta rate between periods to identify growth/decline drivers. For high-impact therapies, break down by brand_vs_generic_ind to understand if brand or generic driving the therapy's performance. Check if specialty therapies (Oncology, Infusion, GLP-1) growing faster than overall portfolio. Filter therapy_class_name LIKE '%GLP-1%' for focused analysis on GLP-1 drugs which are high-cost and rapidly growing category for weight-loss and diabetes. Show therapy_class_name by pharmacy_type to understand if certain therapies dispensed more through Internal vs External channels. For therapies with unusual patterns, drill into wac_amount and awp_cost_amount trends to see if pricing changed. Examine top clients for high-impact therapies to understand client concentration.",
-                "channel_and_pharmacy_analysis": "Compare pharmacy_type (Internal Optum Owned vs External) for revenue_amt, unadjusted_script_count, revenue_per_script, and expense_amt per script. Calculate internal capture rate (Internal scripts / Total scripts) trend to understand channel mix shift. Show if external pharmacy volume growing which typically has higher cost and different margin profile. Break down by line_of_business to see if specific LOBs have different pharmacy type preferences. For internal pharmacy, may want to examine member loyalty and retention patterns. Compare brand_vs_generic_ind mix between Internal vs External to see if generic substitution rates differ by channel.",
-                "geographic_and_demographic_analysis": "Show state_cd breakdown for revenue, scripts, and rate trends to identify geographic concentration or patterns. Compare top states by delta revenue or delta scripts to find regional drivers. For high-impact states, drill into client_name distribution to understand if state pattern driven by client mix or broader regional trends. When relevant, analyze mbr_sex distribution to understand gender differences in utilization or therapy mix. Calculate age cohorts using mbr_dt_of_brth to understand age-based patterns - convert birth date to age and group into cohorts (18-34, 35-49, 50-64, 65+). Examine therapy_class_name distribution by demographic segments to understand different drug category usage patterns.",
-                "operational_quality_checks": "Always verify claim_status_code distribution, focusing on P (Paid) and X (Reversed) for net activity - both together reflect true utilization and financial impact. Calculate reversal rate trend (X count / total) to monitor operational quality - sudden spikes may indicate system issues or policy changes. Show daily transaction count pattern using submit_date to verify data completeness - missing days or sudden drops require investigation. For outlier clients or periods, examine claim_nbr counts vs unadjusted_script_count to ensure data integrity. Check if specific client_type or line_of_business has unusual reversal patterns. When volume patterns seem unusual, verify that time periods being compared have same number of business days.",
-                "variance_decomposition_methodology": "Calculate rate_variance as (Prior Period Avg Rate - Current Period Avg Rate) × Current Period Volume, where rate is revenue_per_script and volume is unadjusted_script_count. Calculate volume_variance as (Prior Period Volume - Current Period Volume) × Current Period Avg Rate. Calculate mix_variance as (Prior Period Revenue - Current Period Revenue - Rate Variance - Volume Variance). Perform decomposition at client_name, therapy_class_name, or other dimension level to identify concentrated drivers. When rate_variance dominates, focus on brand_vs_generic_ind mix, therapy_class_name mix, client rate changes, pharmacy_type differences. When volume_variance dominates, focus on client volume changes, therapy volume trends, line_of_business volume shifts. When mix_variance dominates, focus on GDR shifts, therapy redistribution, client mix changes, product hierarchy shifts.",
-                "pattern_recognition": "When rate increases but volume decreases: check daily unadjusted_script_count trend as membership/utilization proxy, show brand_vs_generic_ind mix shift (increasing brand mix raises rate), calculate GDR_Ratio trend, then decompose rate_variance vs volume_variance by client_name and therapy_class_name to identify concentrated drivers. When both rate and volume decline: focus on top/bottom clients by delta revenue to find concentration, show brand_vs_generic_ind shift (GDR change), list therapy_class_name with largest combined rate and volume impact, check if specific client_type or line_of_business driving both declines. When volume declines but rate stable: check 30_days_script_count vs 90_days_script_count mix shift (supply days change), show client_name volume changes for concentration, verify claim_status_code reversal rate not increasing, analyze therapy_class_name volume trends, check state_cd geographic patterns. When cost increases: investigate wac_amount and awp_cost_amount pricing trends, check GDR_Ratio decline (more brand), show high-cost therapy_class_name volume growth, compare pharmacy_type cost differences.",
-                "pareto_and_concentration_analysis": "Use top/bottom N analysis to identify concentrated drivers: show top 10 clients contributing to revenue/volume/cost variance, list top 10 therapy_class_name by contribution, identify top 5-10 states if geographic concentration exists. Calculate concentration metrics: do top 5 clients account for >70% of variance, do top 3 therapy classes represent >60% of volume. When high concentration found (few entities drive majority of variance), drill deeper into those specific entities. For concentrated clients, examine their therapy mix, brand/generic mix, pharmacy type usage, account_id/group_id breakdown. For concentrated therapies, show their client distribution, brand/generic split, pricing trends, pharmacy channel preference. If concentration is low (variance dispersed across many entities), consider suggesting re-anchor to ledger to look at systematic/segment-level patterns rather than individual entity analysis.",
-                "optional_angles": "Consider channel splits comparing pharmacy_type Internal Optum Owned vs External Non-Optum Owned for all key metrics. Focus on GLP-1 drugs by filtering therapy_class_name LIKE '%GLP-1%' given rapid growth in weight-loss and diabetes categories. Perform Pareto analysis showing top N entities (clients/therapies/states) contributing X% of total or variance. Analyze day-of-week patterns using submit_date to check for weekly seasonality or operational patterns like batch processing. Conduct outlier detection to identify clients, therapies, or states with statistical outlier rate or volume changes requiring investigation. Show geographic breakdown by state_cd when regional patterns relevant. Examine demographic patterns using mbr_sex and age cohorts from mbr_dt_of_brth when appropriate for therapy or utilization analysis. Compare specific therapy classes like Oncology, GLP-1, Specialty injectables that have unique cost and utilization patterns.",
-                "re_anchor_to_ledger": "After claims analysis identifies concentrated drivers or specific patterns, suggest re-anchoring to ledger to verify findings roll up correctly and to add financial context. When claims shows fewer than 5 clients drive more than 80% of variance, suggest checking ledger metric_type='Revenues' and 'Gross Profit Post Reclass' for those clients' line_of_business to understand margin impact. When specific therapy classes or product segments identified as key drivers in claims, verify they align with ledger product_category or product_sub_category_lvl_1 variance. When claims deep-dive complete, propose verifying the findings explain the original ledger variance that prompted the claims investigation. Frame as: 'Verify these claims drivers roll up to the ledger variance we started with' or 'Check ledger-level margin impact for the identified claim drivers'. Do not imply join - frame as validation that complementary views tell consistent story."
-            },
-            "dimensions": [
-                {
-                    "field_name": "client_id",
-                    "description": "Unique client identifier."
-                },
-                {
-                    "field_name": "client_name",
-                    "description": "Client description for user-facing reports."
-                },
-                {
-                    "field_name": "client_type",
-                    "description": "Type of the client.",
-                    "distinct_values": [
-                        "SECONDARY",
-                        "PHARM TECH",
-                        "MS UHCMB",
-                        "WORK COMP",
-                        "GOVERNMENT",
-                        "HOSPISCRIPT",
-                        "PUBLIC SECTOR COMPANIES",
-                        "STRATEGIC SOLUTIONS",
-                        "PAYER",
-                        "WRAP",
-                        "DIRECT EMPLOYER",
-                        "MS WC",
-                        "HEALTH PLAN",
-                        "PROVIDER",
-                        "REBATES",
-                        "MCO",
-                        "MS ONLY",
-                        "MAPD",
-                        "COE",
-                        "TPA CLIENTS",
-                        "OTHER",
-                        "UMR",
-                        "LABOR TRUST",
-                        "FMS ONLY",
-                        "EMPLOYER CARVE OUT",
-                        "DISCOUNT CARD"
-                    ]
-                },
-                {
-                    "field_name": "carrier_id",
-                    "description": "Identifier of the insurance carrier administering the plan."
-                },
-                {
-                    "field_name": "line_of_business",
-                    "description": "Line of business identifier.",
-                    "distinct_values": [
-                        "E&I FI",
-                        "E&I ASO",
-                        "C&S",
-                        "PDP",
-                        "MAPD",
-                        "E&I UMR",
-                        "External"
-                    ]
-                },
-                {
-                    "field_name": "therapy_class_name",
-                    "description": "Therapeutic class of the drug."
-                },
-                {
-                    "field_name": "brand_vs_generic_ind",
-                    "description": "Product type indicator for brand/generic analysis.",
-                    "distinct_values": [
-                        "Brand",
-                        "Generic"
-                    ]
-                },
-                {
-                    "field_name": "mbr_dt_of_brth",
-                    "description": "Member date of birth enabling age-based segmentation.",
-                    "format": "YYYY-MM-DD"
-                },
-                {
-                    "field_name": "state_cd",
-                    "description": "Two-letter state code for geographic analysis.",
-                    "distinct_values": [
-                        "TX",
-                        "CA",
-                        "MN"
-                    ]
-                },
-                {
-                    "field_name": "pharmacy_type",
-                    "description": "Identifies pharmacy type - internal or external.",
-                    "distinct_values": [
-                        "EXTERNAL-NON OPTUM OWNED",
-                        "INTERNAL OPTUM OWNED"
-                    ]
-                }
-            ],
-            "metrics": [
-                {
-                    "field_name": "revenue_amt",
-                    "description": "Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script."
-                },
-                {
-                    "field_name": "expense_amt",
-                    "description": "Expense/cost of goods sold for the claim. Pairs with revenue_amt for margin views."
-                },
-                {
-                    "field_name": "wac_amount",
-                    "description": "Wholesale Acquisition Cost reference for pricing/cost analytics."
-                },
-                {
-                    "field_name": "awp_cost_amount",
-                    "description": "Average Wholesale Price reference for pricing/cost analytics."
-                },
-                {
-                    "field_name": "unadjusted_script_count",
-                    "description": "Raw script/claim count per event. Use for total volume and as denominator for revenue_per_script."
-                },
-                {
-                    "field_name": "adjusted_script_count",
-                    "description": "Adjusted script count - not for raw script count analysis."
-                },
-                {
-                    "field_name": "30_days_script_count",
-                    "description": "Count of 30-day prescriptions."
-                },
-                {
-                    "field_name": "90_days_script_count",
-                    "description": "Count of 90-day prescriptions for mail-order and adherence analyses."
-                },
-                {
-                    "field_name": "revenue_per_script",
-                    "description": "Derived metric: revenue_amt / unadjusted_script_count",
-                    "is_derived": true
-                },
-                {
-                    "field_name": "rate_variance",
-                    "description": "Derived metric: (Prior Month Avg Rate - Current Month Avg Rate) × Current Month Volume",
-                    "is_derived": true
-                },
-                {
-                    "field_name": "volume_variance",
-                    "description": "Derived metric: (Prior Month Volume - Current Month Volume) × Current Rate. Volume is unadjusted_script_count.",
-                    "is_derived": true
-                },
-                {
-                    "field_name": "mix_variance",
-                    "description": "Derived metric: Prior Month Revenue - Current Month Revenue - Rate Variance - Volume Variance",
-                    "is_derived": true
-                },
-                {
-                    "field_name": "GDR_Ratio",
-                    "description": "Derived metric: Generic Dispense Rate - percentage of generic scripts (count where brand_vs_generic_ind='Generic' / total scripts)",
-                    "is_derived": true
-                }
-            ]
-        }
-    },
-    "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims": {
-        "table_name": "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims",
-        "playbook": {
-            "recommended_investigation_flow": {
-                "description": "When pivoting from ledger to claims, follow this progressive drill-down sequence to systematically identify drivers",
-                "sequence": "client_name → carrier_id → therapy_class_name → drug detail → brand_vs_generic_ind → claim_status_code → member demographics",
-                "level_1_client": "Start with client_name to identify which customers driving variance. Show top 10 clients by delta revenue/scripts. Calculate rate_variance, volume_variance, mix_variance by client. Assess concentration - do top 5-10 clients account for >70% of variance?",
-                "level_2_carrier": "If client-level shows concentration, examine carrier_id patterns. Check if multiple high-variance clients belong to same carrier indicating carrier-level dynamics rather than individual client issues.",
-                "level_3_therapy_class": "Investigate therapy_class_name to understand drug category drivers. List therapies by revenue contribution, delta revenue, delta rate. Identify if specialty categories (Oncology, GLP-1) driving variance.",
-                "level_4_drug_detail": "For high-impact therapy classes, drill into specific drug detail within those therapy categories. Show top drugs by volume and revenue within the therapy class. Examine pricing trends (wac_amount, awp_cost_amount) for specific drugs.",
-                "level_5_brand_generic": "Check brand_vs_generic_ind mix impact. Calculate GDR_Ratio (Generic Dispense Rate) trend. Show if brand penetration increasing (GDR declining) which drives rate up and cost up. Quantify brand vs generic revenue and cost contribution.",
-                "level_6_claim_status": "Verify claim_status_code patterns to rule out operational issues. Calculate reversal rate (X / P ratio). Check if reversal patterns unusual for specific clients or therapies. Ensure using P and X together for net activity analysis.",
-                "level_7_demographics": "If variance not explained by above levels, examine member demographics. Show mbr_sex distribution for gender patterns. Calculate age cohorts from mbr_dt_of_brth for age-based utilization. Useful for therapies with demographic skew.",
-                "flexibility_note": "This sequence provides a systematic framework but can be adapted based on context. If ledger already identified product-level pattern, may start at therapy_class level. If client already scoped in question, start at therapy or brand/generic level. Use judgment to skip levels when appropriate."
-            },
-            "core_principles": "Stay in claims and deepen drivers using available dimensions. Use top/bottom N analysis to surface concentrated drivers. Provide daily/monthly trend when it clarifies the story. Preserve any scope from prior queries (time period, LOB, product, client). Focus on WHAT-type observable facts, not why/because questions. Prefer executable verbs: Show/Break/Decompose/List/Compare.",
-            "revenue_analysis": "When revenue_amt moves, first check volume by showing unadjusted_script_count trend for the same period - compare current vs prior period script volume using unadjusted_script_count as primary volume metric. Then check rate by calculating revenue_per_script (revenue_amt / unadjusted_script_count) trend and comparing current vs prior period. Decompose into rate_variance, volume_variance, mix_variance to identify which component is largest - calculate at client_name or therapy_class_name level. If rate_variance dominates: check brand_vs_generic_ind mix shift (did GDR change), show revenue_per_script by therapy_class_name, list client_name with largest rate changes, compare pharmacy_type rate differences (Internal vs External). If volume_variance dominates: show unadjusted_script_count by client_name, break down by therapy_class_name volume trends, check line_of_business or client_type volume patterns, show state_cd geographic distribution. If mix_variance dominates: calculate GDR_Ratio trend (Generic Dispense Rate change), show therapy_class_name mix change (high-revenue vs low-revenue therapies), compare client mix shift (high-rate vs low-rate clients), check if specialty therapy penetration changing. Finally perform concentration analysis: list top 10 therapy_class_name by revenue contribution, show top 10 client_name driving the variance, calculate if top 5 entities account for >70% of change (Pareto principle), identify concentrated drivers for potential escalation.",
-            "cost_analysis": "When expense_amt moves, start with pricing pressure check by showing wac_amount (Wholesale Acquisition Cost) trend and awp_cost_amount (Average Wholesale Price) trend over time, then calculate average cost per script (expense_amt / unadjusted_script_count) trend. Check brand vs generic mix by examining brand_vs_generic_ind distribution change, calculate GDR_Ratio trend (lower GDR means more brand which means higher cost), show cost per script difference between Brand and Generic. Analyze therapy class cost impact by listing therapy_class_name by average expense_amt per script, showing volume growth in high-cost therapy classes (Oncology, GLP-1, Specialty), calculating therapy mix impact on overall cost per script. Compare channel/pharmacy cost by showing expense_amt per script by pharmacy_type (Internal Optum Owned vs External), checking if external pharmacy volume shifting (typically higher cost), examining product hierarchy cost patterns via line_of_business_desc. Investigate client/contract cost patterns by showing expense_amt per script by client_type or client_name, identifying clients with largest cost per script increases, checking if specific contract types have different cost structures.",
-            "script_volume_analysis": "When unadjusted_script_count declines or grows unexpectedly, first check supply days mix by comparing 30_days_script_count vs 90_days_script_count trends and calculating 90-day script percentage trend - note that shift to 90-day reduces script count but may be volume-neutral from days supply perspective. Check adjustment factor by comparing adjusted_script_count vs unadjusted_script_count to rule out data methodology changes (usually minor). Perform claim status/quality check by examining claim_status_code distribution (P=Paid vs X=Reversed), calculating reversal rate trend to see if increasing, showing daily unadjusted_script_count pattern for anomalies, filtering to P and X only for net utilization analysis. Break down by business segment by showing unadjusted_script_count by line_of_business, client_type, or client_name, listing top/bottom clients by volume change. Analyze therapy and geographic patterns by showing therapy_class_name volume trends, checking brand_vs_generic_ind volume distribution, breaking down by state_cd for geographic patterns, showing pharmacy_type volume mix (Internal vs External).",
-            "client_deep_dive": "When analyzing specific client or client_type patterns, show client revenue_amt and unadjusted_script_count trends, calculate revenue_per_script for the client, compare client metrics vs overall average. Calculate rate_variance, volume_variance, mix_variance for the client to identify which component driving their performance, compare client variance pattern to overall pattern. Show client's therapy_class_name distribution, calculate client's GDR_Ratio (generic rate), compare client's brand_vs_generic_ind mix to overall average. If variance concentrated in one client, break down by account_id or group_id, use CAG (carrier_id + account_id + group_id concatenation) for benefit design analysis, identify if specific subgroups driving client variance. Show client's pharmacy_type utilization pattern (Internal vs External preference), examine client's geographic distribution via state_cd if relevant, check client's line_of_business_desc for business context.",
-            "therapy_and_drug_deep_dive": "List therapy_class_name ranked by revenue contribution, script volume (unadjusted_script_count), and revenue_per_script to understand drug category portfolio. Show therapy classes with largest delta revenue, delta scripts, and delta rate between periods to identify growth/decline drivers. For high-impact therapies, break down by brand_vs_generic_ind to understand if brand or generic driving the therapy's performance. Check if specialty therapies (Oncology, Infusion, GLP-1 categories) growing faster than overall portfolio - filter therapy_class_name LIKE '%GLP-1%' for focused analysis on rapidly growing weight-loss and diabetes drug category. Show therapy_class_name by pharmacy_type to understand if certain therapies dispensed more through Internal vs External channels. For therapies with unusual patterns, examine wac_amount and awp_cost_amount trends to see if drug pricing changed. Show top clients for high-impact therapies to understand client concentration. Calculate therapy mix percentage changes between periods to quantify portfolio shift.",
-            "variance_decomposition_deep_dive": "Calculate rate_variance as (Prior Period Average Rate - Current Period Average Rate) × Current Period Volume, where rate is revenue_per_script calculated as revenue_amt / unadjusted_script_count. Calculate volume_variance as (Prior Period Volume - Current Period Volume) × Current Period Average Rate, where volume is unadjusted_script_count. Calculate mix_variance as (Prior Period Revenue - Current Period Revenue - Rate Variance - Volume Variance). Perform decomposition at granular levels: by client_name to identify which clients contributing most to each variance component, by therapy_class_name to understand drug category impact, by pharmacy_type to see channel effects, by state_cd for geographic attribution. When rate_variance dominates (>50% of total variance): focus follow-ups on brand_vs_generic_ind mix shifts, therapy_class_name rate changes, client-specific rate movements, pharmacy_type rate differences. When volume_variance dominates: focus on client volume losses/gains, therapy volume trends, line_of_business shifts, claim_status_code quality issues. When mix_variance dominates: focus on GDR shifts (generic dispense rate changes), therapy class redistribution (high-cost vs low-cost therapy mix), client mix changes (high-rate vs low-rate client mix), product hierarchy shifts.",
-            "channel_and_pharmacy_deep_dive": "Compare pharmacy_type (Internal Optum Owned vs External Non-Optum Owned) across all key metrics: revenue_amt, unadjusted_script_count, revenue_per_script, expense_amt per script, brand_vs_generic_ind mix. Calculate internal capture rate as (Internal pharmacy scripts / Total scripts) trend to understand channel mix shift over time. Show if external pharmacy volume growing which typically indicates lower capture and different margin/cost profile. Break down internal vs external patterns by line_of_business to see if specific LOBs have different pharmacy type preferences or contractual requirements. For internal pharmacy specifically, examine member loyalty patterns and therapy_class_name mix to understand specialty capture. Compare brand_vs_generic_ind (GDR) between Internal vs External to see if generic substitution rates differ by channel - internal may have higher generic rate. Show cost structure differences by calculating expense_amt per script for Internal vs External across different therapy classes.",
-            "geographic_and_demographic_deep_dive": "Show state_cd breakdown for revenue_amt, unadjusted_script_count, and revenue_per_script trends to identify geographic concentration or regional patterns. Compare top states by delta revenue or delta scripts to find regional drivers of overall variance. For high-impact states, drill into client_name distribution to understand if state pattern driven by client mix (large client in that state) or broader regional trends (market dynamics). Show state_cd by therapy_class_name to understand regional drug utilization differences. When relevant for therapy or demographic analysis, examine mbr_sex distribution to understand gender differences in utilization or therapy mix - some therapies (e.g., women's health, men's health) have gender skew. Calculate age cohorts using mbr_dt_of_brth by converting birth date to age (current year minus birth year) and grouping into cohorts like 18-34, 35-49, 50-64, 65+ to understand age-based patterns. Examine therapy_class_name distribution by age cohorts to understand different drug category usage - older cohorts typically higher utilization of chronic disease therapies.",
-            "operational_and_quality_checks": "Always verify claim_status_code distribution focusing on P (Paid) and X (Reversed) for net activity since both together reflect true utilization and financial impact - never analyze P alone without considering X. Calculate reversal rate trend as (X count / P count) or (X count / total claims) to monitor operational quality - sudden spikes in reversal rate may indicate system issues, policy changes, or operational problems requiring investigation. Show daily transaction count pattern using submit_date to verify data completeness across the analysis period - missing days or sudden drops in daily counts require investigation before drawing conclusions. For outlier clients or unusual time periods, examine claim_nbr distinct count vs unadjusted_script_count sum to ensure data integrity and understand if claims mapping correctly. Check if specific client_type or line_of_business has unusual reversal patterns that might indicate contractual or operational issues. When volume patterns seem unusual or unexpected, verify that time periods being compared have same number of business days to ensure fair comparison. For any analysis involving expense_amt or revenue_amt, ensure claim_status_code filtered appropriately since reversed claims may have negative amounts.",
-            "pattern_recognition_and_signals": "When rate increases but volume decreases (revenue may be flat or slightly down): check daily unadjusted_script_count trend as membership/utilization proxy to understand if losing members or scripts per member declining, show brand_vs_generic_ind mix shift since increasing brand mix raises revenue_per_script, calculate GDR_Ratio trend to quantify generic rate change, decompose rate_variance vs volume_variance by client_name and therapy_class_name to identify if concentrated in specific entities or broad-based. When both rate and volume decline (revenue significantly down): focus on top/bottom clients by delta revenue to find if decline concentrated or dispersed, show brand_vs_generic_ind shift (GDR change) to rule out mix impact, list therapy_class_name with largest combined rate and volume impact to identify drug category drivers, check if specific client_type or line_of_business driving both declines which would indicate segment-level issue. When volume declines but rate stable (revenue down proportional to volume): check 30_days_script_count vs 90_days_script_count mix shift since supply days change affects script count but not revenue proportionally, show client_name volume changes for concentration analysis, verify claim_status_code reversal rate not increasing which would indicate data quality vs true volume decline, analyze therapy_class_name volume trends to see if specific drug categories declining, check state_cd geographic patterns for regional concentration. When cost increases (expense_amt or expense per script rising): investigate wac_amount and awp_cost_amount pricing trends to identify manufacturer price increases, check GDR_Ratio decline (more brand dispensing) since brand drugs significantly more expensive, show high-cost therapy_class_name volume growth since specialty drug volume growth increases overall cost, compare pharmacy_type cost differences since external typically higher cost structure.",
-            "pareto_and_concentration_tactics": "Apply top/bottom N analysis to identify concentrated drivers and focus follow-up investigations: show top 10 clients by revenue contribution and by delta revenue, list top 10 therapy_class_name by script volume and by delta scripts, identify top 5-10 states if geographic concentration exists. Calculate concentration metrics to determine if variance is concentrated or dispersed: do top 5 clients account for >70% of total variance, do top 3 therapy classes represent >60% of volume change, is top state >30% of geographic impact. When high concentration found (few entities drive majority of variance): drill deeper into those specific entities with detailed analysis - for concentrated clients examine their therapy mix, brand/generic mix (GDR), pharmacy type usage, account_id/group_id breakdown (CAG); for concentrated therapies show their client distribution, brand/generic split, pricing trends (wac_amount, awp_cost_amount), pharmacy channel preference. If concentration is low (variance dispersed across many entities with no clear top drivers): consider suggesting re-anchor to ledger to look at systematic segment-level patterns rather than continuing granular entity analysis which may not yield actionable insights - dispersed patterns often indicate broad market or segment trends better analyzed at ledger level.",
-            "optional_analytical_angles": "Consider channel splits by comparing pharmacy_type Internal Optum Owned vs External Non-Optum Owned across all key metrics (revenue, scripts, rate, cost) to understand capture and margin implications. Focus on GLP-1 drugs by filtering therapy_class_name LIKE '%GLP-1%' or '%GLP1%' given rapid growth in weight-loss and diabetes medication categories with high revenue and cost impact. Perform Pareto analysis showing top N entities (clients, therapies, states) contributing X% of total or variance to identify concentration and focus. Analyze day-of-week patterns using submit_date day-of-week to check for weekly seasonality, operational patterns like batch processing, or day-specific anomalies. Conduct outlier detection to identify clients, therapies, or states with statistical outlier rate or volume changes requiring investigation - calculate z-scores or flag entities >2 standard deviations from mean. Show geographic breakdown by state_cd when regional patterns relevant for utilization, cost, or revenue analysis. Examine demographic patterns using mbr_sex for gender-specific therapy analysis and age cohorts from mbr_dt_of_brth for age-based utilization patterns. Compare specific high-impact therapy classes like Oncology, GLP-1, Specialty injectables, Immunology that have unique cost profiles and utilization patterns requiring focused analysis.",
-            "re_anchor_to_ledger_conditions": "After claims analysis identifies concentrated drivers or specific patterns, suggest re-anchoring to ledger to verify findings roll up correctly and to add financial context not available in claims. When claims shows fewer than 5 clients drive more than 80% of variance (highly concentrated): suggest checking ledger metric_type='Revenues' and 'Gross Profit Post Reclass' for those clients' line_of_business to understand if margin impacted beyond revenue and what the ledger-level financial impact is. When specific therapy classes or drug categories identified as key drivers in claims: verify they align with ledger product_category (Specialty vs PBM vs Home Delivery) or product_sub_category_lvl_1 variance to ensure consistent story across tables. When claims deep-dive investigation complete with clear drivers identified: propose verifying the findings explain the original ledger variance that prompted the claims investigation - frame as 'Verify these claims drivers roll up to the ledger variance we started with' or 'Check ledger-level margin and operating metrics impact for the identified claim drivers'. When client or therapy concentration is high: suggest checking ledger for same LOB/product at monthly level to see if pattern persistent or one-time, and to understand margin implications. Do not imply join between tables - always frame as validation that complementary views tell consistent story about the business for the same conceptual scope and time period."
-        },
-        "dimensions": [
-            {
-                "field_name": "state_cd",
-                "description": "Two-letter state code for geographic analysis.",
-                "distinct_values": [
-                    "TX",
-                    "CA",
-                    "MN"
-                ]
-            },
-            {
-                "field_name": "client_id",
-                "description": "Unique client identifier."
-            },
-			 {
-                "field_name": "drug_name",
-                "description": "drug information"
-            },
-            {
-                "field_name": "client_name",
-                "description": "Client description for user-facing reports."
-            },
-            {
-                "field_name": "client_type",
-                "description": "Type of the client.",
-                "distinct_values": [
-                    "SECONDARY",
-                    "PHARM TECH",
-                  
-                ]
-            },
-            {
-                "field_name": "carrier_id",
-                "description": "Identifier of the insurance carrier administering the plan."
-            },
-            {
-                "field_name": "account_id",
-                "description": "Client or employer account identifier."
-            },
-            {
-                "field_name": "group_id",
-                "description": "Group/subgroup within the account for sub-client analysis."
-            },
-            {
-                "field_name": "line_of_business",
-                "description": "Line of business identifier.",
-                "distinct_values": [
-                    "E&I FI",
-                    "E&I ASO",
-                    "C&S",
-                    "PDP",
-                    "MAPD",
-                    "E&I UMR",
-                    "External"
-                ]
-            },
+            USER QUESTION HISTORY (Last 15):
+            {recent_user_questions}
+
+            DOMAIN SELECTION CONTEXT: {domain_selection}
             
-            {
-                "field_name": "pharmacy_type",
-                "description": "Identifies pharmacy type - internal or external.",
-                "distinct_values": [
-                    "INTERNAL OPTUM OWNED",
-                    "EXTERNAL-NON OPTUM OWNED"
-                ]
-            },
-            {
-                "field_name": "therapy_class_name",
-                "description": "Therapeutic class of the drug."
-            },
-            {
-                "field_name": "brand_vs_generic_ind",
-                "description": "Product type indicator for brand/generic analysis.",
-                "distinct_values": [
-                    "Brand",
-                    "Generic"
-                ]
-            },
-            {
-                "field_name": "mbr_dt_of_brth",
-                "description": "Member date of birth enabling age-based segmentation.",
-                "format": "YYYY-MM-DD"
-            }
-        ],
-        "metrics": [
-            {
-                "field_name": "revenue_amt",
-                "description": "Revenue recognized for the claim. Use with unadjusted_script_count to derive revenue_per_script."
-            },
-            {
-                "field_name": "expense_amt",
-                "description": "Expense/cost of goods sold for the claim. Pairs with revenue_amt for margin views."
-            },
-            {
-                "field_name": "wac_amount",
-                "description": "Wholesale Acquisition Cost reference for pricing/cost analytics."
-            },
-            {
-                "field_name": "awp_cost_amount",
-                "description": "Average Wholesale Price reference for pricing/cost analytics."
-            },
-            {
-                "field_name": "unadjusted_script_count",
-                "description": "Raw script/claim count per event. Use for total volume and as denominator for revenue_per_script."
-            },
-            {
-                "field_name": "adjusted_script_count",
-                "description": "Adjusted script count - not for raw script count analysis."
-            },
-          
-            {
-                "field_name": "revenue_per_script",
-                "description": "Derived metric: revenue_amt / unadjusted_script_count",
-                "is_derived": true
-            },
-            {
-                "field_name": "rate_variance",
-                "description": "Derived metric: (Prior Period Avg Rate - Current Period Avg Rate) × Current Period Volume",
-                "is_derived": true
-            },
-            {
-                "field_name": "volume_variance",
-                "description": "Derived metric: (Prior Period Volume - Current Period Volume) × Current Period Rate. Volume is unadjusted_script_count.",
-                "is_derived": true
-            },
-            {
-                "field_name": "mix_variance",
-                "description": "Derived metric: Prior Period Revenue - Current Period Revenue - Rate Variance - Volume Variance",
-                "is_derived": true
-            },
-            {
-                "field_name": "GDR_Ratio",
-                "description": "Derived metric: Generic Dispense Rate - percentage of generic scripts (count where brand_vs_generic_ind='Generic' / total scripts)",
-                "is_derived": true
-            }
-        ]
-    },
-   
-    },
-    
-}
+            PRODUCT CATEGORY FILTERING RULES:
+            - If domain selection contains "PBM Network": Only suggest PBM-related product categories in follow-up questions
+            - If domain selection contains "Optum Pharmacy": Only suggest Home Delivery (HDP) and/or Specialty (SP) product categories in follow-up questions
+            - Never suggest product categories that don't align with the user's domain selection
+            - When suggesting breakdowns by product category, respect these domain boundaries
+
+            DATASET METADATA:
+            {metadata}
+
+            ==============================
+            CRITICAL RULES - FOLLOW EXACTLY
+            ==============================
+
+            # Question Generation Requirements
+
+            ## Format
+            - Use action verbs: "Show", "What", "Break down", "Compare", "List", "Calculate"
+            - Be specific and executable - NOT vague like "dig deeper" or "analyze further"
+            - Each question should be a clear, runnable query
+
+            ## Natural Language for Metrics
+            - Use functional/business names instead of exact technical metric names
+            - Examples:
+            - Instead of "revenue_amt", use "revenue"
+            - Instead of "expense_amt", use "cost" or "expenses"
+            - Instead of "revenue_per_script", use "revenue per script" or "rate"
+            - Instead of "brand_vs_generic_ind", use "brand vs generic"
+            - Questions should still be interpretable for SQL generation - use clear business terminology that maps to the underlying metrics
+
+            ## Time Period Preservation
+            - Carefully read `last_user_question` to identify the time period being analyzed (e.g., "Q3 2024", "last two months", "September 2024", "YTD")
+            - Maintain the SAME time period context in all follow-up questions unless there's a specific reason to change it (like YoY comparison)
+            - Examples:
+            - If user asked about "Q3 2024", follow-ups should reference "Q3 2024"
+            - If user asked about "last two months", follow-ups should reference "last two months" or the specific months
+            - If user asked about "September 2024", follow-ups should reference "September 2024"
+            - When suggesting time comparisons (YoY, MoM, QoQ), make the comparison explicit: "Compare Q3 2024 vs Q3 2023" or "Show September 2024 vs August 2024"
+
+            ## Investigation Flow
+            - Read the `playbook` from `table_context` to understand recommended investigation sequences
+            - Follow the `investigation_flow`, `investigation_priority`, or `recommended_investigation_flow` if present
+            - Apply `pattern_recognition` or `pattern_signals` guidance based on patterns detected in `last_query_answer`
+            - Progress through the investigation logically (don't jump levels randomly)
+
+            ## Context Awareness
+            - Analyze `last_query_answer` to understand:
+            - What was discovered (patterns, concentration, variance drivers)
+            - What metrics moved and how (rate up/down, volume up/down, etc.)
+            - Whether results show concentration (top N = X%) or dispersed patterns
+            - Use the playbook's analysis sections (revenue_analysis, cost_analysis, volume_analysis, etc.) as guidance
+            - Adapt questions based on what the user is investigating (their focus area from history)
+
+            ## Reference Strategy for Follow-up Questions
+            
+            **Use Specific Names (ONLY when extractable with clear attribute context)**:
+            - Extract actual values from narrative history ONLY if they include the attribute name (column context)
+              - **GOOD**: "Break down the revenue per script for Client MDOVA in July 2025" (narrative mentions "Client MDOVA" - clear column context)
+              - **GOOD**: "What is the performance for Drug MOUNJARO and ELIQUIS in July 2025?" (narrative mentions "Drug MOUNJARO" - clear column context)
+              - **BAD**: "Show me more about MDOVA" (narrative only mentions "MDOVA" without "Client" - unclear which column)
+              - **CRITICAL**: If narrative only contains raw values (like "MDOVA", "Commercial") without attribute prefixes (like "Client MDOVA", "Line of Business Commercial"), DO NOT use them in follow-up questions
+
+            **COLUMN MAPPING REQUIREMENTS**:
+            - Always reference metadata to ensure column names exist: drug_name, client_name, therapy_class_name, line_of_business, etc.
+            - Use business-friendly terms that map to actual columns: "drugs" → drug_name, "clients" → client_name, "therapy classes" → therapy_class_name
+            - Include appropriate filter context: "for [metric] in [timeframe]" or "by [dimension] for [timeframe]"
+            
+            **STRICT AVOIDANCE RULES**:
+            - Vague references: "these top 10 drugs", "those clients", "the previous results"  
+            - Unmappable terms: Don't suggest dimensions/metrics not available in metadata
+            - Context-dependent references that require memory of specific previous query results
+            - **Isolated values without attribute context**: If narrative says "MDOVA has high revenue" instead of "Client MDOVA has high revenue", don't reference MDOVA in follow-ups
+            - **Ambiguous values**: If you cannot determine which column a value belongs to, exclude it from follow-up questions
+
+            ## Leverage Available Fields
+            - Reference `dimensions` from meta data to suggest valid grouping/filtering options
+            - Reference `metrics` from meta data to suggest valid measures and derived calculations
+            - Use business-friendly dimension names where appropriate (e.g., "client" instead of "client_name", "therapy class" instead of "therapy_class_name", "line of business" instead of "line_of_business")
+            - Questions should be natural but still map clearly to the available dimensions and metrics
+
+            ## Constraints
+            - Check `questions_history` - do NOT suggest questions that have already been asked, answered, or are semantically similar
+            - Preserve scope: maintain time periods, filters, and dimensional focus from `last_user_question`
+            - Use "top 20" or "bottom 20" for ranking questions (not top 5 or top 10)
+            - If playbook suggests pivoting to complementary table, frame the question for that table's context
+            - **DOMAIN-SPECIFIC PRODUCT CATEGORY FILTERING**:
+              - If domain = "PBM Network": ONLY suggest PBM-related categories, NEVER Home Delivery or Specialty
+              - If domain = "Optum Pharmacy": ONLY suggest Home Delivery and/or Specialty categories, NEVER PBM
+              - When suggesting "break down by product category" or similar, respect domain boundaries
+              - Example: For PBM Network users, suggest "Break down by PBM product category" not "Break down by Home Delivery and Specialty"
+
+            ## Quality Standards
+            - Questions should advance the investigation, not just restate what was asked
+            - Suggest the "next logical step" based on investigation flow and what was discovered
+            - If concentration found (top few entities = high %), drill into those entities
+            - If dispersed pattern found, suggest segment-level or aggregated views
+            - Balance between staying in current analysis depth vs advancing to next level
+            - Ensure questions are business-friendly and natural-sounding while remaining precise enough for SQL generation
+
+            ==============================
+            RESPONSE FORMAT
+            ==============================
+            -Generate only 3 follow up questions strictly
+            The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```.
+
+            {{
+            "followup_questions": ["What is the [metric] by [attribute] for [context]?", "Break down is the [metric] by [attribute] for [context]?", "show me the [metric] by [attribute] for [context]?"]
+            }}
+
+        """

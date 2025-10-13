@@ -1,91 +1,87 @@
-def __init__(self):
-    # ... all your existing __init__ code ...
-    
-    # ADD THESE LINES AT THE END:
-    self._vector_client: Optional[VectorSearchClient] = None
-    self._vector_indexes: Dict[str, Any] = {}  # Cache indexes by name
-
-async def _get_vector_client(self) -> VectorSearchClient:
-    """Lazy-load and cache the VectorSearchClient"""
-    if self._vector_client is None:
-        self._vector_client = VectorSearchClient(
-            workspace_url=self.DATABRICKS_HOST,
-            service_principal_client_id=self.DATABRICKS_CLIENT_ID,
-            service_principal_client_secret=self.DATABRICKS_CLIENT_SECRET,
-            azure_tenant_id=self.DATABRICKS_TENANT_ID
-        )
-    return self._vector_client
-
-async def _get_vector_index(self, index_name: str):
-    """Get and cache vector search index"""
-    if index_name not in self._vector_indexes:
-        client = await self._get_vector_client()
-        index = client.get_index(
-            endpoint_name="metadata_vectore_search_endpoint",
-            index_name=index_name
-        )
-        index._get_token_for_request = lambda: self.access_token
-        self._vector_indexes[index_name] = index
-    return self._vector_indexes[index_name]
-
-async def sp_vector_search_columns(
-    self, 
-    query_text: str, 
-    tables_list: List[str], 
-    num_results_per_table: int,
-    index_name: str
-) -> List[Dict]:
-    """
-    Search columns across multiple tables in parallel with caching.
-    For each table: Fetch 50 results, rerank, keep top 10.
-    """
-    print(f"🔍 Searching: '{query_text}' across {len(tables_list)} table(s)")
-    
-    # ✅ Use cached index (eliminates the wait!)
-    index = await self._get_vector_index(index_name)
-    
-    # ✅ Define async search function for one table
-    async def search_table(table_name: str):
-        print(f'📋 Searching table: {table_name}')
+async def get_metadata(self, state: Dict, selected_dataset: list) -> Dict:
+        """Extract metadata with mandatory embeddings - simplified direct merge"""
         try:
-            from databricks.vector_search.reranker import DatabricksReranker
+            current_question = state.get('rewritten_question', state.get('current_question', ''))
+            selection_reasoning = state.get('selection_reasoning', '')
+            filter_context = state.get('selected_filter_context', '')
             
-            results = index.similarity_search(
+            if state.get('requires_dataset_clarification', False):
+
+                followup_reasoning = state.get('followup_reasoning', '')
+            else:
+                followup_reasoning = ''
+
+            # Concatenate current_question, selection_reasoning, and filter_context for query_text
+            query_text = f"{current_question} {followup_reasoning} {selection_reasoning} {filter_context} ".strip()
+
+            embedding_idx = "prd_optumrx_orxfdmprdsa.rag.column_embeddings_test_idx"
+            
+            tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
+            print(f'📊 query text selected: {query_text}')
+            
+            # ===== STEP 1: Load Mandatory Embeddings (Cached - Fast!) =====
+            mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list)
+            print(f'✅ Mandatory contexts loaded: {len(mandatory_contexts)} tables')
+            
+            # ===== STEP 2: Get Vector Search Results =====
+            print(f'🔍 Searching: {query_text!r} across {len(tables_list)} table(s)')
+            vector_results = await self.db_client.sp_vector_search_columns(
                 query_text=query_text,
-                columns=["table_name", "column_name", "col_embedding_content", "llm_context"],
-                filters={"table_name": table_name},
-                reranker=DatabricksReranker(
-                    columns_to_rerank=["column_name", "llm_context"]
-                ),
-                num_results=50,  # Fetch 50
-                query_type="Hybrid"
+                tables_list=tables_list,
+                num_results_per_table=50,
+                index_name=embedding_idx
             )
             
-            if results.get('result', {}).get('data_array'):
-                cols = [c['name'] for c in results['manifest']['columns']]
-                table_results = [dict(zip(cols, row)) for row in results['result']['data_array']]
+            # ===== STEP 3: Group Vector Results by Table =====
+            vector_contexts_by_table = {}
+            for result in vector_results:
+                table = result['table_name']
+                if table not in vector_contexts_by_table:
+                    vector_contexts_by_table[table] = []
+                # Collect all llm_context strings for this table
+                vector_contexts_by_table[table].append(result['llm_context'])
+            
+            # Log what we got
+            for table, contexts in vector_contexts_by_table.items():
+                print(f'  ✅ {table}: {len(contexts)} vector contexts')
+            
+            # ===== STEP 4: Build Metadata (Simple Merge - No Deduplication) =====
+            metadata = ""
+            
+            for table in tables_list:
+                metadata += f"\n## Table: {table}\n\n"
                 
-                # Sort by score and keep top 10
-                table_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
-                top_10 = table_results[:10]
+                # Add mandatory contexts first (if any)
+                if table in mandatory_contexts:
+                    for ctx in mandatory_contexts[table]:
+                        metadata += ctx + "\n"
                 
-                print(f"  ✅ {table_name}: {len(top_10)} columns")
-                return top_10
-            else:
-                print(f"  ⚠️ {table_name}: No results")
-                return []
+                # Add vector contexts (if any)
+                if table in vector_contexts_by_table:
+                    for ctx in vector_contexts_by_table[table]:
+                        # Clean up the context (remove leading/trailing whitespace and newlines)
+                        clean_ctx = ctx.strip()
+                        if clean_ctx:  # Only add non-empty contexts
+                            metadata += clean_ctx + "\n"
                 
+                metadata += "\n"  # Extra line between tables
+
+            print("embeddings metadata",metadata)
+
+            return {
+                'status': 'success',
+                'metadata': metadata,
+                'error': False
+            }
+            
         except Exception as e:
-            print(f"  ❌ {table_name}: Error - {e}")
+            print(f"❌ Metadata extraction failed: {str(e)}")
             import traceback
             traceback.print_exc()
-            return []
-    
-    # ✅ Search all tables in parallel
-    results_per_table = await asyncio.gather(*[search_table(t) for t in tables_list])
-    
-    # Flatten results
-    all_results = [item for sublist in results_per_table for item in sublist]
-    
-    print(f"\n✅ Total: {len(all_results)} columns from {len(tables_list)} table(s)")
-    return all_results
+            
+            return {
+                'status': 'error',
+                'metadata': '',
+                'error': True,
+                'error_message': f"Metadata extraction failed: {str(e)}"
+            }

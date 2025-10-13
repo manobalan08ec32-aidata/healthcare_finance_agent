@@ -26,13 +26,19 @@ Examples:
 ❌ "Show revenue trends" (missing dimension and time)
 ❌ "Break down by clients" (missing metric and time)
 
-# Canonical Names (Business-Friendly)
+# Canonical Names (Business-Friendly BUT SQL-Mappable)
 
-Use natural terms, NOT technical field names:
+**Use natural business terms that clearly map to underlying data columns.**
 
-**Dimensions:** "clients" (not client_name), "therapy classes" (not therapy_class_name), "drugs" (not drug_name), "line of business" (not line_of_business), "product category" (not product_category), "pharmacy type" (not pharmacy_type), "brand vs generic" (not brand_vs_generic_ind), "states" (not state_cd)
+Questions must be:
+- Natural and business-friendly (easy for users to read)
+- Precise enough to convert to SQL queries (unambiguous column/metric mapping)
 
-**Metrics:** "revenue" (not revenue_amt), "cost" (not expense_amt), "scripts" (not unadjusted_script_count), "revenue per script" or "rate" (not revenue_per_script), "margin" (not gross profit)
+**Dimensions:** "clients" (→ client_name), "therapy classes" (→ therapy_class_name), "drugs" (→ drug_name), "line of business" (→ line_of_business), "product category" (→ product_category), "pharmacy type" (→ pharmacy_type), "brand vs generic" (→ brand_vs_generic_ind), "states" (→ state_cd), "carriers" (→ carrier_id)
+
+**Metrics:** "revenue" (→ revenue_amt), "cost" or "expenses" (→ expense_amt), "scripts" or "script volume" (→ unadjusted_script_count), "revenue per script" or "rate" (→ revenue_per_script), "cost per script" (→ expense_amt/unadjusted_script_count), "margin" (→ gross profit)
+
+**Verify all dimensions and metrics exist in metadata before suggesting.**
 
 # Time Period Preservation
 

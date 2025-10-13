@@ -1,72 +1,25 @@
-async def sp_vector_search_columns(
-    self, 
-    query_text: str, 
-    tables_list: List[str], 
-    num_results_per_table: int,  # This will be 10 (what you want to return)
-    index_name: str
-) -> List[Dict]:
-    """
-    For each table:
-    1. Fetch 50 results
-    2. Rerank 
-    3. Keep only top 10
-    4. Append to final results
-    """
-    print(f"🔍 Searching: '{query_text}' across {len(tables_list)} table(s)")
-    
-    client = VectorSearchClient(
-        workspace_url=self.DATABRICKS_HOST,
-        service_principal_client_id=self.DATABRICKS_CLIENT_ID,
-        service_principal_client_secret=self.DATABRICKS_CLIENT_SECRET,
-        azure_tenant_id=self.DATABRICKS_TENANT_ID
-    )
-    
-    index = client.get_index(
-        endpoint_name="metadata_vectore_search_endpoint",
-        index_name=index_name
-    )
-    index._get_token_for_request = lambda: self.access_token
-    
-    all_results = []
-    
-    for table_name in tables_list:
-        print(f'📋 Searching table: {table_name}')
-        try:
-            from databricks.vector_search.reranker import DatabricksReranker
-            
-            # Step 1: Fetch 50 results with reranking
-            results = index.similarity_search(
-                query_text=query_text,
-                columns=["table_name", "column_name", "col_embedding_content", "llm_context"],
-                filters={"table_name": table_name},
-                reranker=DatabricksReranker(
-                    columns_to_rerank=["column_name", "col_embedding_content"]
-                ),
-                num_results=50,  # ✅ Fetch 50 rows
-                query_type="Hybrid"
-            )
-            
-            # Step 2: Parse results
-            if results.get('result', {}).get('data_array'):
-                cols = [c['name'] for c in results['manifest']['columns']]
-                table_results = [dict(zip(cols, row)) for row in results['result']['data_array']]
-                
-                # Step 3: Sort by score and keep only top 10
-                table_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
-                top_10 = table_results[:num_results_per_table]  # ✅ Keep only top 10
-                
-                # Step 4: Append to all results
-                all_results.extend(top_10)
-                
-                print(f"  ✅ {table_name}: Fetched 50 → Kept top {len(top_10)} (scores: {top_10[0].get('score', 0):.3f} to {top_10[-1].get('score', 0):.3f})")
-            else:
-                print(f"  ⚠️ {table_name}: No results")
-                
-        except Exception as e:
-            print(f"  ❌ {table_name}: Error - {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-    
-    print(f"\n✅ Total: {len(all_results)} columns from {len(tables_list)} table(s)")
-    return all_results
+"recommended_investigation_flow": {
+    "description": "Progressive drill-down: client_name → carrier_id → therapy_class_name → drug detail → brand_vs_generic_ind → claim_status_code → demographics",
+    "level_1_client": "Show top 10 clients by revenue and delta. Calculate variance components by client. Check if top 5-10 clients account for >70% of variance.",
+    "level_2_carrier": "If client concentration high, examine carrier_id patterns across high-variance clients.",
+    "level_3_therapy_class": "Show therapy classes by revenue, delta revenue, delta rate. Identify specialty categories (Oncology, GLP-1) driving variance.",
+    "level_4_drug_detail": "For high-impact therapies, drill into specific drugs. Show volume, revenue, and pricing trends (wac_amount, awp_cost_amount).",
+    "level_5_brand_generic": "Check brand_vs_generic_ind mix. Calculate GDR trend. Quantify brand vs generic revenue and cost impact.",
+    "level_6_claim_status": "Verify claim_status_code patterns. Calculate reversal rate (X/P ratio). Use P and X together for net analysis.",
+    "level_7_demographics": "If variance unexplained, examine mbr_sex and age cohorts from mbr_dt_of_brth for demographic patterns.",
+    "flexibility_note": "Adapt sequence based on context. If ledger identified product pattern, start at therapy level. If client scoped, start at therapy or brand/generic."
+},
+
+"core_principles": "Deepen drivers using available dimensions. Use top/bottom N for concentration. Show trends when clarifying. Preserve scope from prior queries. Focus on observable facts with executable verbs: Show/Break/List/Compare.",
+
+"revenue_analysis": "Check volume (unadjusted_script_count) vs rate (revenue_per_script). Decompose variance by client or therapy. If rate dominates: check brand_vs_generic_ind, therapy rates, pharmacy_type. If volume dominates: break by client, therapy, LOB, state. If mix dominates: check GDR, therapy mix, client mix. Identify top 10 drivers and concentration (top 5 >70%).",
+
+"cost_analysis": "Show wac_amount and awp_cost_amount trends. Check brand_vs_generic_ind mix and GDR. Show therapy_class_name by cost per script. Compare pharmacy_type costs (Internal vs External). Identify high-cost therapy volume growth.",
+
+"script_volume_analysis": "Compare 30_days vs 90_days script mix. Check claim_status_code distribution (P vs X). Calculate reversal rate. Break by LOB, client, therapy, state, and pharmacy_type.",
+
+"variance_decomposition": "Calculate rate, volume, mix variance. Perform at client, therapy, pharmacy_type, or state level. Focus follow-ups based on dominant component (>50%).",
+
+"pattern_recognition": "Rate up + volume down: check GDR shift, membership trend, client concentration. Both declining: focus top clients, brand shift, therapy impact. Volume down + rate stable: check 30/90-day mix, reversal rate, client/therapy trends. Cost up: check pricing (wac/awp), GDR decline, specialty growth, pharmacy_type costs.",
+
+"concentration_tactics": "Show top 10 entities by revenue and delta. Calculate if top 5 account for >70% variance. If concentrated: drill specific entities. If dispersed: re-anchor to ledger for segment patterns."

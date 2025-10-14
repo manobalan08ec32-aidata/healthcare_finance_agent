@@ -1,71 +1,19 @@
-═══════════════════════════════════════════════════════════════════
-SECTION 6: FILTER VALUES EXTRACTION (FROM REWRITTEN QUESTION)
-═══════════════════════════════════════════════════════════════════
-
-**IMPORTANT:** Extract filter values from the REWRITTEN question (after applying context inheritance), not from the current user input.
-
-**GENERIC EXTRACTION LOGIC:**
-
-For every word/phrase in the rewritten question, apply these checks in order:
-
-**Step 1: Does it have an attribute label?**
-- Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, member number, patient ID, provider ID, client, account, transaction ID, reference number, contract number, policy number
-- If YES → EXCLUDE (LLM will handle it in SQL)
-- If NO → Go to Step 2
-
-**Step 2: Is it a pure number (digits only)?**
-- Check if value contains ONLY digits: 0-9
-- If YES → EXCLUDE
-- If NO → Go to Step 3
-
-**Step 3: Is it in the exclusion list?**
-- Check against exclusion categories below
-- If YES → EXCLUDE
-- If NO → Go to Step 4
-
-**Step 4: Does it contain letters (string/alphanumeric)?**
-- Check if value contains at least one letter (a-z, A-Z)
-- If YES → **EXTRACT IT** ✅
-- If NO → EXCLUDE
-
-**EXCLUSION CATEGORIES (Step 3):**
-- **Common terms**: "HDP", "Home Delivery", "SP", "Specialty", "Mail", "PBM", "Claim Fee", "Claim Cost", "Activity Fee"
-- **Time/Date**: months (January, February, July, etc.), quarters (Q1, Q2, Q3, Q4), years, dates, temporal words (last, next, monthly, quarterly, yearly)
-- **Generic words**: revenue, cost, expense, data, analysis, report, top, bottom, show, get, total, overall, what, is, the, for, in, of, and, or
-- **Metrics**: revenue, billed amount, claims count, expense, volume, cost, amount, fee, payment
-
-**Multi-word handling:**
-- Keep phrases together: "covid vaccine" → ["covid vaccine"]
-- Multiple terms: Separate → "diabetes, asthma" as ["diabetes", "asthma"]
-
-**EDGE CASES:**
-
-**Multiple values with same attribute:**
-"carrier MPDOVA and BCBS" → both have attribute "carrier" → exclude both
-
-**Mixed standalone and attributed:**
-"diabetes for member ID 12345" → "diabetes" passes all checks ✅ | "12345" has attribute + pure number ❌
-
-**EXAMPLES:**
-
-Example 1:
-Rewritten: "What is the revenue amount for MPDOVA for September 2025"
-→ "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "September 2025": time/date term → EXCLUDE
-→ filter_values: ["MPDOVA"]
-
-Example 2:
-Rewritten: "What is invoice #76273623 for diabetes drugs in California for carrier BCBS"
-→ "76273623": has attribute "invoice #" → EXCLUDE
-→ "diabetes": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "California": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "BCBS": has attribute "carrier" → EXCLUDE
-→ filter_values: ["diabetes", "California"]
-
-Example 3:
-Rewritten: "What is claim number 982967283632 for cardiology for HDP for July 2025"
-→ "982967283632": has attribute "claim number" → EXCLUDE
-→ "cardiology": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "HDP": common term → EXCLUDE
-→ "July 2025": time/date term → EXCLUDE
-→ filter_values: ["cardiology"]
+"prd_optumrx_orxfdmprdsa.rag.claim_billing": [
+"**inv_nbr**: This is invoice number contains multiple billing transactions and can come as # 7632763 for example. When a user requests an invoice number without specifying an invoice date, do not prompt for or infer a time period. The system should return the invoice number directly without requesting additional temporal context.",
+"**invoice_date**: (YYYY-MM-DD) format. Date when the invoice was generated and issued to the client.",
+"**billed_amount**:**Revenue Source Type Rules**:",
+ "                 -fee or fees (generic) → rev_src_type IN ('CLAIM FEE', 'ACTIVITY FEE')",
+"                  -activity fee specifically → rev_src_type = 'ACTIVITY FEE'",
+ "                 -claim fee specifically → rev_src_type = 'CLAIM FEE'",
+ "                  -billed amount or claim billed  (no fee) → rev_src_type = 'CLAIM COST'",
+ "                  -total or overall billed amount → no rev_src_type filter (includes all)",
+ "                  -Note: System only has CLAIM COST, CLAIM FEE, ACTIVITY FEE in rev_src_type.Other fee names (EOB, dispensing, etc.) are category filters for actvty_category_cd..",
+"**rev_src_type**: Categorizes the revenue source. Distinct Values include CLAIM FEE, CLAIM COST, and ACTIVITY FEE. when the user asks for specific fee, use this column else aggregate all amount and no group by needed",
+"**invoice_gl_date**: (YYYY-MM-DD) format. General ledger posting date for the invoice. Use for financial period reporting and GL reconciliation. May differ from invoice_date.",
+"**drug_name**: Name of the dispensed drug.",
+"**therapy_class_name**: Therapeutic class of the drug.sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information",
+"**brand_vs_generic_ind**: drug type indicator. Drives brand/generic mix. [Values: Brand, Generic]",
+"**carrier_id**: Identifier of the insurance carrier administering the plan.used for carrier reporting.This is part of carrier_id,account_id,group_id combo",
+"**account_id**: Unique employer account identifier under which the policy is issued.This is part of carrier_id,account_id,group_id combo",
+"**group_id**: Group/subgroup within the account;This is not invoice number"
+]

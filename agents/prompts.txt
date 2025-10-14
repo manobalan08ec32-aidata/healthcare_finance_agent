@@ -4,62 +4,68 @@ SECTION 6: FILTER VALUES EXTRACTION (FROM REWRITTEN QUESTION)
 
 **IMPORTANT:** Extract filter values from the REWRITTEN question (after applying context inheritance), not from the current user input.
 
-**THREE CORE RULES:**
+**GENERIC EXTRACTION LOGIC:**
 
-1. **EXCLUDE if value has attribute label**: "carrier MDOVA" → exclude "MDOVA", "invoice #76273623" → exclude "76273623", "member ID 12345" → exclude "12345"
-   - Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, member number, patient ID, provider ID, client, account, transaction ID, reference number, contract number, policy number
+For every word/phrase in the rewritten question, apply these checks in order:
 
-2. **EXCLUDE all pure numbers**: Any digits-only value (e.g., "76273623", "982967283632", "12345", "2024", "100")
+**Step 1: Does it have an attribute label?**
+- Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, member number, patient ID, provider ID, client, account, transaction ID, reference number, contract number, policy number
+- If YES → EXCLUDE (LLM will handle it in SQL)
+- If NO → Go to Step 2
 
-3. **INCLUDE only standalone strings/alphanumeric**: Extract values with letters that appear without attribute labels
-   - ✅ Strings: "covid vaccine", "diabetes", "California"
-   - ✅ Alphanumeric: "ABC123", "COVID-19" (if standalone)
-   - ❌ Pure numbers: "12345", "76273623"
+**Step 2: Is it a pure number (digits only)?**
+- Check if value contains ONLY digits: 0-9
+- If YES → EXCLUDE
+- If NO → Go to Step 3
 
-**INCLUDE (Standalone values only):**
-- Product/drug names, therapy classes, medical conditions, geographic locations, medical specialties, brands, pharmaceutical companies
-- **ONLY if standalone (no attribute labels like "carrier", "invoice #", "member ID", "client")**
-- Multi-word phrases: Keep together → "covid vaccine" as ["covid vaccine"]
-- Multiple terms: Separate → "diabetes, asthma" as ["diabetes", "asthma"]
+**Step 3: Is it in the exclusion list?**
+- Check against exclusion categories below
+- If YES → EXCLUDE
+- If NO → Go to Step 4
 
-**EXCLUDE (DO NOT extract):**
-- **Attribute-labeled values**: carrier/invoice #/claim #/member ID/client/account/provider ID + value
-- **Pure numbers**: digits-only values (any length)
+**Step 4: Does it contain letters (string/alphanumeric)?**
+- Check if value contains at least one letter (a-z, A-Z)
+- If YES → **EXTRACT IT** ✅
+- If NO → EXCLUDE
+
+**EXCLUSION CATEGORIES (Step 3):**
 - **Common terms**: "HDP", "Home Delivery", "SP", "Specialty", "Mail", "PBM", "Claim Fee", "Claim Cost", "Activity Fee"
-- **Time/Date**: months, quarters, years, dates, temporal references
-- **Generic**: "revenue", "cost", "expense", "data", "top", "bottom", "show", "total", "overall"
-- **Metrics**: revenue, billed amount, claims count, expense, volume, cost
+- **Time/Date**: months (January, February, July, etc.), quarters (Q1, Q2, Q3, Q4), years, dates, temporal words (last, next, monthly, quarterly, yearly)
+- **Generic words**: revenue, cost, expense, data, analysis, report, top, bottom, show, get, total, overall, what, is, the, for, in, of, and, or
+- **Metrics**: revenue, billed amount, claims count, expense, volume, cost, amount, fee, payment
+
+**Multi-word handling:**
+- Keep phrases together: "covid vaccine" → ["covid vaccine"]
+- Multiple terms: Separate → "diabetes, asthma" as ["diabetes", "asthma"]
 
 **EDGE CASES:**
 
 **Multiple values with same attribute:**
-"carrier MDOVA and BCBS" → exclude both "MDOVA" and "BCBS" (both have attribute "carrier")
+"carrier MPDOVA and BCBS" → both have attribute "carrier" → exclude both
 
 **Mixed standalone and attributed:**
-"diabetes for member ID 12345" → extract "diabetes" ✅, exclude "12345" ❌
-
-**Alphanumeric identifiers:**
-"drug ABC123" → check if "drug" is attribute label → if yes, exclude "ABC123"
+"diabetes for member ID 12345" → "diabetes" passes all checks ✅ | "12345" has attribute + pure number ❌
 
 **EXAMPLES:**
 
 Example 1:
-Rewritten: "What is the revenue for covid vaccines for carrier MDOVA for Q3"
-→ "covid vaccines" = standalone string ✅
-→ "MDOVA" = has attribute "carrier" ❌
-→ filter_values: ["covid vaccines"]
+Rewritten: "What is the revenue amount for MPDOVA for September 2025"
+→ "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
+→ "September 2025": time/date term → EXCLUDE
+→ filter_values: ["MPDOVA"]
 
 Example 2:
 Rewritten: "What is invoice #76273623 for diabetes drugs in California for carrier BCBS"
-→ "76273623" = has attribute "invoice #" + pure number ❌
-→ "diabetes" = standalone string ✅
-→ "California" = standalone string ✅
-→ "BCBS" = has attribute "carrier" ❌
+→ "76273623": has attribute "invoice #" → EXCLUDE
+→ "diabetes": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
+→ "California": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
+→ "BCBS": has attribute "carrier" → EXCLUDE
 → filter_values: ["diabetes", "California"]
 
 Example 3:
 Rewritten: "What is claim number 982967283632 for cardiology for HDP for July 2025"
-→ "982967283632" = has attribute "claim number" + pure number ❌
-→ "cardiology" = standalone string ✅
+→ "982967283632": has attribute "claim number" → EXCLUDE
+→ "cardiology": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
+→ "HDP": common term → EXCLUDE
+→ "July 2025": time/date term → EXCLUDE
 → filter_values: ["cardiology"]
-(Excludes: HDP = common term, July/2025 = time)

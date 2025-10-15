@@ -1,17 +1,33 @@
-🔄 Processing SQL follow-up answer
-🔧 Starting SQL generation and execution phase
-follow up sql response <new_question>
-<detected>true</detected>
-<reasoning>User asked a completely different question about script count instead of answering the clarification about state information.</reasoning>
-</new_question>
-⚠️ New question detected - user asked different question instead of answering
-🔄 SQL follow-up detected new question - routing back to navigation
-🔀 Router routing debug:
-  - sql_followup_topic_drift: False
-  - sql_followup_new_question: True
-  🔄 Routing to: navigation_controller (new question detected)
-route navigation state info {'current_question': 'ok.show me the script count for july 2025', 'session_id': '9d59e55a-97a8-4a81-acea-a65301b9e3c5', 'user_id': 'Unknown User', 'requires_dataset_clarification': False, 'is_sql_followup': False, 'rewritten_question': 'What is the membership count for each state for July 2025', 'question_type': 'what', 'next_agent': ['navigation_controller'], 'next_agent_disp': 'SQL followup needed', 'current_agent': 'Question Validator', 'domain_selection': 'PBM Network', 'pending_business_question': '', 'user_question_history': ['What is the membership count for each state for July 2025'], 'greeting_response': None, 'nav_error_msg': None, 'errors': [], 'llm_retry_count': 0, 'filter_values': [], 'selected_filter_context': None, 'selected_dataset': ['prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'], 'dataset_metadata': '## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast\n\n**ledger**:   Admin Fees, Optum Perks, Other Products]\n\n', 'functional_names': ['ledger_actual_vs_forecast'], 'dataset_followup_question': None, 'selection_reasoning': "The ledger table contains the 'membership' metric and 'state_cd' attribute needed for state-level membership analysis. It supports monthly time grain for July 2025 filtering.", 'user_questions_history': ['what is the membership count for each state for july 2025', 'ok.show me the script count for july 2025'], 'session_context': {'app_instance_id': '9d59e55a-97a8-4a81-acea-a65301b9e3c5', 'execution_timestamp': '2025-10-16T00:44:43.549346', 'conversation_turn': 2}, 'topic_drift': False, 'missing_dataset_items': False, 'sql_followup_question': None, 'needs_followup': False, 'router_error_msg': None, 'follow_up_error_msg': None, 'sql_gen_error_msg': None, 'sql_followup_topic_drift': False, 'sql_followup_but_new_question': True}
-📦 Astream step: ['router_agent']
-✅ Node completed: router_agent - state keys: ['current_question', 'session_id', 'user_id', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'selected_filter_context', 'selected_dataset', 'dataset_metadata', 'functional_names', 'selection_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'sql_followup_question', 'needs_followup', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'requires_dataset_clarification', 'dataset_followup_question']
-🎭 UI Event: type=node_end, name=router_agent, state_keys=['current_question', 'session_id', 'user_id', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'selected_filter_context', 'selected_dataset', 'dataset_metadata', 'functional_names', 'selection_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'sql_followup_question', 'needs_followup', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'requires_dataset_clarification', 'dataset_followup_question']
-🎯 Router agent completed - checking outputs...
+async def astream_events(self, initial_state: AgentState, config: Dict[str, Any], version: str = "v2"):
+    """Low-level event stream with cycle support"""
+    print("🔧 Using fallback astream approach for reliable events")
+    
+    # Add recursion_limit
+    enhanced_config = {**config}
+    if 'recursion_limit' not in enhanced_config:
+        enhanced_config['recursion_limit'] = 25
+    
+    workflow_ended = False
+    
+    async for step in self.app.astream(initial_state, config=enhanced_config):
+        print(f"📦 Astream step: {list(step.keys())}")
+        
+        for node_name, node_state in step.items():
+            if node_name == '__end__':
+                print(f"🏁 Workflow end - final state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
+                workflow_ended = True
+                yield {"type": "workflow_end", "name": node_name, "data": node_state}
+            else:
+                print(f"✅ Node completed: {node_name}")
+                
+                # Check if this is a cycle back to navigation
+                if node_name == "router_agent":
+                    sql_followup_new_question = node_state.get('sql_followup_but_new_question', False)
+                    if sql_followup_new_question:
+                        print(f"  🔄 Detected cycle: router → navigation_controller")
+                        print(f"  ⏭️ Stream will continue to next node...")
+                
+                yield {"type": "node_end", "name": node_name, "data": node_state}
+    
+    if not workflow_ended:
+        print("⚠️ Stream ended without __end__ - workflow may have been interrupted")

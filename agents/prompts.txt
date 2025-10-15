@@ -1,234 +1,110 @@
 async def select_dataset(self, state: AgentState) -> Dict[str, any]:
-        """Enhanced dataset selection with complete workflow handling"""
-        # Initialize control flow variables
-        create_sql = False
-        create_sql_after_followup = False
-        metadata_result = None
-        selected_dataset = None
-        selection_reasoning = ''
-        functional_names = []
-        filter_metadata_results = []  # Initialize to prevent UnboundLocalError
-
-        # Priority 1: Check if this is a dataset clarification follow-up
-        if state.get('requires_dataset_clarification', False):
-            print(f"🔄 Processing dataset clarification follow-up")
-            # Get existing filter metadata from state if available
-            existing_filter_metadata = state.get('filter_metadata_results', [])
-            result = await self._fix_router_llm_call(state, existing_filter_metadata)
-           
-            if result.get('error', False):
-                print(f"❌ Dataset selection failed with error")
-                return {
-                    'error':True,
-                    'error_message': result.get('error_message', 'Unknown error occurred during dataset selection')
-                    }
-            elif result.get('topic_drift', False):
-                return {'topic_drift':True }
-            # After clarification, extract metadata and set flag for SQL generation
-            else:
-
-                state['selected_dataset'] = result.get('selected_dataset', [])
-                state['selection_reasoning'] = result.get('selection_reasoning', '')
-                selected_dataset = result.get('selected_dataset', [])
-                
-                # Store selected filter context if available
-                selected_filter_context = result.get('selected_filter_context')
-                if selected_filter_context:
-                    state['selected_filter_context'] = selected_filter_context
-                    print(f"🎯 Storing filter context for SQL generation: {selected_filter_context}")
-
-                metadata_result = await self.get_metadata(
-                    state=state,
-                    selected_dataset=result.get('selected_dataset', [])
-                )
-
-                if metadata_result.get('error', False):
-                    return {
-                        'error': True,
-                        'error_message': "Databricks vector search failed"
-                    }
-                
-                # Update state with metadata and selected dataset
-                state['dataset_metadata'] = metadata_result.get('metadata', '')
-                
-                create_sql = True
+    """Enhanced dataset selection with complete workflow handling"""
+    # Initialize control flow variables
+    create_sql = False
+    create_sql_after_followup = False
+    metadata_result = None
+    selected_dataset = None
+    selection_reasoning = ''
+    functional_names = []
+    filter_metadata_results = []  # Initialize to prevent UnboundLocalError
+    
+    # SQL Generation and Execution Phase
+    if create_sql or create_sql_after_followup:
+        print(f"🔧 Starting SQL generation and execution phase")
         
-        # Priority 2: Check if this is a SQL follow-up (user answered SQL clarification)
-        elif state.get('is_sql_followup', False):
-            print(f"🔄 Processing SQL follow-up answer")
-            # Set is_sql_followup to False after processing
-            state['is_sql_followup'] = False
-            create_sql_after_followup = True
-
-        # Priority 3: Normal flow - initial call
-        else:
-            user_question = state.get('current_question', state.get('original_question', ''))
-
-            if not user_question:
-                raise Exception("No user question found in state")
+        # Generate SQL based on the flow type
+        if create_sql_after_followup:
+            # SQL follow-up flow
+            context = self._extract_context(state)
+            sql_followup_question = state.get('sql_followup_question', '')
+            sql_followup_answer = state.get('current_question', '')
             
-            # 1. Check for filter values and search metadata if available
-            filter_values = state.get('filter_values', [])
-            filter_metadata_results = []
+            sql_result = await self._generate_sql_with_followup_async(context, sql_followup_question, sql_followup_answer, state)
             
-            if filter_values:
-                print(f"🔍 Filter values detected: {filter_values}")
-                domain_selection = state.get('domain_selection', '')
-                # Search metadata for filter values
-                filter_metadata_results = await self.search_metadata_sql(filter_values, domain_selection)
-                print('filter_metadata_results',filter_metadata_results)
-                
-                # print(f"📊 Found {len(filter_metadata_results)} filter metadata matches")
-            
-            # 2. Load domain-specific dataset config
-            domain_selection = state.get('domain_selection', '')
-            mapped_dataset_file = None
-            if domain_selection == 'PBM Network':
-                mapped_dataset_file = 'pbm_dataset.json'
-            elif domain_selection == 'Optum Pharmacy':
-                mapped_dataset_file = 'pharmacy_dataset.json'
-            else:
-                # Default fallback if domain not recognized; could still use vector search fallback
-                raise Exception("Domain Not Found")
-            print('domain selection in router',mapped_dataset_file)
-            search_results = []
-            try:
-                drillthrough_config_path = f"config/datasets/{mapped_dataset_file}"
-                with open(drillthrough_config_path, 'r') as f:
-                    search_results = json.load(f)
-                print(f"✅ Loaded dataset config from: {drillthrough_config_path} for domain '{domain_selection}'")
-            except Exception as e:
-                print(f"❌ Failed loading dataset config {mapped_dataset_file}: {e}")
-                return {
-                    'error': True,
-                    'error_message': f"Failed to load dataset config {mapped_dataset_file}: {str(e)}"
-                }
-
-            if not search_results:
-                raise Exception("No datasets found in config")
-            
-            # 3. LLM selection with filter metadata integration
-            selection_result = await self._llm_dataset_selection(search_results, state, filter_metadata_results)
-            print('router result',selection_result)
-            # 3. Return results - either final selection or clarification needed
-            if selection_result.get('error', False):
-                print(f"❌ Dataset selection failed with error")
-                return {
-                    'error':True,
-                    'error_message': selection_result.get('error_message', 'Unknown error occurred during dataset selection')
-                    }
-            elif selection_result.get('requires_clarification', False):
-                print(f"❓ Clarification needed - preparing follow-up question")
-                return {
-                    'dataset_followup_question': selection_result.get('clarification_question'),
-                    'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                    'candidate_actual_tables': selection_result.get('candidate_actual_tables', []),
-                    'functional_names': selection_result.get('functional_names', []),
-                    'requires_clarification': True,
-                    'filter_metadata_results': filter_metadata_results,
-                    'selected_filter_context': selection_result.get('selected_filter_context', '')
-                }
-            elif selection_result.get('status','')=="missing_items":
-                return {
-                    'missing_dataset_items': True,
-                    'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                    'functional_names': selection_result.get('functional_names', []),
-                    'user_message': selection_result.get('user_message', ''),
-                    'filter_metadata_results': filter_metadata_results
-                } 
-            elif selection_result.get('status','')=="phi_found":
-                return {
-                    'phi_found': True,
-                    'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                    'functional_names': selection_result.get('functional_names', []),
-                    'user_message': selection_result.get('user_message', ''),
-                    'filter_metadata_results': filter_metadata_results
-                }
-            else:
-                print(f"✅ Dataset selection complete")
-                state['selected_dataset'] = selection_result.get('final_actual_tables', [])
-                state['selected_filter_context'] = selection_result.get('selected_filter_context', '')
-                state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
-                # After selection, extract metadata and set flag for SQL generation
-                metadata_result = await self.get_metadata(
-                    state=state,
-                    selected_dataset=selection_result.get('final_actual_tables', [])
-                )
-
-                if metadata_result.get('error', False):
-                    return {
-                        'error': True,
-                        'error_message': "Databricks vector search failed"
-                    }
-                
-                # Update state with metadata and selected dataset
-                state['dataset_metadata'] = metadata_result.get('metadata', '')
-                selected_dataset = selection_result.get('final_actual_tables', [])
-                selection_reasoning = selection_result.get('selection_reasoning', '')
-                functional_names = selection_result.get('functional_names', [])
-                create_sql = True
-
-        # SQL Generation and Execution Phase
-        if create_sql or create_sql_after_followup:
-            print(f"🔧 Starting SQL generation and execution phase")
-            
-            # Generate SQL based on the flow type
-            if create_sql_after_followup:
-                # SQL follow-up flow
-                context = self._extract_context(state)
-                sql_followup_question = state.get('sql_followup_question', '')
-                sql_followup_answer = state.get('current_question', '')
-                
-                sql_result = await self._generate_sql_with_followup_async(context, sql_followup_question, sql_followup_answer, state)
-            else:
-                # Initial SQL generation flow
-                sql_result = await self._assess_and_generate_sql_async(self._extract_context(state), state)
-            
-            # Handle follow-up questions if needed
-            if sql_result.get('needs_followup'):
-                return {
-                    'success': True,
-                    'needs_followup': True,
-                    'sql_followup_question': sql_result['sql_followup_questions'],
-                    'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-                    'dataset_metadata': state.get('dataset_metadata', ''),
-                    'selection_reasoning': selection_reasoning,
-                    'functional_names': functional_names
-                }
-            
-            if not sql_result['success']:
+            # ========================================
+            # CHECK FOR TOPIC DRIFT OR NEW QUESTION
+            # ========================================
+            if sql_result.get('topic_drift', False):
+                print("⚠️ Topic drift detected - user response unrelated to follow-up question")
                 return {
                     'success': False,
-                    'error': sql_result['error'],
+                    'sql_followup_topic_drift': True,
+                    'sql_followup_but_new_question': False,
+                    'message': sql_result.get('message', 'Your response seems unrelated to the clarification requested.'),
+                    'original_followup_question': sql_result.get('original_followup_question', ''),
                     'selected_dataset': selected_dataset or state.get('selected_dataset', []),
                     'dataset_metadata': state.get('dataset_metadata', '')
                 }
             
-            # Execute SQL queries and return results
-            context = self._extract_context(state)
-            if sql_result.get('multiple_sql', False):
-                print(f"  ⚡ Executing {len(sql_result['sql_queries'])} SQL queries in parallel...")
-                final_result = await self._execute_multiple_sql_queries_async(sql_result, context)
-            else:
-                print(f"  ⚡ Executing single SQL query...")
-                final_result = await self._execute_single_sql_query_async(sql_result, context, create_sql_after_followup)
+            if sql_result.get('new_question', False):
+                print("⚠️ New question detected - user asked different question instead of answering")
+                return {
+                    'success': False,
+                    'sql_followup_topic_drift': False,
+                    'sql_followup_but_new_question': True,
+                    'message': sql_result.get('message', "You've asked a new question instead of providing clarification."),
+                    'original_followup_question': sql_result.get('original_followup_question', ''),
+                    'detected_new_question': sql_result.get('detected_new_question', ''),
+                    'selected_dataset': selected_dataset or state.get('selected_dataset', []),
+                    'dataset_metadata': state.get('dataset_metadata', '')
+                }
             
-            # Return comprehensive results
+            print("✅ Follow-up response validated - proceeding with SQL execution")
+            
+        else:
+            # Initial SQL generation flow
+            sql_result = await self._assess_and_generate_sql_async(self._extract_context(state), state)
+        
+        # Handle follow-up questions if needed
+        if sql_result.get('needs_followup'):
             return {
-                'sql_result': final_result,
+                'success': True,
+                'needs_followup': True,
+                'sql_followup_topic_drift': False,
+                'sql_followup_but_new_question': False,
+                'sql_followup_question': sql_result['sql_followup_questions'],
                 'selected_dataset': selected_dataset or state.get('selected_dataset', []),
                 'dataset_metadata': state.get('dataset_metadata', ''),
-                'dataset_followup_question': None,
                 'selection_reasoning': selection_reasoning,
-                'functional_names': functional_names,
-                'requires_clarification': False,
-                'filter_metadata_results': filter_metadata_results
+                'functional_names': functional_names
             }
         
-        # Should not reach here, but handle gracefully
+        if not sql_result['success']:
+            return {
+                'success': False,
+                'sql_followup_topic_drift': False,
+                'sql_followup_but_new_question': False,
+                'error': sql_result['error'],
+                'selected_dataset': selected_dataset or state.get('selected_dataset', []),
+                'dataset_metadata': state.get('dataset_metadata', '')
+            }
+        
+        # Execute SQL queries and return results
+        context = self._extract_context(state)
+        if sql_result.get('multiple_sql', False):
+            print(f"  ⚡ Executing {len(sql_result['sql_queries'])} SQL queries in parallel...")
+            final_result = await self._execute_multiple_sql_queries_async(sql_result, context)
+        else:
+            print(f"  ⚡ Executing single SQL query...")
+            final_result = await self._execute_single_sql_query_async(sql_result, context, create_sql_after_followup)
+        
+        # Return comprehensive results
         return {
-            'error': True,
-            'error_message': "Unexpected flow in dataset selection"
-        }    
-
-
+            'sql_result': final_result,
+            'sql_followup_topic_drift': False,
+            'sql_followup_but_new_question': False,
+            'selected_dataset': selected_dataset or state.get('selected_dataset', []),
+            'dataset_metadata': state.get('dataset_metadata', ''),
+            'dataset_followup_question': None,
+            'selection_reasoning': selection_reasoning,
+            'functional_names': functional_names,
+            'requires_clarification': False,
+            'filter_metadata_results': filter_metadata_results
+        }
+    
+    # Should not reach here, but handle gracefully
+    return {
+        'error': True,
+        'error_message': "Unexpected flow in dataset selection"
+    }

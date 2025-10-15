@@ -1,504 +1,51 @@
-    async def _assess_and_generate_sql_async(self, context: Dict, state: Dict) -> Dict[str, Any]:
-        """Initial assessment: Generate SQL if clear, or ask follow-up questions if unclear"""
-        
-        current_question = context.get('current_question', '')
-        dataset_metadata = context.get('dataset_metadata', '')
-        join_clause = state.get('join_clause', '')
-        selected_filter_context = context.get('selected_filter_context')
-        if state.get('requires_dataset_clarification', False):
-
-            followup_reasoning = state.get('followup_reasoning', '')
-        else:
-            followup_reasoning = state.get('selection_reasoning', '')
-        
-        # Check if we have multiple tables
-        selected_datasets = state.get('selected_dataset', [])
-
-        # Define mandatory column mapping
-        mandatory_column_mapping = {
-            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
-                "Ledger"
-            ]
-        }
-        
-        # Extract mandatory columns based on selected datasets
-        mandatory_columns_info = []
-        if isinstance(selected_datasets, list):
-            for dataset in selected_datasets:
-                if dataset in mandatory_column_mapping:
-                    mandatory_columns = mandatory_column_mapping[dataset]
-                    for col in mandatory_columns:
-                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
-                else:
-                    mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
-        
-        # Format mandatory columns for prompt
-        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "No mandatory columns required"
-        
-        # Format selected filter context for prompt
-        filter_context_text = ""
-        if selected_filter_context:
-            filter_context_text = f"""
-SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
-     {selected_filter_context}
-
-"""
-        
-        has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
-
-        assessment_prompt = f"""
-You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
-
-CURRENT QUESTION: {current_question}
-MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
-MANDATORY FILTER COLUMNS: {mandatory_columns_text}
-
-FILTER VALUES EXTRACTED:
-{filter_context_text}
-
-AVAILABLE METADATA: {dataset_metadata}
-
-==============================
-PRE-ASSESSMENT VALIDATION
-==============================
-
-Before starting Task 1, perform these mandatory checks:
-
-**CHECK 1: Extract ALL user-mentioned terms**
-Identify every attribute, metric, filter, and dimension term in the question.
-List: [term1, term2, term3...]
-
-**CHECK 2: Validate against metadata**
-For EACH term, check if it maps to columns in AVAILABLE METADATA:
-- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
-- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name)
-- No match: "xyz" with no similar column → ❌ Not Found
-- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
-
-Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
-
-**CHECK 3: Filter context validation**
-Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
-If yes, check FILTER VALUES EXTRACTED:
-  a) Does the filter value EXACTLY match (not partial) what's in the user's question?
-  b) Does the column name exist in AVAILABLE METADATA?
-- If BOTH pass → ✓Valid (use this column for filtering)
-- If ONLY partial match → ❌Mark for follow-up
-- If exact match but column not in metadata → ❌Mark for follow-up
-- If filter value not mentioned in question → Skip (don't use this filter)
-
-**Output Format:**
-Terms: [list]
-Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
-Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
-
-==============================
-TASK 1: STRICT ASSESSMENT
-==============================
-
-Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
-
-**A. TEMPORAL SCOPE**
-✓ = Time period clearly specified
-❌ = Time period needed but missing
-N/A = No time dimension needed
-
-**B. METRIC DEFINITIONS** - Calculation Method Clarity
-Scope: Only numeric metrics requiring aggregation/calculation
-✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
-❌ = Any metric requires custom formula not specified OR calculation method ambiguous
-⚠️ = Metric exists but needs confirmation
-N/A = No metrics/calculations needed
-
-**C. BUSINESS CONTEXT**
-✓ = Filtering criteria clear AND grouping dimensions explicit
-❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
-⚠️ = Partially clear but confirmation recommended
-
-**D. FORMULA & CALCULATION REQUIREMENTS**
-✓ = Standard SQL aggregations sufficient
-❌ = Requires custom formulas without clear definition
-N/A = No calculations needed
-
-**E. METADATA MAPPING** - Column Existence Validation
-✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
-❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
-
-Use CHECK 2 validation results directly. No additional examples needed.
-
-**F. QUERY STRATEGY**
-✓ = Clear if single/multi query or join needed
-❌ = Multi-table approach unclear
-
-==============================
-ASSESSMENT OUTPUT FORMAT
-==============================
-
-**PRE-VALIDATION:**
-Terms: [list]
-Validation: [statuses]
-Filter Context: [status]
-
-**ASSESSMENT**: 
-A: ✓/❌/N/A (max 5 words)
-B: ✓/❌/⚠️/N/A (max 5 words)
-C: ✓/❌/⚠️ (max 5 words)
-D: ✓/❌/N/A (max 5 words)
-E: ✓/❌ (list failed mappings if any)
-F: ✓/❌ (max 5 words)
-
-**DECISION**: PROCEED | FOLLOW-UP
-
-==============================
-STRICT DECISION CRITERIA
-==============================
-
-**MUST PROCEED only if:**
-ALL areas (A, B, C, D, E, F) = ✓ or N/A with NO ❌ and NO blocking ⚠️
-
-**MUST FOLLOW-UP if:**
-ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
-
-**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
-
-==============================
-FOLLOW-UP GENERATION
-==============================
-
-**Priority Order:** E (Metadata) → B (Metrics) → C (Context) → A/D/F
-**Maximum 2 questions** - pick most critical blocking issues
-
-**Generic Format for ANY failure:**
-<followup>
-I need clarification to generate accurate SQL:
-
-**[What's Missing/Unclear]**: [Specific term or concept that failed]
-- Available in metadata: [list actual column names or options]
-- Please clarify: [what user needs to specify]
-
-[Second issue only if needed - max 2 total]
-</followup>
-
-**Example:**
-**Missing Column**: I cannot find "state_code" in the available data.
-- Available in metadata: state_name, state_abbr
-- Please clarify: Which column should I use?
-
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
-
-(Only execute if Task 1 DECISION says "PROCEED")
-
-**CORE SQL GENERATION RULES:**
-
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
-
-(Only execute if Task 1 says "PROCEED")
-
-**CORE SQL GENERATION RULES:**
-
-1. MANDATORY FILTERS - ALWAYS APPLY
-- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
-
-2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
-**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
-- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
-- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
-
-The validation was already done in CHECK 3. Only use filters marked as ✓Valid
-
-3. CALCULATED FORMULAS HANDLING (CRITICAL)
-**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
-
-CORRECT PATTERN:
-```sql
-SELECT 
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-FROM table
-WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
-```
-
-WRONG PATTERN:
-```sql
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
-```
-
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
-
-4. METRICS & AGGREGATIONS
-- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
-- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
-- Include time dimensions (month, quarter, year) when relevant to question
-- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
-
-5. SELECT CLAUSE STRATEGY
-
-**Simple Aggregates (no breakdown requested):**
-- Show only the aggregated metric and essential time dimensions if specified
-- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
-- Do NOT include unnecessary business dimensions or filter columns
-
-**Calculations & Breakdowns (analysis BY dimensions):**
-- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
-- For calculations, show all components for transparency:
-  * Percentage: Include numerator + denominator + percentage
-  * Variance: Include original values + variance
-  * Ratios: Include both components + ratio
-- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
-
-6. MULTI-TABLE JOIN SYNTAX (when applicable)
-- Use provided join clause exactly as specified
-- Qualify all columns with table aliases
-- Include all necessary tables in FROM/JOIN clauses
-- Only join if question requires related data together; otherwise use separate queries
-
-7. ATTRIBUTE-ONLY QUERIES
-- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
-
-8. STRING FILTERING - CASE INSENSITIVE
-- Always use UPPER() on both sides for text/string comparisons
-- Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-9. TOP N/BOTTOM N QUERIES WITH CONTEXT
--Show requested top/bottom N records with their individual values
--CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
--Calculate and show percentage contribution: (individual value / overall total) × 100
-Overall totals logic:
-    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
-    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
--Use subquery in SELECT to show overall total alongside each individual record
--Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
--ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
-
-10. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
-- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
-- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
-- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
-- Include variance/difference columns when comparing metrics
-- Prevents users from manually comparing separate rows
-
-11. DATABRICKS SQL COMPATIBILITY
-- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Date functions: date_trunc(), year(), month(), quarter()
-- Conditional logic: CASE WHEN
-- CTEs: WITH clauses for complex logic
-
-12. FORMATTING & ORDERING
-- Show whole numbers for metrics, round percentages to 4 decimal places
-- Use ORDER BY only for date columns in descending order
-- Use meaningful, business-relevant column names aligned with user's question
-
-==============================
-OUTPUT FORMATS
-==============================
-
-Return ONLY the result in XML tags with no additional text.
-
-**SINGLE SQL QUERY:**
-<sql>
-[Your complete SQL query]
-</sql>
-
-**MULTIPLE SQL QUERIES:**
-<multiple_sql>
-<query1_title>[Title - max 8 words]</query1_title>
-<query1>[SQL query]</query1>
-<query2_title>[Title - max 8 words]</query2_title>
-<query2>[SQL query]</query2>
-</multiple_sql>
-
-**FOLLOW-UP REQUEST:**
-<followup>
-[Use format above]
-</followup>
-
-==============================
-EXECUTION INSTRUCTION
-==============================
-
-1. Complete PRE-VALIDATION (extract and validate all terms)
-2. Complete TASK 1 strict assessment (A-F with clear marks)
-3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
-4. If PROCEED: Execute TASK 2 with SQL generation
-5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize E → B → C)
-
-**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
-**Remember**: ONE failure = STOP.
-"""
-        
-       
-        for attempt in range(self.max_retries):
-            try:
-                print('sql prompt', assessment_prompt)
-                llm_response = await self.db_client.call_claude_api_endpoint_async([
-                    {"role": "user", "content": assessment_prompt}
-                ])
-                print('sql llm response', llm_response)
-                # Extract SQL or follow-up questions
-                # Check for multiple SQL queries first
-                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
-                if multiple_sql_match:
-                    multiple_content = multiple_sql_match.group(1).strip()
-                    
-                    # Extract individual queries with titles
-                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
-                    if query_matches:
-                        sql_queries = []
-                        query_titles = []
-                        for i, (query_num, title, query) in enumerate(query_matches):
-                            cleaned_query = query.strip().replace('`', '')
-                            cleaned_title = title.strip()
-                            if cleaned_query and cleaned_title:
-                                sql_queries.append(cleaned_query)
-                                query_titles.append(cleaned_title)
-                        
-                        if sql_queries:
-                            return {
-                                'success': True,
-                                'multiple_sql': True,
-                                'sql_queries': sql_queries,
-                                'query_titles': query_titles,
-                                'query_count': len(sql_queries)
-                            }
-                    
-                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
-                
-                # Check for single SQL query
-                sql_match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-                if sql_match:
-                    sql_query = sql_match.group(1).strip()
-                    sql_query = sql_query.replace('`', '')  # Remove backticks
-                    
-                    if not sql_query:
-                        raise ValueError("Empty SQL query in XML response")
-                    
-                    return {
-                        'success': True,
-                        'multiple_sql': False,
-                        'sql_query': sql_query
-                    }
-                
-                # Check for follow-up questions
-                followup_match = re.search(r'<followup>(.*?)</followup>', llm_response, re.DOTALL)
-                if followup_match:
-                    followup_text = followup_match.group(1).strip()
-                    
-                    if not followup_text:
-                        raise ValueError("Empty follow-up questions in XML response")
-                    
-                    # Set is_sql_followup to True when asking follow-up questions
-                    state['is_sql_followup'] = True
-                    
-                    return {
-                        'success': True,
-                        'needs_followup': True,
-                        'sql_followup_questions': followup_text
-                    }
-                
-                # Neither SQL nor follow-up found
-                raise ValueError("No SQL or follow-up questions found in response")
-            
-            except Exception as e:
-                print(f"❌ SQL assessment attempt {attempt + 1} failed: {str(e)}")
-                
-                if attempt < self.max_retries - 1:
-                    print(f"🔄 Retrying SQL assessment... (Attempt {attempt + 1}/{self.max_retries})")
-                    await asyncio.sleep(2 ** attempt)
-        
-        return {
-            'success': False,
-            'error': f"SQL assessment failed after {self.max_retries} attempts due to Model errors"
-        }
-
-
-sql llm response **PRE-VALIDATION:**
-Terms: [membership count, California, August 2025]
-Validation: membership count(✓Total Membership) | California(❌not found) | August 2025(✓month,year)
-Filter Context: N/A
-
-**ASSESSMENT**:
-A: ✓ (August 2025 specified)
-B: ✓ (Total Membership clear)
-C: ❌ (California location unclear)
-D: ✓ (Simple COUNT aggregation)
-E: ❌ (California not found in metadata)
-F: ✓ (Single table query)
-
-**DECISION**: FOLLOW-UP
-
-<followup>
-I need clarification to generate accurate SQL:
-
-**Missing Location Column**: I cannot find "California" or any geographic/location columns in the available data.
-- Available in metadata: client_name, line_of_business, product_category, product_sub_category_lvl_1, product_sub_category_lvl_2
-- Please clarify: How should I identify California members? Is this by client name, or is there another way to filter for California?
-
-**Available client names include**: Laborers of Northern California Health and Welfare Trust Fund, University of Southern California, Northern California General Teamsters Security Fund - would any of these represent "California"?
-</followup>
-
-
-
-
-
 async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
-        """Generate SQL using original question + follow-up Q&A with multiple SQL support async"""
-        
-        current_question = context.get('current_question', '')
-        dataset_metadata = context.get('dataset_metadata', '')
-        join_clause = state.get('join_clause', '')
-        selected_filter_context = context.get('selected_filter_context')
-        if state.get('requires_dataset_clarification', False):
-
-            followup_reasoning = state.get('followup_reasoning', '')
-        else:
-            followup_reasoning = state.get('selection_reasoning','')
-        
-        # Check if we have multiple tables
-        selected_datasets = state.get('selected_dataset', [])
-        
-        # Define mandatory column mapping
-        mandatory_column_mapping = {
-            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
-                "Ledger"
-            ]
-        }
-        
-        # Extract mandatory columns based on selected datasets
-        mandatory_columns_info = []
-        if isinstance(selected_datasets, list):
-            for dataset in selected_datasets:
-                if dataset in mandatory_column_mapping:
-                    mandatory_columns = mandatory_column_mapping[dataset]
-                    for col in mandatory_columns:
-                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
-                else:
-                    mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
-        
-        # Format mandatory columns for prompt
-        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
-        
-        # Format selected filter context for prompt
-        filter_context_text = ""
-        if selected_filter_context:
-            filter_context_text = f"""
-SELECTED FILTER CONTEXT Available for SQL generation if the fiter values exactly matches:
+    """Generate SQL using original question + follow-up Q&A with relevance validation in single call"""
+    
+    current_question = context.get('current_question', '')
+    dataset_metadata = context.get('dataset_metadata', '')
+    join_clause = state.get('join_clause', '')
+    selected_filter_context = context.get('selected_filter_context')
+    if state.get('requires_dataset_clarification', False):
+        followup_reasoning = state.get('followup_reasoning', '')
+    else:
+        followup_reasoning = state.get('selection_reasoning','')
+    
+    # Check if we have multiple tables
+    selected_datasets = state.get('selected_dataset', [])
+    
+    # Define mandatory column mapping
+    mandatory_column_mapping = {
+        "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
+            "Ledger"
+        ]
+    }
+    
+    # Extract mandatory columns based on selected datasets
+    mandatory_columns_info = []
+    if isinstance(selected_datasets, list):
+        for dataset in selected_datasets:
+            if dataset in mandatory_column_mapping:
+                mandatory_columns = mandatory_column_mapping[dataset]
+                for col in mandatory_columns:
+                    mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
+            else:
+                mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
+    
+    # Format mandatory columns for prompt
+    mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
+    
+    # Format selected filter context for prompt
+    filter_context_text = ""
+    if selected_filter_context:
+        filter_context_text = f"""
+SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
     final selection : {selected_filter_context}
 """
-        
-        has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
+    
+    has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
 
-        followup_sql_prompt = f"""
+    followup_sql_prompt = f"""
 You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
-Your task is to generate a **high-quality Databricks SQL query** based on the user's question
 
 ORIGINAL USER QUESTION: {current_question}
 **AVAILABLE METADATA**: {dataset_metadata}
@@ -506,263 +53,174 @@ MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
 JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
 MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 
-FILTER VALUES EXTRACTED::
+FILTER VALUES EXTRACTED:
 {filter_context_text}
 
 ==============================
-FOLLOW-UP CLARIFICATION RECEIVED
+STEP 1: VALIDATE FOLLOW-UP RESPONSE
 ==============================
 
 YOUR PREVIOUS QUESTION: {sql_followup_question}
-USER'S CLARIFICATION: {sql_followup_answer}
+USER'S RESPONSE: {sql_followup_answer}
+
+**FIRST, analyze if the user's response is relevant:**
+
+1. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
+2. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
+3. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
+
+**If NOT RELEVANT (categories 2 or 3), immediately return the appropriate XML response below and STOP.**
+**If RELEVANT (category 1), proceed to STEP 2 for SQL generation.**
 
 ==============================
-MULTI-TABLE AND COMPLEX QUERY ANALYSIS
-==============================
-    
-Before generating SQL, assess if this requires multiple queries for better user understanding:
-
-**SCENARIOS REQUIRING MULTIPLE QUERIES**:
-
-MULTI-TABLE PATTERNS:
-- "Ledger revenue + breakdown by drug" → financial table + claim table
-- "Budget metrics + client breakdown" → forecast table + transaction table
-
-SINGLE-TABLE COMPLEX PATTERNS:
-- "Membership trends AND top drugs by revenue" → trend query + ranking query
-- "Summary metrics AND detailed breakdown" → summary query + detail query
-- "Current performance AND comparative analysis" → performance query + comparison query
-
-**DECISION CRITERIA**:
-- Multiple distinct analytical purposes in one question
-- Different aggregation levels (summary + detail)
-- Combines trends with rankings or comparisons
-- Question contains "AND" connecting different analysis types
-- Would result in overly complex single query
-
-**MULTI-QUERY DECISION LOGIC**:
-1. **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables with join
-2. **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
-3. **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Complex question with multiple analytical dimensions
-4. **SINGLE QUERY**: Simple, focused questions with one analytical dimension
-
-==============================
-FINAL SQL GENERATION TASK
+STEP 2: SQL GENERATION (Only if RELEVANT)
 ==============================
 
-Now generate a high-quality Databricks SQL query using:
+Generate a high-quality Databricks SQL query using:
 1. The ORIGINAL user question as the primary requirement
 2. The USER'S CLARIFICATION to resolve any ambiguities
 3. Available metadata for column mapping
 4. Multi-table strategy assessment (single vs multiple queries)
-5. All SQL generation best practices below
+5. All SQL generation best practices
 
-IMPORTANT: No more questions allowed - this is the definitive SQL generation using all available information.
+**MULTI-QUERY DECISION LOGIC**:
+- **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables
+- **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+- **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Multiple analytical dimensions (trends + rankings)
+- **SINGLE QUERY**: Simple, focused questions with one analytical dimension
 
 ========================================
 CRITICAL DATABRICKS SQL GENERATION RULES
 =========================================
 
-
-1. MANDATORY FILTERS - ALWAYS APPLY
-- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
-
-1b. FILTER VALUES EXTRACTED - APPLY WHEN NO ATTRIBUTE MAPPING
-**Rule**: If user question does NOT contain an attribute name that maps to metadata columns, check FILTER VALUES EXTRACTED section:
-- If "final selection" shows: column_name - [column_name], sample values [VALUE]
-- AND that VALUE exactly appears in the user's question
-- THEN apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
-- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
-- Do NOT use filters from  if not in "user question"
-
-2. CALCULATED FORMULAS HANDLING (CRITICAL)
-**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
-
-CORRECT PATTERN:
-```sql
-SELECT 
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-FROM table
-WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
-```
-
-WRONG PATTERN:
-```sql
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
-```
-
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
-
-3. METRICS & AGGREGATIONS
-- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
-- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
-- Include time dimensions (month, quarter, year) when relevant to question
-- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
-
-4. SELECT CLAUSE STRATEGY
-
-**Simple Aggregates (no breakdown requested):**
-- Show only the aggregated metric and essential time dimensions if specified
-- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
-- Do NOT include unnecessary business dimensions or filter columns
-
-**Calculations & Breakdowns (analysis BY dimensions):**
-- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
-- For calculations, show all components for transparency:
-  * Percentage: Include numerator + denominator + percentage
-  * Variance: Include original values + variance
-  * Ratios: Include both components + ratio
-- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
-
-5. MULTI-TABLE JOIN SYNTAX (when applicable)
-- Use provided join clause exactly as specified
-- Qualify all columns with table aliases
-- Include all necessary tables in FROM/JOIN clauses
-- Only join if question requires related data together; otherwise use separate queries
-
-6. ATTRIBUTE-ONLY QUERIES
-- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
-
-7. STRING FILTERING - CASE INSENSITIVE
-- Always use UPPER() on both sides for text/string comparisons
-- Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-8. TOP N/BOTTOM N QUERIES WITH CONTEXT
--Show requested top/bottom N records with their individual values
--CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
--Calculate and show percentage contribution: (individual value / overall total) × 100
-Overall totals logic:
-    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
-    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
--Use subquery in SELECT to show overall total alongside each individual record
--Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
--ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
-
-9. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
-- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
-- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
-- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
-- Include variance/difference columns when comparing metrics
-- Prevents users from manually comparing separate rows
-
-10. DATABRICKS SQL COMPATIBILITY
-- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Date functions: date_trunc(), year(), month(), quarter()
-- Conditional logic: CASE WHEN
-- CTEs: WITH clauses for complex logic
-
-11. FORMATTING & ORDERING
-- Show whole numbers for metrics, round percentages to 4 decimal places
-- Use ORDER BY only for date columns in descending order
-- Use meaningful, business-relevant column names aligned with user's question
-
-==============================
-INTEGRATION INSTRUCTIONS
-==============================
-
-- Integrate the user's clarification naturally into the SQL logic
-- If clarification provided specific formulas, implement them precisely
-- If clarification resolved time periods, use exact dates/ranges specified  
-- If clarification defined metrics, use the exact business definitions provided
-- Maintain all original SQL quality standards while incorporating clarifications
+<<<<<leaving it blank>>>>
 
 ==============================
 OUTPUT FORMATS
 ==============================
-IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
-return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
 
-**FOR SINGLE SQL QUERY:**
+**OPTION 1: If user's response is a NEW QUESTION**
+<new_question>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is a new question]</reasoning>
+</new_question>
+
+**OPTION 2: If user's response is TOPIC DRIFT (unrelated)**
+<topic_drift>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is off-topic]</reasoning>
+</topic_drift>
+
+**OPTION 3: If RELEVANT - Single SQL Query**
 <sql>
 [Your complete SQL query incorporating both original question and clarifications]
 </sql>
 
-**FOR MULTIPLE SQL QUERIES:**
-If analysis requires multiple queries for better understanding:
+**OPTION 4: If RELEVANT - Multiple SQL Queries**
 <multiple_sql>
-<query1_title>
-[Brief descriptive title for first query - max 8 words]
-</query1_title>
-<query1>
-[First SQL query here]
-</query1>
-<query2_title>
-[Brief descriptive title for second query - max 8 words]
-</query2_title>
-<query2>
-[Second SQL query here]
-</query2>
+<query1_title>[Brief descriptive title - max 8 words]</query1_title>
+<query1>[First SQL query]</query1>
+<query2_title>[Brief descriptive title - max 8 words]</query2_title>
+<query2>[Second SQL query]</query2>
 </multiple_sql>
 
-Generate the definitive SQL query now.
+Return ONLY ONE of the above XML formats based on your analysis.
 """
 
-        for attempt in range(self.max_retries):
-            try:
-                # print('followup sql',followup_sql_prompt)
-                llm_response = await self.db_client.call_claude_api_endpoint_async([
-                    {"role": "user", "content": followup_sql_prompt}
-                ])
-                # print('followup sql llm response',llm_response)
+    for attempt in range(self.max_retries):
+        try:
+            llm_response = await self.db_client.call_claude_api_endpoint_async([
+                {"role": "user", "content": followup_sql_prompt}
+            ])
 
-                # Check for multiple SQL queries first
-                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
-                if multiple_sql_match:
-                    multiple_content = multiple_sql_match.group(1).strip()
-                    
-                    # Extract individual queries with titles
-                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
-                    if query_matches:
-                        sql_queries = []
-                        query_titles = []
-                        for i, (query_num, title, query) in enumerate(query_matches):
-                            cleaned_query = query.strip().replace('`', '')
-                            cleaned_title = title.strip()
-                            if cleaned_query and cleaned_title:
-                                sql_queries.append(cleaned_query)
-                                query_titles.append(cleaned_title)
-                        
-                        if sql_queries:
-                            return {
-                                'success': True,
-                                'multiple_sql': True,
-                                'sql_queries': sql_queries,
-                                'query_titles': query_titles,
-                                'query_count': len(sql_queries)
-                            }
-                    
-                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
-                
-                # Check for single SQL query
-                match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-                if match:
-                    sql_query = match.group(1).strip()
-                    sql_query = sql_query.replace('`', '')  # Remove backticks
-                    
-                    if not sql_query:
-                        raise ValueError("Empty SQL query in XML response")
-                    
+            # Check for new_question flag first
+            new_question_match = re.search(r'<new_question>.*?<detected>(.*?)</detected>.*?<reasoning>(.*?)</reasoning>.*?</new_question>', llm_response, re.DOTALL)
+            if new_question_match:
+                detected = new_question_match.group(1).strip().lower() == 'true'
+                reasoning = new_question_match.group(2).strip()
+                if detected:
                     return {
-                        'success': True,
-                        'multiple_sql': False,
-                        'sql_query': sql_query
+                        'success': False,
+                        'topic_drift': False,
+                        'new_question': True,
+                        'message': f"You've asked a new question instead of providing clarification. {reasoning}",
+                        'original_followup_question': sql_followup_question,
+                        'detected_new_question': sql_followup_answer
                     }
-                else:
-                    raise ValueError("No SQL found in XML tags")
-            
-            except Exception as e:
-                print(f"❌ SQL generation with follow-up attempt {attempt + 1} failed: {str(e)}")
+
+            # Check for topic_drift flag
+            topic_drift_match = re.search(r'<topic_drift>.*?<detected>(.*?)</detected>.*?<reasoning>(.*?)</reasoning>.*?</topic_drift>', llm_response, re.DOTALL)
+            if topic_drift_match:
+                detected = topic_drift_match.group(1).strip().lower() == 'true'
+                reasoning = topic_drift_match.group(2).strip()
+                if detected:
+                    return {
+                        'success': False,
+                        'topic_drift': True,
+                        'new_question': False,
+                        'message': f"Your response seems unrelated to the clarification requested. {reasoning}",
+                        'original_followup_question': sql_followup_question
+                    }
+
+            # Check for multiple SQL queries
+            multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+            if multiple_sql_match:
+                multiple_content = multiple_sql_match.group(1).strip()
                 
-                if attempt < self.max_retries - 1:
-                    print(f"🔄 Retrying SQL generation with follow-up... (Attempt {attempt + 1}/{self.max_retries})")
-                    await asyncio.sleep(2 ** attempt)
+                # Extract individual queries with titles
+                query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+                if query_matches:
+                    sql_queries = []
+                    query_titles = []
+                    for i, (query_num, title, query) in enumerate(query_matches):
+                        cleaned_query = query.strip().replace('`', '')
+                        cleaned_title = title.strip()
+                        if cleaned_query and cleaned_title:
+                            sql_queries.append(cleaned_query)
+                            query_titles.append(cleaned_title)
+                    
+                    if sql_queries:
+                        return {
+                            'success': True,
+                            'multiple_sql': True,
+                            'topic_drift': False,
+                            'new_question': False,
+                            'sql_queries': sql_queries,
+                            'query_titles': query_titles,
+                            'query_count': len(sql_queries)
+                        }
+                
+                raise ValueError("Empty or invalid multiple SQL queries in XML response")
+            
+            # Check for single SQL query
+            match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+            if match:
+                sql_query = match.group(1).strip()
+                sql_query = sql_query.replace('`', '')  # Remove backticks
+                
+                if not sql_query:
+                    raise ValueError("Empty SQL query in XML response")
+                
+                return {
+                    'success': True,
+                    'multiple_sql': False,
+                    'topic_drift': False,
+                    'new_question': False,
+                    'sql_query': sql_query
+                }
+            else:
+                raise ValueError("No valid XML response found (expected sql, multiple_sql, new_question, or topic_drift)")
         
-        return {
-            'success': False,
-            'error': f"SQL generation with follow-up failed after {self.max_retries} attempts due to Model errors"
-        }
+        except Exception as e:
+            print(f"❌ SQL generation with follow-up attempt {attempt + 1} failed: {str(e)}")
+            
+            if attempt < self.max_retries - 1:
+                print(f"🔄 Retrying SQL generation with follow-up... (Attempt {attempt + 1}/{self.max_retries})")
+                await asyncio.sleep(2 ** attempt)
+    
+    return {
+        'success': False,
+        'topic_drift': False,
+        'new_question': False,
+        'error': f"SQL generation with follow-up failed after {self.max_retries} attempts due to Model errors"
+    }

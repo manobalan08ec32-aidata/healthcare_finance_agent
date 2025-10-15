@@ -1,110 +1,17 @@
-async def select_dataset(self, state: AgentState) -> Dict[str, any]:
-    """Enhanced dataset selection with complete workflow handling"""
-    # Initialize control flow variables
-    create_sql = False
-    create_sql_after_followup = False
-    metadata_result = None
-    selected_dataset = None
-    selection_reasoning = ''
-    functional_names = []
-    filter_metadata_results = []  # Initialize to prevent UnboundLocalError
-    
-    # SQL Generation and Execution Phase
-    if create_sql or create_sql_after_followup:
-        print(f"🔧 Starting SQL generation and execution phase")
-        
-        # Generate SQL based on the flow type
-        if create_sql_after_followup:
-            # SQL follow-up flow
-            context = self._extract_context(state)
-            sql_followup_question = state.get('sql_followup_question', '')
-            sql_followup_answer = state.get('current_question', '')
-            
-            sql_result = await self._generate_sql_with_followup_async(context, sql_followup_question, sql_followup_answer, state)
-            
-            # ========================================
-            # CHECK FOR TOPIC DRIFT OR NEW QUESTION
-            # ========================================
-            if sql_result.get('topic_drift', False):
-                print("⚠️ Topic drift detected - user response unrelated to follow-up question")
-                return {
-                    'success': False,
-                    'sql_followup_topic_drift': True,
-                    'sql_followup_but_new_question': False,
-                    'message': sql_result.get('message', 'Your response seems unrelated to the clarification requested.'),
-                    'original_followup_question': sql_result.get('original_followup_question', ''),
-                    'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-                    'dataset_metadata': state.get('dataset_metadata', '')
-                }
-            
-            if sql_result.get('new_question', False):
-                print("⚠️ New question detected - user asked different question instead of answering")
-                return {
-                    'success': False,
-                    'sql_followup_topic_drift': False,
-                    'sql_followup_but_new_question': True,
-                    'message': sql_result.get('message', "You've asked a new question instead of providing clarification."),
-                    'original_followup_question': sql_result.get('original_followup_question', ''),
-                    'detected_new_question': sql_result.get('detected_new_question', ''),
-                    'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-                    'dataset_metadata': state.get('dataset_metadata', '')
-                }
-            
-            print("✅ Follow-up response validated - proceeding with SQL execution")
-            
-        else:
-            # Initial SQL generation flow
-            sql_result = await self._assess_and_generate_sql_async(self._extract_context(state), state)
-        
-        # Handle follow-up questions if needed
-        if sql_result.get('needs_followup'):
-            return {
-                'success': True,
-                'needs_followup': True,
-                'sql_followup_topic_drift': False,
-                'sql_followup_but_new_question': False,
-                'sql_followup_question': sql_result['sql_followup_questions'],
-                'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-                'dataset_metadata': state.get('dataset_metadata', ''),
-                'selection_reasoning': selection_reasoning,
-                'functional_names': functional_names
-            }
-        
-        if not sql_result['success']:
-            return {
-                'success': False,
-                'sql_followup_topic_drift': False,
-                'sql_followup_but_new_question': False,
-                'error': sql_result['error'],
-                'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-                'dataset_metadata': state.get('dataset_metadata', '')
-            }
-        
-        # Execute SQL queries and return results
-        context = self._extract_context(state)
-        if sql_result.get('multiple_sql', False):
-            print(f"  ⚡ Executing {len(sql_result['sql_queries'])} SQL queries in parallel...")
-            final_result = await self._execute_multiple_sql_queries_async(sql_result, context)
-        else:
-            print(f"  ⚡ Executing single SQL query...")
-            final_result = await self._execute_single_sql_query_async(sql_result, context, create_sql_after_followup)
-        
-        # Return comprehensive results
-        return {
-            'sql_result': final_result,
-            'sql_followup_topic_drift': False,
-            'sql_followup_but_new_question': False,
-            'selected_dataset': selected_dataset or state.get('selected_dataset', []),
-            'dataset_metadata': state.get('dataset_metadata', ''),
-            'dataset_followup_question': None,
-            'selection_reasoning': selection_reasoning,
-            'functional_names': functional_names,
-            'requires_clarification': False,
-            'filter_metadata_results': filter_metadata_results
-        }
-    
-    # Should not reach here, but handle gracefully
-    return {
-        'error': True,
-        'error_message': "Unexpected flow in dataset selection"
-    }
+🔄 Processing SQL follow-up answer
+🔧 Starting SQL generation and execution phase
+follow up sql response <new_question>
+<detected>true</detected>
+<reasoning>User asked a completely different question about script count instead of answering the clarification about state information.</reasoning>
+</new_question>
+⚠️ New question detected - user asked different question instead of answering
+🔄 SQL follow-up detected new question - routing back to navigation
+🔀 Router routing debug:
+  - sql_followup_topic_drift: False
+  - sql_followup_new_question: True
+  🔄 Routing to: navigation_controller (new question detected)
+route navigation state info {'current_question': 'ok.show me the script count for july 2025', 'session_id': '9d59e55a-97a8-4a81-acea-a65301b9e3c5', 'user_id': 'Unknown User', 'requires_dataset_clarification': False, 'is_sql_followup': False, 'rewritten_question': 'What is the membership count for each state for July 2025', 'question_type': 'what', 'next_agent': ['navigation_controller'], 'next_agent_disp': 'SQL followup needed', 'current_agent': 'Question Validator', 'domain_selection': 'PBM Network', 'pending_business_question': '', 'user_question_history': ['What is the membership count for each state for July 2025'], 'greeting_response': None, 'nav_error_msg': None, 'errors': [], 'llm_retry_count': 0, 'filter_values': [], 'selected_filter_context': None, 'selected_dataset': ['prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'], 'dataset_metadata': '## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast\n\n**ledger**:   Admin Fees, Optum Perks, Other Products]\n\n', 'functional_names': ['ledger_actual_vs_forecast'], 'dataset_followup_question': None, 'selection_reasoning': "The ledger table contains the 'membership' metric and 'state_cd' attribute needed for state-level membership analysis. It supports monthly time grain for July 2025 filtering.", 'user_questions_history': ['what is the membership count for each state for july 2025', 'ok.show me the script count for july 2025'], 'session_context': {'app_instance_id': '9d59e55a-97a8-4a81-acea-a65301b9e3c5', 'execution_timestamp': '2025-10-16T00:44:43.549346', 'conversation_turn': 2}, 'topic_drift': False, 'missing_dataset_items': False, 'sql_followup_question': None, 'needs_followup': False, 'router_error_msg': None, 'follow_up_error_msg': None, 'sql_gen_error_msg': None, 'sql_followup_topic_drift': False, 'sql_followup_but_new_question': True}
+📦 Astream step: ['router_agent']
+✅ Node completed: router_agent - state keys: ['current_question', 'session_id', 'user_id', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'selected_filter_context', 'selected_dataset', 'dataset_metadata', 'functional_names', 'selection_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'sql_followup_question', 'needs_followup', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'requires_dataset_clarification', 'dataset_followup_question']
+🎭 UI Event: type=node_end, name=router_agent, state_keys=['current_question', 'session_id', 'user_id', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'selected_filter_context', 'selected_dataset', 'dataset_metadata', 'functional_names', 'selection_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'sql_followup_question', 'needs_followup', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'requires_dataset_clarification', 'dataset_followup_question']
+🎯 Router agent completed - checking outputs...

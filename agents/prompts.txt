@@ -1,15 +1,4 @@
- Astream step: ['router_agent']
-✅ Node completed: router_agent
-  🔄 Detected cycle: router → navigation_controller
-  ⏭️ Stream will continue to next node...
-🎭 UI Event: type=node_end, name=router_agent, state_keys=['current_question', 'session_id', 'user_id', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'selected_filter_context', 'selected_dataset', 'dataset_metadata', 'functional_names', 'selection_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'sql_followup_question', 'needs_followup', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'requires_dataset_clarification', 'dataset_followup_question']
-🎯 Router agent completed - checking outputs...
-✅ Added error message (total messages now: 4): No results available or SQL execution failed.
-📊 Current message summary:
-  Message 1: assistant(needs_followup) - I need clarification to genera...
-  Message 2: user(standard) - ok. show me the script count f...
-  Message 3: assistant(error) - No results available or SQL ex...
-Task was destroyed but it is pending!
+
 
 
 import streamlit as st

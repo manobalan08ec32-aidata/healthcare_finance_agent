@@ -1,46 +1,15 @@
-You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
+assessment_prompt = f"""
+        You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 
-CURRENT QUESTION: What is the billed amount for MPDOVA
-MULTIPLE TABLES AVAILABLE: False
-JOIN INFORMATION: No join clause provided
-MANDATORY FILTER COLUMNS: Table prd_optumrx_orxfdmprdsa.rag.claim_billing: Not Applicable
+CURRENT QUESTION: {current_question}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 
 FILTER VALUES EXTRACTED:
+{filter_context_text}
 
-SELECTED FILTER CONTEXT Available for SQL generation:
-    system reasoning : The claim_billing dataset is specifically designed for billing analysis and contains the 'billed amount' metric. MPDOVA appears in multiple columns (blng_entty_cd, carrier_id, client_name) but since the question asks for billed amount which is a billing-specific metric, the claim_billing table is the clear choice.  
-    final selection : carrier_id - [carrier_id], sample values [MPDOVA]
-
-
-
-AVAILABLE METADATA: ## Table: prd_optumrx_orxfdmprdsa.rag.claim_billing
-
-**inv_nbr**: This is invoice number contains multiple billing transactions and can come as # 7632763 for example. When a user requests an invoice number without specifying an invoice date, do not prompt for or infer a time period. The system should return the invoice number directly without requesting additional temporal context.
-**invoice_date**: (YYYY-MM-DD) format. Date when the invoice was generated and issued to the client.
-**billed_amount**: Represents the total billed amount. APPLY THESE RULES IN ORDER:
-1. If question contains 'total billed amount' OR 'overall billed amount' → NO rev_src_type filter (include all)
-2. If question contains 'activity fee' → rev_src_type = 'ACTIVITY FEE'
-3. If question contains 'claim fee' → rev_src_type = 'CLAIM FEE'
-4. If question contains 'fee' or 'fees' (without 'activity' or 'claim') → rev_src_type IN ('CLAIM FEE', 'ACTIVITY FEE')
-5. DEFAULT: If question asks for 'billed amount' or 'claim billed' WITHOUT the words 'total' or 'overall' → rev_src_type = 'CLAIM COST'
-IMPORTANT: 'billed amount' and 'total billed amount' are DIFFERENT. Only skip the filter if 'total' or 'overall' is explicitly mentioned.
-Examples: 'What is the billed amount?' → use CLAIM COST | 'What is the total billed amount?' → no filter
-Note: System only has CLAIM COST, CLAIM FEE, ACTIVITY FEE. Other fee names (EOB, etc.) filter on actvty_category_cd.
-----------------
-**rev_src_type**: Categorizes the revenue source. Distinct Values include CLAIM FEE, CLAIM COST, and ACTIVITY FEE. when the user asks for specific fee, use this column else aggregate all amount and no group by needed
-**invoice_gl_date**: (YYYY-MM-DD) format. General ledger posting date for the invoice. Use for financial period reporting and GL reconciliation. May differ from invoice_date.
-**drug_name**: Name of the dispensed drug.
-**therapy_class_name**: Therapeutic class of the drug.sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information
-**brand_vs_generic_ind**: drug type indicator. Drives brand/generic mix. [Values: Brand, Generic]
-**carrier_id**: Identifier of the insurance carrier administering the plan.used for carrier reporting.This is part of carrier_id,account_id,group_id combo
-**account_id**: Unique employer account identifier under which the policy is issued.This is part of carrier_id,account_id,group_id combo
-**group_id**: Group/subgroup within the account;This is not invoice number
-**CAG**: calculated column .concatenate carrier_id, account_id, and group_id to derive CAG
-**client_id**: used for client analysis.This contain unique 5-6 digit client id.always return client_name along with client id. Sample values [PDIND,MDCSP,57939]
-**client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
-
-
-
+AVAILABLE METADATA: {dataset_metadata}
 
 ==============================
 TASK 1: BRIEF ASSESSMENT
@@ -98,7 +67,7 @@ REQUEST FOLLOW-UP IF:
 - Multi-table approach unclear
 
 ==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
+TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
 ==============================================
 
 (Only execute if Task 1 says "PROCEED")
@@ -107,20 +76,25 @@ TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
 
 1. MANDATORY FILTERS - ALWAYS APPLY
 - Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
-- If user question doesn't mention an attribute but filter values exist in FILTER VALUES EXTRACTED, map those values to appropriate columns using metadata
-- If table shows "Not Applicable" for mandatory columns, skip this requirement
-- Apply mandatory filters but only include them in SELECT if relevant to the user's question
+
+1b. FILTER VALUES EXTRACTED - APPLY WHEN NO ATTRIBUTE MAPPING
+**Rule**: If user question does NOT contain an attribute name that maps to metadata columns, check FILTER VALUES EXTRACTED section:
+- If "final selection" shows: column_name - [column_name], sample values [VALUE]
+- AND that VALUE exactly appears in the user's question
+- THEN apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+- Do NOT use filters from  if not in "user question"
 
 2. CALCULATED FORMULAS HANDLING (CRITICAL)
 **When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
 
 CORRECT PATTERN:
 ```sql
-SELECT
+SELECT 
     ledger, year, month,  -- Business dimensions only
     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) -
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
 FROM table
 WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
@@ -236,3 +210,34 @@ I need clarification to generate accurate SQL:
 
 Please clarify these points.
 </followup>
+
+==============================
+FOLLOW-UP RULES
+==============================
+
+STEP 1: Identify which areas (A-F) from assessment were marked "❌"
+
+STEP 2: Generate questions ONLY for those unclear areas
+
+CONSTRAINTS:
+- Ask questions only for areas marked "❌ Needs Clarification"
+- If only 1 area unclear → ask 1 question
+- If 2+ areas unclear → maximum 2 questions for most critical areas
+- Never ask about areas marked "✓"
+- Each question gets 2 sub-bullets: available data + suggestion
+- Use actual column names from metadata
+- Keep all bullets short and actionable
+
+You get ONE opportunity for follow-up, so be decisive.
+
+==============================
+EXECUTION INSTRUCTION
+==============================
+
+1. Complete brief TASK 1 assessment (A-F checkmarks)
+2. Make clear PROCEED/FOLLOW-UP decision in one sentence
+3. If PROCEED: Execute TASK 2 with SQL generation
+4. If FOLLOW-UP: Ask targeted questions for unclear areas only
+
+Show your assessment first, then provide SQL or follow-up.
+        """

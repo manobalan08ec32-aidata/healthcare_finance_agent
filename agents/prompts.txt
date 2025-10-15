@@ -1,3 +1,10 @@
+1b. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
+**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
+- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+
+The validation was already done in CHECK 3. Only use filters marked as ✓Valid
+
 assessment_prompt = f"""
 You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 

@@ -38,25 +38,7 @@ Note: System only has CLAIM COST, CLAIM FEE, ACTIVITY FEE. Other fee names (EOB,
 **CAG**: calculated column .concatenate carrier_id, account_id, and group_id to derive CAG
 **client_id**: used for client analysis.This contain unique 5-6 digit client id.always return client_name along with client id. Sample values [PDIND,MDCSP,57939]
 **client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
-**claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. should not be used for any aggregation.
-**claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations.
-**claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]
-**oracle_prod_code**: This is not drug related product code.This is services related product code from the Oracle system. Examples include PROD35, PROD57. Use for product-level categorization and analysis.always return orcl_prod_desc along with prod code.
-**orcl_prod_desc**: Oracle product description providing detailed product names or services. Examples include E-Prescribing Admin Fee, PMPM-VCS, Prior Auth. Specialty. Use for product identification and reporting.
-**actvty_category_cd**: Activity category code for operational classification. Examples include 02EPRES, 01PCMS. Use for activity-based analysis and categorization.      
-**blng_entty_cd**: Billing entity code identifier. Examples include ORXUHC0036XX, ORXUHC0005XX. Use to identify which entity is performing the billing.
-**blng_entty_name**: Billing entity name providing descriptive billing entity information. Examples include UHC INSURANCE COMPANY, UHCACIS FULLY INSURED. Use for entity-level reporting and analysis.
-**fqa_cmpny_cd**: 3-digit company code component of the GL string. Use for company-level financial segmentation.
-**fqa_geo_cd**: 3-digit geography code component of the GL string. Use for geographic financial segmentation and reporting.
-**fqa_aflt_cd**: 3-digit affiliate code component of the GL string. Use for affiliate-level financial tracking.
-**fqa_lob_cd**: 3-digit line of business code component of the GL string. Use for LOB financial segmentation and P&L reporting.
-**fqa_acnt_cd**: 3-digit account code component of the GL string. Use for account-level GL mapping.This account is not related to carrier, account,employer_group_id.     
-**fqa_dept_cd**: 3-digit department code component of the GL string. Use for departmental cost allocation and reporting.
-**fqa_prod_cd**: 3-digit product code component of the GL string. Use for product-level financial tracking in GL.This is not oracle product code.
-**fqa_sub_acnt_cd**: 3-digit sub-account code component of the GL string. Use for detailed sub-account level GL analysis.This is not related to carrier account group.    
-**line_of_business_name**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR . [Distinct Values: E&I-FI,E&I-ASO,C&S,PDP,MAPD,E&I-UMR,External]
-**gpi_no**: GPI code.
-**DRUG_MANUFCTR_NM**: Drug manufacturer; supports brand/manufacturer market-share views
+
 
 
 

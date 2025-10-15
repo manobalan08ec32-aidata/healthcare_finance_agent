@@ -1,4 +1,16 @@
-
+elif name == 'router_agent':
+    print(f"🎯 Router agent completed - checking outputs...")
+    
+    # ⭐ PRIORITY CHECK: Handle new question cycle FIRST (before checking sql_result)
+    if state.get('sql_followup_but_new_question', False):
+        print("🔄 New question detected - workflow will continue to navigation_controller")
+        # Clear placeholders but don't break/return - let stream continue to next node
+        for placeholder in node_placeholders.values():
+            placeholder.empty()
+        # Add a temporary status message
+        st.info("🔄 Processing your new question...")
+        # Don't break or return - just continue to let the stream proceed
+        continue
 
 
 import streamlit as st

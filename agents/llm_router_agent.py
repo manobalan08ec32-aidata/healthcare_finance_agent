@@ -8,6 +8,7 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
+from config.mandatory_embeddings_loader import get_mandatory_embeddings_for_tables
 
 class LLMRouterAgent:
     """Enhanced router agent with dataset selection and SQL generation"""
@@ -87,7 +88,7 @@ class LLMRouterAgent:
             print(f"📊 SQL Query: {query}")
             
             # Execute the query using databricks client
-            result_data = await self.db_client.execute_sql_async(query)
+            result_data = await self.db_client.execute_sql_async_audit(query)
             print('results_data_filter',result_data)
             
             # Handle result_data - it's coming as list of dictionaries
@@ -137,7 +138,7 @@ class LLMRouterAgent:
             # Get existing filter metadata from state if available
             existing_filter_metadata = state.get('filter_metadata_results', [])
             result = await self._fix_router_llm_call(state, existing_filter_metadata)
-            print('llm fix follow up dataset',result)
+           
             if result.get('error', False):
                 print(f"❌ Dataset selection failed with error")
                 return {
@@ -148,6 +149,17 @@ class LLMRouterAgent:
                 return {'topic_drift':True }
             # After clarification, extract metadata and set flag for SQL generation
             else:
+
+                state['selected_dataset'] = result.get('selected_dataset', [])
+                state['selection_reasoning'] = result.get('selection_reasoning', '')
+                selected_dataset = result.get('selected_dataset', [])
+                
+                # Store selected filter context if available
+                selected_filter_context = result.get('selected_filter_context')
+                if selected_filter_context:
+                    state['selected_filter_context'] = selected_filter_context
+                    print(f"🎯 Storing filter context for SQL generation: {selected_filter_context}")
+
                 metadata_result = await self.get_metadata(
                     state=state,
                     selected_dataset=result.get('selected_dataset', [])
@@ -161,15 +173,6 @@ class LLMRouterAgent:
                 
                 # Update state with metadata and selected dataset
                 state['dataset_metadata'] = metadata_result.get('metadata', '')
-                state['selected_dataset'] = result.get('selected_dataset', [])
-                state['selection_reasoning'] = metadata_result.get('selection_reasoning', '')
-                selected_dataset = result.get('selected_dataset', [])
-                
-                # Store selected filter context if available
-                selected_filter_context = result.get('selected_filter_context')
-                if selected_filter_context:
-                    state['selected_filter_context'] = selected_filter_context
-                    print(f"🎯 Storing filter context for SQL generation: {selected_filter_context}")
                 
                 create_sql = True
         
@@ -266,6 +269,9 @@ class LLMRouterAgent:
                 }
             else:
                 print(f"✅ Dataset selection complete")
+                state['selected_dataset'] = selection_result.get('final_actual_tables', [])
+                state['selected_filter_context'] = selection_result.get('selected_filter_context', '')
+                state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
                 # After selection, extract metadata and set flag for SQL generation
                 metadata_result = await self.get_metadata(
                     state=state,
@@ -280,8 +286,6 @@ class LLMRouterAgent:
                 
                 # Update state with metadata and selected dataset
                 state['dataset_metadata'] = metadata_result.get('metadata', '')
-                state['selected_dataset'] = selection_result.get('final_actual_tables', [])
-                state['selected_filter_context'] = selection_result.get('selected_filter_context', '')
                 selected_dataset = selection_result.get('final_actual_tables', [])
                 selection_reasoning = selection_result.get('selection_reasoning', '')
                 functional_names = selection_result.get('functional_names', [])
@@ -299,6 +303,30 @@ class LLMRouterAgent:
                 sql_followup_answer = state.get('current_question', '')
                 
                 sql_result = await self._generate_sql_with_followup_async(context, sql_followup_question, sql_followup_answer, state)
+
+                # ========================================
+                # CHECK FOR TOPIC DRIFT OR NEW QUESTION
+                # ========================================
+                if sql_result.get('topic_drift', False):
+                    print("⚠️ Topic drift detected - user response unrelated to follow-up question")
+                    return {
+                        'success': False,
+                        'sql_followup_topic_drift': True,
+                        'sql_followup_but_new_question': False
+                    }
+                
+                if sql_result.get('new_question', False):
+                    print("⚠️ New question detected - user asked different question instead of answering")
+                    return {
+                        'success': False,
+                        'sql_followup_topic_drift': False,
+                        'sql_followup_but_new_question': True,
+                        'detected_new_question': sql_result.get('detected_new_question', '')
+
+                    }
+                
+                print("✅ Follow-up response validated - proceeding with SQL execution")
+
             else:
                 # Initial SQL generation flow
                 sql_result = await self._assess_and_generate_sql_async(self._extract_context(state), state)
@@ -349,49 +377,38 @@ class LLMRouterAgent:
             'error': True,
             'error_message': "Unexpected flow in dataset selection"
         }    
-
-    async def get_metadata(self, state: Dict, selected_dataset: list) -> Dict:
-        """Extract metadata using vector search for the given selected_dataset"""
-        try:
-            current_question = state.get('rewritten_question', state.get('current_question', ''))
-
-            # Determine embedding index based on domain selection
-            domain_selection = state.get('domain_selection', '').strip()
-            embedding_idx = None
-            if domain_selection == 'PBM Network':
-                embedding_idx = 'prd_optumrx_orxfdmprdsa.rag.column_embeddings_pbm_idx'
-            elif domain_selection == 'Optum Pharmacy':
-                embedding_idx = 'prd_optumrx_orxfdmprdsa.rag.column_embeddings_pharmacy_idx'
-            else:
-                # Default fallback if domain not recognized; could still use vector search fallback
-                raise Exception("Domain Not Found")
     
-            # Use selected_dataset as tables_list if available, else empty list
+    async def get_metadata(self, state: Dict, selected_dataset: list) -> Dict:
+        """Extract metadata from mandatory embeddings JSON file"""
+        try:
             tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
-            print('tables_list', tables_list)
             
-            cluster_results = await self.db_client.sp_vector_search_columns(
-                query_text=current_question,
-                tables_list=tables_list,
-                num_results_per_table=20,
-                index_name=embedding_idx,
-                
-            )
-            print('vector results', cluster_results)
-            # Group llm_context by table_name and build markdown metadata
-            clusters_by_table = {}
-            for cluster in cluster_results:
-                table = cluster['table_name']
-                if table not in clusters_by_table:
-                    clusters_by_table[table] = []
-                clusters_by_table[table].append(cluster['llm_context'])
-
-            # Build final markdown metadata
+            print(f'📊 Loading metadata for {len(tables_list)} table(s): {tables_list}')
+            
+            # ===== STEP 1: Load Mandatory Embeddings (Full Metadata) =====
+            mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list)
+            print(f'✅ Mandatory contexts loaded: {len(mandatory_contexts)} tables')
+            
+            # ===== STEP 2: Build Metadata from Mandatory Contexts =====
             metadata = ""
-            for table, clusters in clusters_by_table.items():
-                metadata += f"\n## Table: {table}\n\n"
-                for cluster_markdown in clusters:
-                    metadata += cluster_markdown + "\n\n"
+            
+            for table in tables_list:
+                metadata += f"## Table: {table}\n\n"
+                
+                # Add all contexts for this table
+                if table in mandatory_contexts:
+                    for ctx in mandatory_contexts[table]:
+                        # Clean up the context (remove leading/trailing whitespace)
+                        clean_ctx = ctx.strip()
+                        if clean_ctx:  # Only add non-empty contexts
+                            metadata += clean_ctx + "\n"
+                    
+                    print(f'  ✅ {table}: {len(mandatory_contexts[table])} contexts added')
+                else:
+                    print(f'  ⚠️ {table}: No metadata found in mandatory embeddings')
+                
+                metadata += "\n"  # Extra line between tables
+            
 
             return {
                 'status': 'success',
@@ -400,29 +417,16 @@ class LLMRouterAgent:
             }
             
         except Exception as e:
-            print(f"❌ Databricks vector search failed: {str(e)}")
+            print(f"❌ Metadata extraction failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             return {
                 'status': 'error',
                 'metadata': '',
                 'error': True,
-                'error_message': f"Databricks vector search failed: {str(e)}"
+                'error_message': f"Metadata extraction failed: {str(e)}"
             }
-
-    def _direct_vector_search_dataset(self, user_question: str, num_results: int = 10) -> List[Dict]:
-        """Vector search returning full results including actual table names"""
-        
-        try:
-            # Get full search results with actual table names
-            full_results = self.db_client.vector_search_tables(
-                query_text=user_question,
-                num_results=num_results
-            )
-            
-            return full_results
-            
-        except Exception as e:
-            raise Exception(f"Vector search failed: {str(e)}")
-
 
     async def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState, filter_metadata_results: List[str] = None) -> Dict:
         """Enhanced LLM selection with validation, disambiguation handling, and filter-based selection"""
@@ -431,7 +435,6 @@ class LLMRouterAgent:
         filter_values = state.get('filter_values', [])
         
         # Format filter metadata results for the prompt
-        print('inside filter metadata', filter_metadata_results)
         filter_metadata_text = ""
         if filter_metadata_results:
             filter_metadata_text = "\n**FILTER METADATA FOUND:**\n"
@@ -443,196 +446,227 @@ class LLMRouterAgent:
         selection_prompt = f"""
             You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 
-            CURRENT QUESTION: {user_question}
-            EXTRACTED COLUMNS WITH FILTER VALUES: {filter_values}
-            {filter_metadata_text}
-            AVAILABLE DATASETS: {search_results}
+CURRENT QUESTION: {user_question}
 
-            A. **PHI/PII SECURITY CHECK**:
-                - First, examine each dataset's "PHI_PII_Columns" field (if present)
-                - Analyze the user's question to identify if they are requesting any PHI/PII information
-                - PHI/PII includes: SSN, member IDs, personal identifiers, patient names, addresses, etc.
-                - Check if the user's question mentions or implies access to columns listed in "PHI_PII_Columns"
-                - If PHI/PII columns are requested, IMMEDIATELY return phi_found status (do not proceed to other checks)
-                
-            B. **METRICS & ATTRIBUTES CHECK**:
-                - Extract requested metrics/measures and attributes/dimensions
-                - Apply smart mapping with these rules:
-                
-                **TIER 1 - Direct Matches**: Exact column names
-                **TIER 2 - Standard Healthcare Mapping**: 
-                    * "therapies" → "therapy_class_name"
-                    * "scripts" → "unadjusted_scripts/adjusted_scripts"  
-                    * "drugs" → "drug_name"
-                    * "clients" → "client_id/client_name"
-                
-                **TIER 3 - Mathematical Operations**: 
-                    * "variance/variances" → calculated from existing metrics over time periods
-                    * "growth/change" → period-over-period calculations
-                    * "percentage/rate" → ratio calculations
-                
-                **TIER 4 - Skip Common Filter Values**: 
-                    * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
-                    * These appear to be filter values, not missing attributes
-                
-                **BLOCK - Creative Substitutions**:
-                    * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
-                    * Do NOT assume domain knowledge not in metadata
+EXTRACTED COLUMNS WITH FILTER VALUES: {filter_values}
+{filter_metadata_text}
 
-                - Only mark as missing if NO reasonable Tier 1-3 mapping exists
+AVAILABLE DATASETS: {search_results}
 
-            C. **KEYWORD & SUITABILITY ANALYSIS**:
-            - **KEYWORD MATCHING**: Look for domain keywords that indicate preferences:
-            * "claim/claims" → indicates claim_transaction dataset relevance
-            * "forecast/budget" → indicates actuals_vs_forecast dataset relevance  
-            * "ledger" → indicates actuals_vs_forecast dataset relevance
-            
-            - **CRITICAL: SUITABILITY VALIDATION (HARD CONSTRAINTS)**:
-            * **BLOCKING RULE**: If a dataset's "not_useful_for" field contains keywords/patterns that match the user's question, IMMEDIATELY EXCLUDE that dataset regardless of other factors
-            * **POSITIVE VALIDATION**: Check if user's question aligns with "useful_for" field patterns
-            * **Example Applications**:
-              - User asks "top 10 clients by expense" → Ledger has "not_useful_for": ["client level expense"] → EXCLUDE ledger table completely
-              - User asks "claim-level analysis" → Claims has "useful_for": ["claim-level financial analysis"] → PREFER claims table
-            * **PRECEDENCE**: not_useful_for OVERRIDES metrics/attributes availability - even if a table has the columns, exclude it if explicitly marked as not suitable
-            
-            - Verify time_grains match user needs (daily vs monthly vs quarterly)
-            - Note: Keywords indicate relevance but suitability constraints are MANDATORY
+A. **PHI/PII SECURITY CHECK**:
+- First, examine each dataset's "PHI_PII_Columns" field (if present)
+- Analyze the user's question to identify if they are requesting any PHI/PII information
+- PHI/PII includes: SSN, member IDs, personal identifiers, patient names, addresses, etc.
+- Check if the user's question mentions or implies access to columns listed in "PHI_PII_Columns"
+- If PHI/PII columns are requested, IMMEDIATELY return phi_found status (do not proceed to other checks)
 
-            D. **COMPLEMENTARY ANALYSIS CHECK**:
-            - **PURPOSE**: Identify if multiple datasets together provide more complete analysis than any single dataset
-            - **LOOK FOR THESE PATTERNS**:
-            * Primary metric in one dataset + dimensional attributes in another (e.g., "ledger revenue" + "therapy breakdown")
-            * Different analytical perspectives on same business question (e.g., actuals view + claims view)
-            * One dataset provides core data, another provides breakdown/segmentation
-            * Cross-dataset comparison needs (e.g., budget vs actual vs claims)
-            * **BREAKDOWN ANALYSIS**: When question asks for metric breakdown by dimensions not available in the primary dataset
+B. **METRICS & ATTRIBUTES CHECK**:
+- Extract requested metrics/measures and attributes/dimensions
+- Apply smart mapping with these rules:
 
-            - **EVALUATION CRITERIA**:
-            * Single dataset with ALL metrics + attributes → SELECT IT
-            * No single complete dataset → SELECT MULTIPLE if complementary
-            * Primary metric in A + breakdown dimension in B → SELECT BOTH
+**TIER 1 - Direct Matches**: Exact column names
+**TIER 2 - Standard Healthcare Mapping**: 
+    * "therapies" → "therapy_class_name"
+    * "scripts" → "unadjusted_scripts/adjusted_scripts"  
+    * "drugs" → "drug_name"
+    * "clients" → "client_id/client_name"
 
-            **KEY EXAMPLES**:
-            - "top 10 drugs by revenue" → Claims table (has revenue + drug_name) NOT Ledger (missing drug_name)
-            - "total revenue" → Ledger table (high_level_table tie-breaker when both have revenue)
-            - "ledger revenue breakdown by drug" → Both tables (complementary: ledger revenue + claims drug_name)
+**TIER 3 - Mathematical Operations**: 
+    * "variance/variances" → calculated from existing metrics over time periods
+    * "growth/change" → period-over-period calculations
+    * "percentage/rate" → ratio calculations
 
-            **CLARIFICATION vs COMPLEMENTARY**:
-            - Ask clarification when: Same data available in multiple datasets with different contexts OR multiple columns in same table
-            - Select multiple when: Different but compatible data needed from each dataset for complete analysis
+**TIER 4 - Skip Common Filter Values**: 
+    * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
+    * These appear to be filter values, not missing attributes
 
-            E. **FILTER-BASED FROM FILTER VALUES FALLBACK CHECK**:
-            - **LAST RESORT ONLY**: Use filter metadata ONLY when traditional validation (A-D) cannot provide clear selection
-            - **TRIGGER CONDITIONS**: Multiple datasets pass all validations OR no clear winner from standard analysis
-            - **APPLICATION**: If sections A-D do not provide a clear selection and filter values are available, you MUST always ask a follow-up question listing all columns and their tables that contain the filter value, and request the user to specify which column context to use for filtering. This applies even if only one column matches. Do not select confidently based on filter values alone.
-            - In your follow-up, list the column names and their respective tables for the user to choose, e.g.:
-                "I found the filter value in multiple columns:
-                - Table: [table_name], Column: [column_name] (values include: ...)
-                - Table: [table_name], Column: [column_name] (values include: ...)
-                Which column should I use for filtering?"
-            - Note: Table names are not present in the extracted filter output, so use metadata to infer and present the correct table/column mapping in your follow-up.
+**BLOCK - Creative Substitutions**:
+    * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
+    * Do NOT assume domain knowledge not in metadata
 
+- Only mark as missing if NO reasonable Tier 1-3 mapping exists
 
-            F. **FINAL DECISION LOGIC**:
-            - **STEP 1**: Check results from sections A through E
-            - **STEP 2**: MANDATORY Decision order:
-            * **FIRST**: Apply suitability constraints - eliminate datasets with "not_useful_for" matches
-            * **SECOND**: Validate complete coverage (metrics + attributes) on remaining datasets
-            * **THIRD**: Single complete dataset → SELECT IT
-            
-            * **NEW - FILTER DISAMBIGUATION CHECK**:
-            - Before declaring success, check if filter values exist in multiple columns within the selected dataset
-            - IF selected dataset has metric BUT filter appears in 2+ columns → RETURN "needs_disambiguation"
+**NEW - EXPLICIT ATTRIBUTE DETECTION**:
+- Scan the user's question for explicit attribute keywords(examples below):
+    * "carrier" → carrier_name, carrier_id
+    * "drug" → drug_name, drug_id
+    * "pharmacy" → pharmacy_name, pharmacy_id
+    * "therapy" → therapy_class_name, therapy_id
+    * "client" → client_name, client_id
+    * "manufacturer" → drug_manufctr_nm, manufacturer_name
+- Flag as "explicit_attribute_mentioned = true/false"
+- Store mapped column names for later filter disambiguation check
+- This detection is case-insensitive and looks for these keywords anywhere in the question
 
-            * **FOURTH**: No single complete → SELECT MULTIPLE if complementary
-            * **FIFTH**: Multiple complete → Use traditional tie-breakers (keywords, high_level_table)
-            * **SIXTH**: Still tied → Apply filter-based selection as final tie-breaker
-            * **LAST**: No coverage OR unresolvable ambiguity → Report as missing items or request clarification
-            
-            **HIGH LEVEL TABLE PRIORITY RULE** (ONLY APPLIES DURING TIES):
-            - **CRITICAL**: High-level table priority is ONLY used as a tie-breaker when multiple datasets have ALL required metrics AND attributes
-            - **PRIMARY RULE**: ALWAYS validate that dataset has both required metrics AND required attributes FIRST
-            - **HIGH LEVEL QUESTION INDICATORS**: Questions asking for summary metrics, totals, aggregates, or general overviews without specific breakdowns
-            - **Examples of HIGH LEVEL**: "total revenue", "overall costs", "summary metrics", "high-level view", "aggregate performance", "what is the revenue", "show me costs"  
-            - **Examples of NOT HIGH LEVEL**: "revenue breakdown by therapy", "costs by client", "detailed analysis", "revenue by drug category", "performance by region", "top drugs by revenue", "top clients by cost"
-            - **VALIDATION FIRST RULE**: 
-                * Step 1: Check if dataset has required metrics (revenue, cost, etc.)
-                * Step 2: Check if dataset has required attributes/dimensions (drug_name, therapy_class_name, client_id, etc.)
-                * Step 3: ONLY if multiple datasets pass Steps 1 & 2, then check "high_level_table": "True" as tie-breaker
-            - **NEVER OVERRIDE RULE**: Never select high_level_table if it's missing required attributes, even for "high-level" questions
+C. **KEYWORD & SUITABILITY ANALYSIS**:
+- **KEYWORD MATCHING**: Look for domain keywords that indicate preferences:
+* "claim/claims" → indicates claim_transaction dataset relevance
+* "forecast/budget" → indicates actuals_vs_forecast dataset relevance  
+* "ledger" → indicates actuals_vs_forecast dataset relevance
 
-            ==============================
-            DECISION CRITERIA
-            ==============================
+- **CRITICAL: SUITABILITY VALIDATION (HARD CONSTRAINTS)**:
+* **BLOCKING RULE**: If a dataset's "not_useful_for" field contains keywords/patterns that match the user's question, IMMEDIATELY EXCLUDE that dataset regardless of other factors
+* **POSITIVE VALIDATION**: Check if user's question aligns with "useful_for" field patterns
+* **Example Applications**:
+- User asks "top 10 clients by expense" → Ledger has "not_useful_for": ["client level expense"] → EXCLUDE ledger table completely
+- User asks "claim-level analysis" → Claims has "useful_for": ["claim-level financial analysis"] → PREFER claims table
+* **PRECEDENCE**: not_useful_for OVERRIDES metrics/attributes availability - even if a table has the columns, exclude it if explicitly marked as not suitable
 
-            **PHI_FOUND** IF:
-            - User question requests or implies access to PHI/PII columns
-            - Any columns mentioned in "PHI_PII_Columns" are being requested
-            - Must be checked FIRST before other validations
+- Verify time_grains match user needs (daily vs monthly vs quarterly)
+- Note: Keywords indicate relevance but suitability constraints are MANDATORY
 
-            **PROCEED** (SELECT DATASET) IF:
-            - **STANDARD PATH**: Dataset passes suitability validation (not blocked by "not_useful_for" field) AND all requested metrics/attributes have Tier 1-3 matches AND clear selection
-            - Single dataset meets all requirements after suitability and coverage checks
-            - Complementary datasets identified for complete coverage after all validations
-            - **FILTER-FALLBACK PATH**: When multiple datasets pass all validations, filter metadata provides clear tie-breaker
+D. **COMPLEMENTARY ANALYSIS CHECK**:
+- **PURPOSE**: Identify if multiple datasets together provide more complete analysis than any single dataset
+- **LOOK FOR THESE PATTERNS**:
+* Primary metric in one dataset + dimensional attributes in another (e.g., "ledger revenue" + "therapy breakdown")
+* Different analytical perspectives on same business question (e.g., actuals view + claims view)
+* One dataset provides core data, another provides breakdown/segmentation
+* Cross-dataset comparison needs (e.g., budget vs actual vs claims)
+* **BREAKDOWN ANALYSIS**: When question asks for metric breakdown by dimensions not available in the primary dataset
 
-            **MISSING_ITEMS** IF:
-            - Required metrics/attributes don't have Tier 1-3 matches in any dataset
-            - No suitable alternatives available after all validation steps
+- **EVALUATION CRITERIA**:
+* Single dataset with ALL metrics + attributes → SELECT IT
+* No single complete dataset → SELECT MULTIPLE if complementary
+* Primary metric in A + breakdown dimension in B → SELECT BOTH
 
-            **REQUEST_FOLLOW_UP** IF:
-            - **FILTER COLUMN AMBIGUITY (CHECK FIRST)**: Selected dataset has required metric BUT filter value appears in 2+ columns within that dataset - ALWAYS ask user to specify which column to use
-            - Multiple datasets with conflicting contexts AND no clear preference from traditional validation
-            - All metrics available in multiple datasets AND no traditional tie-breaker available
-            - Filter values match more than one table (multi-table disambiguation): ALWAYS ask the user to specify which table to use for filtering.
-            - Filter values match more than one column in the same table (multi-column disambiguation): ALWAYS ask the user to specify which column to use for filtering.
-            - If filter values do not result in a single, perfect column match, you MUST ask the user for clarification, listing all possible columns and tables.
-            - Any unresolvable ambiguity exists after full validation including filter fallback: ALWAYS request user clarification rather than guessing.
+**KEY EXAMPLES**:
+- "top 10 drugs by revenue" → Claims table (has revenue + drug_name) NOT Ledger (missing drug_name)
+- "total revenue" → Ledger table (high_level_table tie-breaker when both have revenue)
+- "ledger revenue breakdown by drug" → Both tables (complementary: ledger revenue + claims drug_name)
 
-            ==============================
-            ASSESSMENT FORMAT (BRIEF)
-            ==============================
+**CLARIFICATION vs COMPLEMENTARY**:
+- Ask clarification when: Same data available in multiple datasets with different contexts OR multiple columns in same table
+- Select multiple when: Different but compatible data needed from each dataset for complete analysis
 
-            **ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) C:✓(suitability passed) D:✓(complementary) E:✓(filter fallback available) F:✓(clear selection)
-            **DECISION**: PROCEED - [One sentence reasoning]
+F. **FINAL DECISION LOGIC**:
+- **STEP 1**: Check results from sections A through D
+- **STEP 2**: MANDATORY Decision order:
+* **FIRST**: Apply suitability constraints - eliminate datasets with "not_useful_for" matches
+* **SECOND**: Validate complete coverage (metrics + attributes) on remaining datasets
+* **THIRD**: Single complete dataset → SELECT IT
 
-            Keep assessment ultra-brief:
-            - Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
-            - **CRITICAL for C (suitability)**: ✓ means no "not_useful_for" conflicts, ❌ means blocked by suitability constraints
-            - **CRITICAL for E (filter fallback)**: ✓ means filter metadata available for tie-breaking, ❌ means no filter guidance available
-            - Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
-            - Decision reasoning maximum 15 words
-            - No detailed explanations or bullet points in assessment
-            - Save detailed analysis for JSON selection_reasoning field
+* **NEW - SMART FILTER DISAMBIGUATION CHECK**:
+**STEP 3A**: Check if filter values exist in multiple columns
+**STEP 3B**: Determine if follow-up is needed using this SIMPLIFIED logic:
 
-            ==============================
-            RESPONSE FORMAT
-            ==============================
+1. **Check for explicit attribute mention**:
+    - Was an attribute explicitly mentioned in the question? (from Section B detection)
+    - Examples: "Carrier", "drug", "pharmacy", "therapy", "client", "manufacturer", "plan"
 
-            IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
+2. **Count matching columns in selected dataset**:
+    - From filter metadata, identify all columns containing the filter value
+    - Filter to only columns that exist in the selected dataset's attributes
+    - Store as: matching_columns_count
 
-            Brief assessment, then JSON with status: "phi_found", "success", "missing_items", or "needs_disambiguation"
-            Include required fields: final_actual_tables, functional_names, requires_clarification, selection_reasoning (2-3 lines max)
-            Add status-specific fields: user_message (phi_found/missing_items), high_level_table_selected (success), clarification_question (needs_disambiguation)
-            Add selected_filter_context: "only mention one column name strictly - col name - [actual_column_name] , sample values [sample value]" if column the selected from filter context metadata
+3. **SIMPLE DECISION TREE**:
+    - IF explicit_attribute_mentioned = true → NO FOLLOW-UP (trust user's specification)
+    - IF explicit_attribute_mentioned = false:
+        * IF matching_columns_count = 1 → NO FOLLOW-UP (obvious choice)
+        * IF matching_columns_count > 1 → RETURN "needs_disambiguation"
 
-               CRITICAL RULES:
-                - Use TIER-based validation: Direct matches > Healthcare mapping > Math operations > Skip filter values
-                - NEVER override missing attributes with high_level_table priority
-                - Validate complete coverage FIRST, then apply tie-breakers
-                - Use ONLY provided metadata, no external assumptions
-                - When unsure, ASK CLARIFICATION rather than guess
-                """
+**Examples**:
+- "Carrier MPDOVA billed amount" + MPDOVA in [carrier_name, carrier_id, plan_name] → ✓ NO follow-up (user said "Carrier")
+- "MPDOVA billed amount" + MPDOVA in [carrier_name] only → ✓ NO follow-up (only 1 match)
+- "covid vaccine billed amount" + covid vaccine in [drug_name, pharmacy_name, therapy_class_name] → ❌ ASK which column (no explicit attribute, 3 matches)
+
+* **FOURTH**: No single complete → SELECT MULTIPLE if complementary
+* **FIFTH**: Multiple complete → Use traditional tie-breakers (keywords, high_level_table)
+* **SIXTH**: Still tied → RETURN "needs_disambiguation" and ask user to choose
+* **LAST**: No coverage OR unresolvable ambiguity → Report as missing items or request clarification
+
+**HIGH LEVEL TABLE PRIORITY RULE** (ONLY APPLIES DURING TIES):
+- **CRITICAL**: High-level table priority is ONLY used as a tie-breaker when multiple datasets have ALL required metrics AND attributes
+- **PRIMARY RULE**: ALWAYS validate that dataset has both required metrics AND required attributes FIRST
+- **HIGH LEVEL QUESTION INDICATORS**: Questions asking for summary metrics, totals, aggregates, or general overviews without specific breakdowns
+- **Examples of HIGH LEVEL**: "total revenue", "overall costs", "summary metrics", "high-level view", "aggregate performance", "what is the revenue", "show me costs"  
+- **Examples of NOT HIGH LEVEL**: "revenue breakdown by therapy", "costs by client", "detailed analysis", "revenue by drug category", "performance by region", "top drugs by revenue", "top clients by cost"
+- **VALIDATION FIRST RULE**: 
+* Step 1: Check if dataset has required metrics (revenue, cost, etc.)
+* Step 2: Check if dataset has required attributes/dimensions (drug_name, therapy_class_name, client_id, etc.)
+* Step 3: ONLY if multiple datasets pass Steps 1 & 2, then check "high_level_table": "True" as tie-breaker
+- **NEVER OVERRIDE RULE**: Never select high_level_table if it's missing required attributes, even for "high-level" questions
+
+==============================
+DECISION CRITERIA
+==============================
+
+**PHI_FOUND** IF:
+- User question requests or implies access to PHI/PII columns
+- Any columns mentioned in "PHI_PII_Columns" are being requested
+- Must be checked FIRST before other validations
+
+**PROCEED** (SELECT DATASET) IF:
+- **STANDARD PATH**: Dataset passes suitability validation (not blocked by "not_useful_for" field) AND all requested metrics/attributes have Tier 1-3 matches AND clear selection
+- Single dataset meets all requirements after suitability and coverage checks
+- Complementary datasets identified for complete coverage after all validations
+
+**MISSING_ITEMS** IF:
+- Required metrics/attributes don't have Tier 1-3 matches in any dataset
+- No suitable alternatives available after all validation steps
+
+**REQUEST_FOLLOW_UP** IF:
+- **PRIORITY 1 - DATASET AMBIGUITY**: 
+* Multiple datasets with conflicting contexts AND no clear preference from traditional validation
+* ALWAYS ask user to specify which table/dataset to use FIRST
+
+- **PRIORITY 2 - SMART FILTER COLUMN AMBIGUITY**: 
+* User did NOT explicitly mention an attribute (e.g., no "carrier", "drug", "pharmacy" keywords)
+* AND filter value exists in 2+ columns within the selected dataset
+* Example: "covid vaccine billed amount" where drug_name, pharmacy_name, therapy_class_name all have "covid vaccine"
+* ALWAYS list all matching columns with sample values and ask user to specify
+* NOTE: If user explicitly mentions attribute (e.g., "Carrier MPDOVA"), NO follow-up needed regardless of multiple matches
+
+==============================
+ASSESSMENT FORMAT (BRIEF)
+==============================
+
+**ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) B-ATTR:✓(explicit attr OR single column) C:✓(suitability passed) D:✓(complementary) F:✓(clear selection)
+**DECISION**: PROCEED - [One sentence reasoning]
+
+Keep assessment ultra-brief:
+- Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
+- **NEW B-ATTR**: ✓ means explicit attribute mentioned OR only 1 column match (no ambiguity), ❌ means no explicit attr AND multiple columns (disambiguation needed)
+- **CRITICAL for C (suitability)**: ✓ means no "not_useful_for" conflicts, ❌ means blocked by suitability constraints
+- Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
+- Decision reasoning maximum 15 words
+- No detailed explanations or bullet points in assessment
+- Save detailed analysis for JSON selection_reasoning field
+
+=======================
+RESPONSE FORMAT
+=======================
+
+IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
+
+"status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
+"final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
+"functional_names": ["functional_name"] if status = success else [],
+"tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
+"requires_clarification": true if status = needs_disambiguation else false,
+"selection_reasoning": "2-3 lines max explanation",
+"high_level_table_selected": true/false if status = success else null,
+"user_message": "message to user" if status = phi_found or missing_items else null,
+"clarification_question": "question to user" if status = needs_disambiguation else null,
+"selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
+
+**FIELD POPULATION RULES FOR needs_disambiguation STATUS**:
+- tables_identified_for_clarification: ALWAYS populate when status = needs_disambiguation
+* If PRIORITY 1 (dataset ambiguity): List all candidate tables that need disambiguation
+* If PRIORITY 2 (column ambiguity): List the single selected table where column disambiguation is needed
+
+"""
+
         
-        max_retries = 3
+        max_retries = 1
         retry_count = 0
         
         while retry_count < max_retries:
             try:
-                print("Sending selection prompt to LLM...",selection_prompt)
+                # print("Sending selection prompt to LLM...",selection_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": selection_prompt}
                 ])
+                
                 print("Raw LLM response:", llm_response)
                 
                 # Extract JSON from the response using the existing helper method
@@ -664,7 +698,7 @@ class LLMRouterAgent:
                         'functional_names': selection_result.get('functional_names', []),
                         'requires_clarification': True,
                         'clarification_question': selection_result.get('clarification_question'),
-                        'candidate_actual_tables': selection_result.get('final_actual_tables', []),
+                        'candidate_actual_tables': selection_result.get('tables_identified_for_clarification', []),
                         'selection_reasoning': selection_result.get('selection_reasoning', ''),
                         'missing_items': selection_result.get('missing_items', {}),
                         'error_message': '',
@@ -742,6 +776,8 @@ class LLMRouterAgent:
         candidate_actual_tables = state.get('candidate_actual_tables', [])
         functional_names = state.get('functional_names', [])
         original_question = state.get('rewritten_question', state.get('original_question', ''))
+        followup_reasoning = state.get('requires_dataset_clarification',  '')
+
         
         # Format filter metadata for prompt
         filter_metadata_text = ""
@@ -751,66 +787,69 @@ class LLMRouterAgent:
                 filter_metadata_text += f"- {result}\n"
         
         combined_prompt = f"""
-        You need to analyze the user's response and either process clarification or detect topic drift.
+You need to analyze the user's response and either process clarification or detect topic drift.
 
-        CONTEXT:
-        ORIGINAL QUESTION: "{original_question}"
-        YOUR CLARIFICATION QUESTION: "{followup_question}"
-        USER'S RESPONSE: "{user_clarification}"
-        
-        CANDIDATE TABLES: {candidate_actual_tables}
-        FUNCTIONAL NAMES: {functional_names}
-        EXTRACTED COLUMNS WITH FILTER VALUES:
-        
-        {filter_metadata_text}
+CONTEXT:
+ORIGINAL QUESTION: "{original_question}"
+YOUR CLARIFICATION QUESTION: "{followup_question}"
+USER'S RESPONSE: "{user_clarification}"
 
-        TASK: Determine what type of response this is and handle accordingly.
+CANDIDATE TABLES: {candidate_actual_tables}
+FUNCTIONAL NAMES: {functional_names}
+EXTRACTED COLUMNS WITH FILTER VALUES:
 
-        ANALYSIS STEPS:
-        1. **Response Type Detection**:
-        - CLARIFICATION_ANSWER: User is responding to your clarification question
-        - NEW_QUESTION: User is asking a completely different question (topic drift)
-        - MODIFIED_SCOPE: User modified the original question's scope
+{filter_metadata_text}
 
-        2. **Action Based on Type**:
-        - If CLARIFICATION_ANSWER → Select final dataset from candidates AND extract column selection if applicable
-        - If NEW_QUESTION → Signal topic drift for fresh processing
-        - If MODIFIED_SCOPE → Signal scope change for revalidation
+TASK: Determine what type of response this is and handle accordingly.
 
-        3. **Column Selection Extraction** (for CLARIFICATION_ANSWER only):
-        - If the clarification question was about column selection AND filter metadata is available
-        - Analyze user's response to identify which column they selected
-        - Extract the specific column name and its values from filter metadata
-        - Format selected_filter_context as string: "user selected info - col name - [actual_column_name] , sample values [sample_values_from_metadata]"
+ANALYSIS STEPS:
+1. **Response Type Detection**:
+- CLARIFICATION_ANSWER: User is responding to your clarification question
+- NEW_QUESTION: User is asking a completely different question (topic drift)
+- MODIFIED_SCOPE: User modified the original question's scope
 
-        RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
-        {{
-            "response_type": "clarification_answer" | "new_question" | "modified_scope",
-            "final_actual_tables": ["table_name"] if clarification_answer else [],
-            "selection_reasoning": "explanation" if clarification_answer else "topic drift/scope change detected",
-            "topic_drift": true if new_question else false,
-            "modified_scope": true if modified_scope else false,
-            "selected_filter_context": "user selected info - col name - [actual_column_name] , sample values [sample_values_from_metadata]" if clarification_answer and column selection detected else null
-        }}
+2. **Action Based on Type**:
+- If CLARIFICATION_ANSWER → Select final dataset from candidates AND extract column selection if applicable
+- If NEW_QUESTION → Signal topic drift for fresh processing
+- If MODIFIED_SCOPE → Signal scope change for revalidation
 
-        DECISION LOGIC:
-        - If user response clearly chooses between dataset options → CLARIFICATION_ANSWER
-        - If user asks about completely different metrics/attributes → NEW_QUESTION  
-        - If user refines original question without answering clarification → MODIFIED_SCOPE
+3. **Column Selection Extraction** (for CLARIFICATION_ANSWER only):
+- If the clarification question was about column selection AND filter metadata is available
+- Analyze user's response to identify which column they selected
+- Extract the specific column name and its values from filter metadata
+- Format selected_filter_context as string: "user selected info - col name - [actual_column_name] , sample values [sample_values_from_metadata]"
 
-        CRITICAL: Be decisive about response type to avoid processing loops.
-        """
+RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
+{{
+    "response_type": "clarification_answer" | "new_question" | "modified_scope",
+    "final_actual_tables": ["table_name"] if clarification_answer else [],
+    "selection_reasoning": "explanation" if clarification_answer else "topic drift/scope change detected",
+    "topic_drift": true if new_question else false,
+    "modified_scope": true if modified_scope else false,
+    "selected_filter_context": "user selected info - col name - [actual_column_name] , sample values [sample_values_from_metadata]" if clarification_answer and column selection detected else null
+}}
+
+DECISION LOGIC:
+- If user response clearly chooses between dataset options → CLARIFICATION_ANSWER
+- If user asks about completely different metrics/attributes → NEW_QUESTION  
+- If user refines original question without answering clarification → MODIFIED_SCOPE
+
+CRITICAL: Be decisive about response type to avoid processing loops.
+"""
         
         max_retries = 3
         retry_count = 0
         
         while retry_count < max_retries:
             try:
-                print('dataset follow up prompt',combined_prompt)
+                # print('dataset follow up prompt',combined_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": combined_prompt}
                 ])
-                print('dataset follow up response',llm_response)
+                # print('dataset follow up response',llm_response)
+
+               
+
                 result = json.loads(llm_response)
                 response_type = result.get('response_type')
                 
@@ -829,16 +868,18 @@ class LLMRouterAgent:
                 
                 else:  # clarification_answer
                     print(f"✅ Clarification resolved: {result.get('final_actual_tables')}")
-                    selected_filter_context = result.get('selected_filter_context')
-                    if selected_filter_context:
-                        print(f"🎯 Column selection detected: {selected_filter_context}")
+
+
+                    # selected_filter_context = result.get('selected_filter_context')
+                    # if selected_filter_context:
+                    #     print(f"🎯 Column selection detected: {selected_filter_context}")
                     
                     return {
                         'dataset_followup_question': None,
                         'selected_dataset': result.get('final_actual_tables', []),
                         'requires_clarification': False,
                         'selection_reasoning': result.get('selection_reasoning', ''),
-                        'selected_filter_context': selected_filter_context
+                        'selected_filter_context': result.get('selected_filter_context', '')
                     }
                 
             except Exception as e:
@@ -1036,6 +1077,11 @@ class LLMRouterAgent:
         dataset_metadata = context.get('dataset_metadata', '')
         join_clause = state.get('join_clause', '')
         selected_filter_context = context.get('selected_filter_context')
+        if state.get('requires_dataset_clarification', False):
+
+            followup_reasoning = state.get('followup_reasoning', '')
+        else:
+            followup_reasoning = state.get('selection_reasoning', '')
         
         # Check if we have multiple tables
         selected_datasets = state.get('selected_dataset', [])
@@ -1065,277 +1111,306 @@ class LLMRouterAgent:
         filter_context_text = ""
         if selected_filter_context:
             filter_context_text = f"""
-SELECTED FILTER CONTEXT Available for SQL generation:
-    {selected_filter_context}
+SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
+     {selected_filter_context}
 
 """
         
         has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
-        
+
         assessment_prompt = f"""
-        You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
+You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 
-        CURRENT QUESTION: {current_question}
-        MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-        JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
-        MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+CURRENT QUESTION: {current_question}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 
-        FILTER VALUES EXTRACTED:
-        {filter_context_text}
+FILTER VALUES EXTRACTED:
+{filter_context_text}
 
-        AVAILABLE METADATA: {dataset_metadata}
+AVAILABLE METADATA: {dataset_metadata}
 
-            ==============================
-            TASK 1: BRIEF ASSESSMENT
-            ==============================
+==============================
+PRE-ASSESSMENT VALIDATION
+==============================
 
-            Analyze the user's question for clarity across these areas:
+Before starting Task 1, perform these mandatory checks:
 
-            A. METRIC DEFINITIONS: Clear business metrics exists or not 
-            B. BUSINESS CONTEXT: Clear filtering/grouping vs unclear dimensions
-            C. FORMULA REQUIREMENTS: Check if the formula exists in meta data for the question
-            D. METADATA MAPPING: Terms map to columns vs unclear mapping and use FILTER VALUES EXTRACTED if needed.
-            E. QUERY STRATEGY: Single query vs multiple queries needed
+**CHECK 1: Extract ALL user-mentioned terms**
+Identify every attribute, metric, filter, and dimension term in the question.
+List: [term1, term2, term3...]
 
-            **MULTI-QUERY SCENARIOS**:
-            - Multi-table: Different data sources for complementary analysis
-            - Complex single-table: Multiple analytical dimensions (trends + rankings)
-            - Decision logic: JOIN if related data, SEPARATE if complementary analysis
+**CHECK 2: Validate against metadata**
+For EACH term, check if it maps to columns in AVAILABLE METADATA:
+- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
+- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name)
+- No match: "xyz" with no similar column → ❌ Not Found
+- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
 
-            ==============================
-            ASSESSMENT FORMAT (BRIEF)
-            ==============================
+Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
 
-            **ASSESSMENT**: A:✓(metrics mapped) B:✓(context clear) C:✓(formulas exist) D:✓(columns found) E:Single/Multi
-            **DECISION**: PROCEED - [One sentence reasoning]
+**CHECK 3: Filter context validation**
+Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
+If yes, check FILTER VALUES EXTRACTED:
+  a) Does the filter value EXACTLY match (not partial) what's in the user's question?
+  b) Does the column name exist in AVAILABLE METADATA?
+- If BOTH pass → ✓Valid (use this column for filtering)
+- If ONLY partial match → ❌Mark for follow-up
+- If exact match but column not in metadata → ❌Mark for follow-up
+- If filter value not mentioned in question → Skip (don't use this filter)
 
-            Keep assessment ultra-brief:
-            - Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
-            - Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
-            - Decision reasoning maximum 15 words
-            - No detailed explanations in assessment
-            - Save detailed analysis for follow-up if needed
+**Output Format:**
+Terms: [list]
+Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
+Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
 
-            ==============================
-            DECISION CRITERIA
-            ==============================
-            
-            PROCEED TO TASK 2 (Generate SQL) IF:
-            - All areas (A-F) are sufficiently clear
-            - You can map user request to available columns with 100% confidence
-            - Standard SQL functions can handle all requested calculations
-            - No ambiguous business logic or custom formulas needed
-            - Multi-table strategy is clear (join vs separate queries)
+==============================
+TASK 1: STRICT ASSESSMENT
+==============================
 
-            REQUEST FOLLOW-UP IF: 
-            - ANY of areas A-F have significant ambiguity
-            - Metadata mapping is uncertain
-            - Multi-table approach is unclear
+Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
 
-            ==============================================
-            TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-            ==============================================
+**A. TEMPORAL SCOPE**
+✓ = Time period clearly specified
+❌ = Time period needed but missing
+N/A = No time dimension needed
 
-            (Only execute if Task 1 assessment says "PROCEED")
+**B. METRIC DEFINITIONS** - Calculation Method Clarity
+Scope: Only numeric metrics requiring aggregation/calculation
+✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
+❌ = Any metric requires custom formula not specified OR calculation method ambiguous
+⚠️ = Metric exists but needs confirmation
+N/A = No metrics/calculations needed
 
-            **MULTI-TABLE DECISION LOGIC:**
-            1. **SINGLE QUERY WITH JOIN**: If question requires related data from multiple tables AND join clause exists
-            2. **MULTIPLE SEPARATE QUERIES**: If question requires complementary analysis from different tables OR no join exists
-            3. **SINGLE TABLE**: If question can be answered from one table
+**C. BUSINESS CONTEXT**
+✓ = Filtering criteria clear AND grouping dimensions explicit
+❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
+⚠️ = Partially clear but confirmation recommended
 
-            **SQL GENERATION RULES:**
+**D. FORMULA & CALCULATION REQUIREMENTS**
+✓ = Standard SQL aggregations sufficient
+❌ = Requires custom formulas without clear definition
+N/A = No calculations needed
 
-            0. **CRITICAL: CALCULATED FORMULAS HANDLING**
-            - **CALCULATED METRICS DETECTION**: If the question asks for calculated formulas like Gross Margin, Cost %, Gross Margin %, etc., DO NOT use "GROUP BY metric_type"
-            - **CORRECT PATTERN for calculated formulas for example**:
-              ```sql
-              SELECT 
-                  ledger, year, month,  -- Include grouping dimensions
-                  SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-                  SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-                  SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-                  SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-              FROM table
-              WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-              GROUP BY ledger, year, month  -- Group by dimensions, NOT by metric_type
-              ```
-            - **WRONG PATTERN** (DO NOT USE for calculated formulas):
-              ```sql
-              GROUP BY ledger, metric_type  -- This will create separate rows per metric_type
-              ```
-            - **RULE**: Only group by metric_type when user explicitly asks to see individual metric types separately, NOT when calculating derived formulas
+**E. METADATA MAPPING** - Column Existence Validation
+✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
+❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
 
-            1. MANDATORY FILTERS
-            
-            - CRITICAL: Review the MANDATORY FILTER COLUMNS section above - any columns marked as MANDATORY must be used as filters in your WHERE clause
-            - CRITICAL: If the user's current question does not explicitly mention an attribute name or column, but filter values are available (as extracted from FILTER VALUES EXTRACTED), then the system must map those filter values to the appropriate metadata columns using the metadata schema.
-            - If a table shows "Not Applicable" for mandatory columns, no additional mandatory filters are required for that table
-            - If the metadata specifies mandatory filter columns, include them in the WHERE clause of your SQL query
-            
-            2. MEANINGFUL COLUMN NAMES
-            - Use user-friendly, business-relevant column names that align with the user's question.
-            - Generate a month-over-month comparison that clearly displays month names side by side in the output
+Use CHECK 2 validation results directly. No additional examples needed.
 
-            3a. SIMPLE AGGREGATE QUERIES - MINIMAL COLUMNS
-            - **WHEN TO APPLY**: User query asks for simple totals/aggregates WITHOUT any breakdown attributes (e.g., "what is the revenue", "total cost", "sum of expenses")
-            - **CRITICAL RULE**: If user query contains NO attributes/dimensions for breakdown, answer cumulatively with minimal columns
-            - **GROUP BY RESTRICTION**: Do NOT use unnecessary business dimension columns in GROUP BY unless explicitly requested by user
-            - **MANDATORY FILTERS ONLY- CRITICAL**: Apply only mandatory filters but do NOT include these filter columns in SELECT output
-            - **SELECT STRATEGY**: Show only the requested metric and essential time dimensions if specified in query
+**F. QUERY STRATEGY**
+✓ = Clear if single/multi query or join needed
+❌ = Multi-table approach unclear
 
-        3b. CALCULATION QUERIES - SHOW ALL COMPONENTS
-            - **WHEN TO APPLY**: User query involves calculations, breakdowns, or analysis BY specific dimensions
-            - **MANDATORY**: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in the SELECT output when they are relevant to the user's question
-            - **CALCULATION TRANSPARENCY**: If calculating a percentage, include the numerator, denominator, AND the percentage itself
-            - **VARIANCE CALCULATIONS**: If calculating a variance, include the original values AND the variance
-            - **BREAKDOWN QUERIES**: If user asks for breakdown BY product_category, include product_category in SELECT
-            - **GROUPING QUERIES**: If user asks for grouping BY therapeutic_class, include therapeutic_class in SELECT
-            - This ensures users can see the full context and verify how calculations were derived
+==============================
+ASSESSMENT OUTPUT FORMAT
+==============================
 
-            Examples:
-            -- User asks: "Cost per member for Specialty products by state"
-            SELECT 
-                product_category,           -- Filter component (used in WHERE)
-                state_name,                -- Grouping component (used in GROUP BY)  
-                total_cost,                -- Numerator component
-                member_count,              -- Denominator component
-                total_cost / member_count AS cost_per_member  -- Final calculation
-            FROM table 
-            WHERE UPPER(product_category) = UPPER('Specialty')
-            GROUP BY product_category, state_name
+**PRE-VALIDATION:**
+Terms: [list]
+Validation: [statuses]
+Filter Context: [status]
 
-            4. METRICS & AGGREGATIONS
-            - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
-            - **CRITICAL**: When calculating derived formulas (Gross Margin, Cost %, etc.), DO NOT group by metric_type. Group by business dimensions only (ledger, year, month, product_category, etc.)
-            - **ONLY group by metric_type** when user explicitly wants to see each metric type as separate rows, NOT when calculating cross-metric formulas
-           
+**ASSESSMENT**: 
+A: ✓/❌/N/A (max 5 words)
+B: ✓/❌/⚠️/N/A (max 5 words)
+C: ✓/❌/⚠️ (max 5 words)
+D: ✓/❌/N/A (max 5 words)
+E: ✓/❌ (list failed mappings if any)
+F: ✓/❌ (max 5 words)
 
-            5. MULTI-TABLE JOIN SYNTAX (when applicable):
-            - Use the provided join clause exactly as specified
-            - Ensure all selected columns are properly qualified with table aliases
-            - Include all necessary tables in the FROM/JOIN clauses
+**DECISION**: PROCEED | FOLLOW-UP
 
-            6. ATTRIBUTE-ONLY QUERIES
-            - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
+==============================
+STRICT DECISION CRITERIA
+==============================
 
-            7. STRING FILTERING - CASE INSENSITIVE
-            - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
-            - Example: WHERE UPPER(product_category) = UPPER('Specialty')
+**MUST PROCEED only if:**
+ALL areas (A, B, C, D, E, F) = ✓ or N/A with NO ❌ and NO blocking ⚠️
 
-            8. **CRITICAL TOP N/BOTTOM N QUERIES WITH SELECTIVE TOTALS **
-            - When the user asks for "top 10", "bottom 10", "highest", "lowest", etc., provide comprehensive context:
-            * Always show the requested top/bottom N records with their individual values
-            * **SELECTIVE TOTAL LOGIC**: Include overall totals ONLY for summable metrics using these rules:
-              - ✅ INCLUDE TOTALS FOR: Absolute values that can be summed meaningfully
-                * Keywords: revenue, cost, expense, amount, count, volume, scripts, units, quantity, spend, sales, fees, charges, claims
-                * Pattern: Raw monetary amounts, counts, volumes (e.g., "total revenue", "script count", "claim volume")
-              - ❌ EXCLUDE TOTALS FOR: Calculated/derived metrics that cannot be summed
-                * Keywords: margin, percentage, ratio, rate, per-, average, mean, median, utilization, efficiency, productivity
-                * Patterns: Any metric with %, ratios (e.g., "gross margin %"), per-unit calculations (e.g., "cost per member"), averages
-            * When totals are appropriate, also show percentage contribution of top/bottom N to overall total
+**MUST FOLLOW-UP if:**
+ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
+
+**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
+
+==============================
+FOLLOW-UP GENERATION
+==============================
+
+**Priority Order:** E (Metadata) → B (Metrics) → C (Context) → A/D/F
+**Maximum 2 questions** - pick most critical blocking issues
+
+**Generic Format for ANY failure:**
+<followup>
+I need clarification to generate accurate SQL:
+
+**[What's Missing/Unclear]**: [Specific term or concept that failed]
+- Available in metadata: [list actual column names or options]
+- Please clarify: [what user needs to specify]
+
+[Second issue only if needed - max 2 total]
+</followup>
+
+**Example:**
+**Missing Column**: I cannot find "state_code" in the available data.
+- Available in metadata: state_name, state_abbr
+- Please clarify: Which column should I use?
+
+==============================================
+TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
+==============================================
+
+(Only execute if Task 1 DECISION says "PROCEED")
+
+**CORE SQL GENERATION RULES:**
+
+==============================================
+TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
+==============================================
+
+(Only execute if Task 1 says "PROCEED")
+
+**CORE SQL GENERATION RULES:**
+
+1. MANDATORY FILTERS - ALWAYS APPLY
+- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
+
+2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
+**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
+- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+
+The validation was already done in CHECK 3. Only use filters marked as ✓Valid
+
+3. CALCULATED FORMULAS HANDLING (CRITICAL)
+**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+
+CORRECT PATTERN:
+```sql
+SELECT 
+    ledger, year, month,  -- Business dimensions only
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
+FROM table
+WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
+```
+
+WRONG PATTERN:
+```sql
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
+```
+
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+
+4. METRICS & AGGREGATIONS
+- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
+- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
+- Include time dimensions (month, quarter, year) when relevant to question
+- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
+
+5. SELECT CLAUSE STRATEGY
+
+**Simple Aggregates (no breakdown requested):**
+- Show only the aggregated metric and essential time dimensions if specified
+- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
+- Do NOT include unnecessary business dimensions or filter columns
+
+**Calculations & Breakdowns (analysis BY dimensions):**
+- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
+- For calculations, show all components for transparency:
+  * Percentage: Include numerator + denominator + percentage
+  * Variance: Include original values + variance
+  * Ratios: Include both components + ratio
+- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
+
+6. MULTI-TABLE JOIN SYNTAX (when applicable)
+- Use provided join clause exactly as specified
+- Qualify all columns with table aliases
+- Include all necessary tables in FROM/JOIN clauses
+- Only join if question requires related data together; otherwise use separate queries
+
+7. ATTRIBUTE-ONLY QUERIES
+- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
+
+8. STRING FILTERING - CASE INSENSITIVE
+- Always use UPPER() on both sides for text/string comparisons
+- Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+9. TOP N/BOTTOM N QUERIES WITH CONTEXT
+-Show requested top/bottom N records with their individual values
+-CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
+-Calculate and show percentage contribution: (individual value / overall total) × 100
+Overall totals logic:
+    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
+    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
+-Use subquery in SELECT to show overall total alongside each individual record
+-Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
+-ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
+
+10. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
+- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
+- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
+- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
+- Include variance/difference columns when comparing metrics
+- Prevents users from manually comparing separate rows
+
+11. DATABRICKS SQL COMPATIBILITY
+- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+- Date functions: date_trunc(), year(), month(), quarter()
+- Conditional logic: CASE WHEN
+- CTEs: WITH clauses for complex logic
+
+12. FORMATTING & ORDERING
+- Show whole numbers for metrics, round percentages to 4 decimal places
+- Use ORDER BY only for date columns in descending order
+- Use meaningful, business-relevant column names aligned with user's question
+
+==============================
+OUTPUT FORMATS
+==============================
+
+Return ONLY the result in XML tags with no additional text.
+
+**SINGLE SQL QUERY:**
+<sql>
+[Your complete SQL query]
+</sql>
+
+**MULTIPLE SQL QUERIES:**
+<multiple_sql>
+<query1_title>[Title - max 8 words]</query1_title>
+<query1>[SQL query]</query1>
+<query2_title>[Title - max 8 words]</query2_title>
+<query2>[SQL query]</query2>
+</multiple_sql>
+
+**FOLLOW-UP REQUEST:**
+<followup>
+[Use format above]
+</followup>
+
+==============================
+EXECUTION INSTRUCTION
+==============================
+
+1. Complete PRE-VALIDATION (extract and validate all terms)
+2. Complete TASK 1 strict assessment (A-F with clear marks)
+3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
+4. If PROCEED: Execute TASK 2 with SQL generation
+5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize E → B → C)
+
+**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
+**Remember**: ONE failure = STOP.
+"""
         
-            - **CRITICAL for Top N queries**: Always filter out blank/null records to avoid blank entries in top results. Add WHERE clause with column_name NOT IN ('-', 'BL') to exclude backend null representations (where "-" and "BL" are used for null values).
-
-            9. HEALTHCARE FINANCE BEST PRACTICES
-            - Always include time dimensions (month, quarter, year) when relevant to the user's question.
-            - Use business-friendly dimensions (e.g., therapeutic_class, service_type, age_group, state).
-
-            10. DATABRICKS SQL COMPATIBILITY
-            - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-            - Use date functions: date_trunc(), year(), month(), quarter()
-            - Use CASE WHEN for conditional logic
-            - Use CTEs (WITH clauses) for complex logic
-
-            11. FORMATTING
-            - Show whole numbers for metrics and round percentages to four decimal places.
-            - Use the ORDER BY clause only for date columns and use descending order.
-
-            12. SIDE-BY-SIDE COMPARISON RULE
-            - **CRITICAL**: When comparing actuals vs forecast, budget vs actual, or any two related metrics, generate SIDE-BY-SIDE format for easy interpretation
-            - Example for actuals vs forecast: Display "Actual_Revenue" and "Forecast_Revenue" columns side by side with variance calculation
-            - This prevents users from having to manually compare separate rows of actual and forecast data
-            - Apply this rule wherever comparison analysis is requested (variance, difference, comparison queries)
-
-            ==============================
-            OUTPUT FORMATS
-            ==============================
-            IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
-            return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
-
-            **FOR SINGLE SQL QUERY:**
-            If TASK 1 says PROCEED → Execute TASK 2:
-            <sql>
-            [Your complete SQL query here]
-            </sql>
-
-            **FOR MULTIPLE SQL QUERIES:**
-            If TASK 1 says PROCEED and requires multiple queries:
-            <multiple_sql>
-            <query1_title>
-            [Brief descriptive title for first query - max 8 words]
-            </query1_title>
-            <query1>
-            [First SQL query here]
-            </query1>
-            <query2_title>
-            [Brief descriptive title for second query - max 8 words]
-            </query2_title>
-            <query2>
-            [Second SQL query here]
-            </query2>
-            </multiple_sql>
-
-            If TASK 1 says REQUEST FOLLOW-UP, return ONLY the followup wrapped in XML tags. No other text, explanations, or formatting
-
-            ==============================
-            DETERMINISTIC FOLLOW-UP RULES
-            ==============================
-
-            STEP 1: Identify which specific areas from your 5-area assessment (A-E) were marked as "❌ Needs Clarification"
-
-            STEP 2: Generate questions ONLY for the unclear areas identified in Step 1
-
-            FOR ANY FOLLOW-UP SITUATION:
-            <followup>
-            I need clarification to generate accurate SQL:
-
-            **[Specific issue from unclear area]**: [Direct question in one sentence]
-            - Available data: [specific column names from metadata]
-            - Suggested approach: [concrete calculation option]
-
-            **[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
-            - Available data: [relevant columns]
-            - Alternative: [another option]
-
-            Please clarify these points.
-            </followup>
-
-            FOLLOW-UP CONSTRAINTS:
-            - Ask questions ONLY for areas marked as "❌ Needs Clarification" in your assessment
-            - If only 1 area unclear → ask only 1 question
-            - If 2+ areas unclear → maximum 2 questions for most critical areas
-            - Never ask about areas already marked as "✓ Clear"
-            - Each main question gets exactly 2 sub-bullets: one for available data, one for suggestion
-            - Use actual column names from metadata
-            - Keep all bullets short and actionable
-
-            ==============================
-            EXECUTION INSTRUCTION
-            ==============================
-
-            Show your brief assessment first, then provide SQL or follow-up:
-
-            1. Complete brief TASK 1 assessment (A-F checkmarks)
-            2. Make clear PROCEED/FOLLOW-UP decision in one sentence
-            3. If PROCEED: Execute TASK 2 with SQL generation
-            4. If FOLLOW-UP: Ask targeted questions for unclear areas only
-
-            You only get ONE opportunity for follow-up, so be decisive in your assessment.
-        """
-
+       
         for attempt in range(self.max_retries):
             try:
-                print('sql prompt', assessment_prompt)
+               
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": assessment_prompt}
                 ])
@@ -1415,14 +1490,18 @@ SELECTED FILTER CONTEXT Available for SQL generation:
             'success': False,
             'error': f"SQL assessment failed after {self.max_retries} attempts due to Model errors"
         }
-
+    
     async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
-        """Generate SQL using original question + follow-up Q&A with multiple SQL support async"""
+        """Generate SQL using original question + follow-up Q&A with relevance validation in single call"""
         
         current_question = context.get('current_question', '')
         dataset_metadata = context.get('dataset_metadata', '')
         join_clause = state.get('join_clause', '')
         selected_filter_context = context.get('selected_filter_context')
+        if state.get('requires_dataset_clarification', False):
+            followup_reasoning = state.get('followup_reasoning', '')
+        else:
+            followup_reasoning = state.get('selection_reasoning','')
         
         # Check if we have multiple tables
         selected_datasets = state.get('selected_dataset', [])
@@ -1452,216 +1531,261 @@ SELECTED FILTER CONTEXT Available for SQL generation:
         filter_context_text = ""
         if selected_filter_context:
             filter_context_text = f"""
-SELECTED FILTER CONTEXT (from user clarification):
-{selected_filter_context}
-
-**CRITICAL**: Use this specific column and values for filtering in your SQL query if needed.
-"""
+    SELECTED FILTER CONTEXT Available for SQL generation based on user follow up answer:
+        final selection : {selected_filter_context}
+    """
         
         has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
 
         followup_sql_prompt = f"""
-        You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
-        Your task is to generate a **high-quality Databricks SQL query** based on the user's question
+You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
 
-        ORIGINAL USER QUESTION: {current_question}
-        **AVAILABLE METADATA**: {dataset_metadata}
-        MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-        JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
-        MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+ORIGINAL USER QUESTION: {current_question}
+**AVAILABLE METADATA**: {dataset_metadata}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 
-        FILTER VALUES EXTRACTED::
-        {filter_context_text}
+FILTER VALUES EXTRACTED:
+{filter_context_text}
 
-        ==============================
-        FOLLOW-UP CLARIFICATION RECEIVED
-        ==============================
-        
-        YOUR PREVIOUS QUESTION: {sql_followup_question}
-        USER'S CLARIFICATION: {sql_followup_answer}
+====================================
+STEP 1: VALIDATE FOLLOW-UP RESPONSE
+====================================
 
-        ==============================
-        MULTI-TABLE AND COMPLEX QUERY ANALYSIS
-        ==============================
-            
-        Before generating SQL, assess if this requires multiple queries for better user understanding:
+YOUR PREVIOUS QUESTION: {sql_followup_question}
+USER'S RESPONSE: {sql_followup_answer}
 
-        **SCENARIOS REQUIRING MULTIPLE QUERIES**:
-        
-        MULTI-TABLE PATTERNS:
-        - "Ledger revenue + breakdown by drug" → financial table + claim table
-        - "Budget metrics + client breakdown" → forecast table + transaction table
-        
-        SINGLE-TABLE COMPLEX PATTERNS:
-        - "Membership trends AND top drugs by revenue" → trend query + ranking query
-        - "Summary metrics AND detailed breakdown" → summary query + detail query
-        - "Current performance AND comparative analysis" → performance query + comparison query
+**FIRST, analyze if the user's response is relevant:**
 
-        **DECISION CRITERIA**:
-        - Multiple distinct analytical purposes in one question
-        - Different aggregation levels (summary + detail)
-        - Combines trends with rankings or comparisons
-        - Question contains "AND" connecting different analysis types
-        - Would result in overly complex single query
-        
-        **MULTI-QUERY DECISION LOGIC**:
-        1. **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables with join
-        2. **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
-        3. **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Complex question with multiple analytical dimensions
-        4. **SINGLE QUERY**: Simple, focused questions with one analytical dimension
+1. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
+2. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
+3. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
 
-        ==============================
-        FINAL SQL GENERATION TASK
-        ==============================
-        
-        Now generate a high-quality Databricks SQL query using:
-        1. The ORIGINAL user question as the primary requirement
-        2. The USER'S CLARIFICATION to resolve any ambiguities
-        3. Available metadata for column mapping
-        4. Multi-table strategy assessment (single vs multiple queries)
-        5. All SQL generation best practices below
+**If NOT RELEVANT (categories 2 or 3), immediately return the appropriate XML response below and STOP.**
+**If RELEVANT (category 1), proceed to STEP 2 for SQL generation.**
 
-        IMPORTANT: No more questions allowed - this is the definitive SQL generation using all available information.
+=========================================
+STEP 2: SQL GENERATION (Only if RELEVANT)
+=========================================
 
-        ==============================
-        CRITICAL SQL GENERATION RULES
-        ==============================
-        1. MANDATORY FILTERS
-        - CRITICAL: Review the MANDATORY FILTER COLUMNS section above - any columns marked as MANDATORY must be used as filters in your WHERE clause
-        - CRITICAL: If the user's current question does not explicitly mention an attribute name or column, but filter values are available (as extracted from FILTER VALUES EXTRACTED), then the system must map those filter values to the appropriate metadata columns using the metadata schema.
-        - If a table shows "Not Applicable" for mandatory columns, no additional mandatory filters are required for that table
-        - If the metadata specifies mandatory filter columns, include them in the WHERE clause of your SQL query
-        
-        2. MEANINGFUL COLUMN NAMES
-        - Use user-friendly, business-relevant column names that align with the user's question.
-        - Generate a month-over-month comparison that clearly displays month names side by side in the output
+Generate a high-quality Databricks SQL query using:
+1. The ORIGINAL user question as the primary requirement
+2. The USER'S CLARIFICATION to resolve any ambiguities
+3. Available metadata for column mapping
+4. Multi-table strategy assessment (single vs multiple queries)
+5. All SQL generation best practices
 
-        3a. SIMPLE AGGREGATE QUERIES - MINIMAL COLUMNS
-        - **WHEN TO APPLY**: User query asks for simple totals/aggregates WITHOUT any breakdown attributes (e.g., "what is the revenue", "total cost", "sum of expenses")
-        - **CRITICAL RULE**: If user query contains NO attributes/dimensions for breakdown, answer cumulatively with minimal columns
-        - **GROUP BY RESTRICTION**: Do NOT use unnecessary business dimension columns in GROUP BY unless explicitly requested by user
-        - **MANDATORY FILTERS ONLY - CRITICAL**: Apply only mandatory filters but do NOT include these filter columns in SELECT output
-        - **SELECT STRATEGY**: Show only the requested metric and essential time dimensions if specified in query
+**MULTI-QUERY DECISION LOGIC**:
+- **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables
+- **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+- **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Multiple analytical dimensions (trends + rankings)
+- **SINGLE QUERY**: Simple, focused questions with one analytical dimension
 
-        3b. CALCULATION QUERIES - SHOW ALL COMPONENTS
-        - **WHEN TO APPLY**: User query involves calculations, breakdowns, or analysis BY specific dimensions
-        - **MANDATORY**: Include ALL columns used in WHERE clause, GROUP BY clause, and calculations in the SELECT output when they are relevant to the user's question
-        - **CALCULATION TRANSPARENCY**: If calculating a percentage, include the numerator, denominator, AND the percentage itself
-        - **VARIANCE CALCULATIONS**: If calculating a variance, include the original values AND the variance
-        - **BREAKDOWN QUERIES**: If user asks for breakdown BY product_category, include product_category in SELECT
-        - **GROUPING QUERIES**: If user asks for grouping BY therapeutic_class, include therapeutic_class in SELECT
-        - This ensures users can see the full context and verify how calculations were derived
+========================================
+CRITICAL DATABRICKS SQL GENERATION RULES
+=========================================
 
-        Example:
-        -- User asks: "Cost per member for Specialty products by state"
-        SELECT 
-            product_category,           -- Filter component (used in WHERE)
-            state_name,                -- Grouping component (used in GROUP BY)  
-            total_cost,                -- Numerator component
-            member_count,              -- Denominator component
-            total_cost / member_count AS cost_per_member  -- Final calculation
-        FROM table 
-        WHERE UPPER(product_category) = UPPER('Specialty')
-        GROUP BY product_category, state_name
 
-        4. METRICS & AGGREGATIONS
-        - If the question includes metrics (e.g., costs, amounts, counts, totals, averages), use appropriate aggregation functions (SUM, COUNT, AVG) and include GROUP BY clauses with relevant business dimensions.
-    
+1. MANDATORY FILTERS - ALWAYS APPLY
+- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
 
-        5. MULTI-TABLE JOIN SYNTAX (when applicable):
-        - Use the provided join clause exactly as specified
-        - Ensure all selected columns are properly qualified with table aliases
-        - Include all necessary tables in the FROM/JOIN clauses
+1b. FILTER VALUES EXTRACTED - APPLY WHEN NO ATTRIBUTE MAPPING
+**Rule**: If user question does NOT contain an attribute name that maps to metadata columns, check FILTER VALUES EXTRACTED section:
+- If "final selection" shows: column_name - [column_name], sample values [VALUE]
+- AND that VALUE exactly appears in the user's question
+- THEN apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+- Do NOT use filters from  if not in "user question"
 
-        6. ATTRIBUTE-ONLY QUERIES
-        - If the question asks only about attributes (e.g., member age, drug name, provider type) and does NOT request metrics, return only the relevant columns without aggregation.
+2. CALCULATED FORMULAS HANDLING (CRITICAL)
+**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
 
-        7. STRING FILTERING - CASE INSENSITIVE
-        - When filtering on text/string columns, always use UPPER() function on BOTH sides for case-insensitive matching.
-        - Example: WHERE UPPER(product_category) = UPPER('Specialty')
+CORRECT PATTERN:
+```sql
+SELECT 
+    ledger, year, month,  -- Business dimensions only
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
+FROM table
+WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
+```
 
-        8. **CRITICAL TOP N/BOTTOM N QUERIES WITH SELECTIVE TOTALS **
-            - When the user asks for "top 10", "bottom 10", "highest", "lowest", etc., provide comprehensive context:
-            * Always show the requested top/bottom N records with their individual values
-            * **SELECTIVE TOTAL LOGIC**: Include overall totals ONLY for summable metrics using these rules:
-              - ✅ INCLUDE TOTALS FOR: Absolute values that can be summed meaningfully
-                * Keywords: revenue, cost, expense, amount, count, volume, scripts, units, quantity, spend, sales, fees, charges, claims
-                * Pattern: Raw monetary amounts, counts, volumes (e.g., "total revenue", "script count", "claim volume")
-              - ❌ EXCLUDE TOTALS FOR: Calculated/derived metrics that cannot be summed
-                * Keywords: margin, percentage, ratio, rate, per-, average, mean, median, utilization, efficiency, productivity
-                * Patterns: Any metric with %, ratios (e.g., "gross margin %"), per-unit calculations (e.g., "cost per member"), averages
-            * When totals are appropriate, also show percentage contribution of top/bottom N to overall total
-        
-        9. HEALTHCARE FINANCE BEST PRACTICES
-        - Always include time dimensions (month, quarter, year) when relevant to the user's question.
-        - Use business-friendly dimensions (e.g., therapeutic_class, service_type, age_group, state).
+WRONG PATTERN:
+```sql
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
+```
 
-        10. DATABRICKS SQL COMPATIBILITY
-        - Use standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-        - Use date functions: date_trunc(), year(), month(), quarter()
-        - Use CASE WHEN for conditional logic
-        - Use CTEs (WITH clauses) for complex logic
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
 
-        11. FORMATTING
-        - Show whole numbers for metrics and round percentages to four decimal places.
-        - Use the ORDER BY clause only for date columns and use descending order.
+3. METRICS & AGGREGATIONS
+- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
+- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
+- Include time dimensions (month, quarter, year) when relevant to question
+- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
 
-        12. SIDE-BY-SIDE COMPARISON RULE
-        - **CRITICAL**: When comparing actuals vs forecast, budget vs actual, or any two related metrics, generate SIDE-BY-SIDE format for easy interpretation
-        - Example for actuals vs forecast: Display "Actual_Revenue" and "Forecast_Revenue" columns side by side with variance calculation
-        - This prevents users from having to manually compare separate rows of actual and forecast data
-        - Apply this rule wherever comparison analysis is requested (variance, difference, comparison queries)
+4. SELECT CLAUSE STRATEGY
 
-        ==============================
-        INTEGRATION INSTRUCTIONS
-        ==============================
-        
-        - Integrate the user's clarification naturally into the SQL logic
-        - If clarification provided specific formulas, implement them precisely
-        - If clarification resolved time periods, use exact dates/ranges specified  
-        - If clarification defined metrics, use the exact business definitions provided
-        - Maintain all original SQL quality standards while incorporating clarifications
+**Simple Aggregates (no breakdown requested):**
+- Show only the aggregated metric and essential time dimensions if specified
+- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
+- Do NOT include unnecessary business dimensions or filter columns
 
-        ==============================
-        OUTPUT FORMATS
-        ==============================
-        IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
-        return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+**Calculations & Breakdowns (analysis BY dimensions):**
+- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
+- For calculations, show all components for transparency:
+  * Percentage: Include numerator + denominator + percentage
+  * Variance: Include original values + variance
+  * Ratios: Include both components + ratio
+- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
 
-        **FOR SINGLE SQL QUERY:**
-        <sql>
-        [Your complete SQL query incorporating both original question and clarifications]
-        </sql>
+5. MULTI-TABLE JOIN SYNTAX (when applicable)
+- Use provided join clause exactly as specified
+- Qualify all columns with table aliases
+- Include all necessary tables in FROM/JOIN clauses
+- Only join if question requires related data together; otherwise use separate queries
 
-        **FOR MULTIPLE SQL QUERIES:**
-        If analysis requires multiple queries for better understanding:
-        <multiple_sql>
-        <query1_title>
-        [Brief descriptive title for first query - max 8 words]
-        </query1_title>
-        <query1>
-        [First SQL query here]
-        </query1>
-        <query2_title>
-        [Brief descriptive title for second query - max 8 words]
-        </query2_title>
-        <query2>
-        [Second SQL query here]
-        </query2>
-        </multiple_sql>
+6. ATTRIBUTE-ONLY QUERIES
+- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
 
-        Generate the definitive SQL query now.
-        """
+7. STRING FILTERING - CASE INSENSITIVE
+- Always use UPPER() on both sides for text/string comparisons
+- Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+8. TOP N/BOTTOM N QUERIES WITH CONTEXT
+-Show requested top/bottom N records with their individual values
+-CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
+-Calculate and show percentage contribution: (individual value / overall total) × 100
+Overall totals logic:
+    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
+    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
+-Use subquery in SELECT to show overall total alongside each individual record
+-Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
+-ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
+
+9. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
+- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
+- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
+- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
+- Include variance/difference columns when comparing metrics
+- Prevents users from manually comparing separate rows
+
+10. DATABRICKS SQL COMPATIBILITY
+- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+- Date functions: date_trunc(), year(), month(), quarter()
+- Conditional logic: CASE WHEN
+- CTEs: WITH clauses for complex logic
+
+11. FORMATTING & ORDERING
+- Show whole numbers for metrics, round percentages to 4 decimal places
+- Use ORDER BY only for date columns in descending order
+- Use meaningful, business-relevant column names aligned with user's question
+
+==============================
+INTEGRATION INSTRUCTIONS
+==============================
+
+- Integrate the user's clarification naturally into the SQL logic
+- If clarification provided specific formulas, implement them precisely
+- If clarification resolved time periods, use exact dates/ranges specified  
+- If clarification defined metrics, use the exact business definitions provided
+- Maintain all original SQL quality standards while incorporating clarifications
+
+==============================
+OUTPUT FORMATS
+==============================
+IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+
+**OPTION 1: If user's response is a NEW QUESTION**
+<new_question>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is a new question]</reasoning>
+</new_question>
+
+**OPTION 2: If user's response is TOPIC DRIFT (unrelated)**
+<topic_drift>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is off-topic]</reasoning>
+</topic_drift>
+
+**OPTION 3: If RELEVANT - Single SQL Query**
+<sql>
+[Your complete SQL query incorporating both original question and clarifications]
+</sql>
+
+**OPTION 4: If RELEVANT - Multiple SQL Queries**
+<multiple_sql>
+<query1_title>[Brief descriptive title - max 8 words]</query1_title>
+<query1>[First SQL query]</query1>
+<query2_title>[Brief descriptive title - max 8 words]</query2_title>
+<query2>[Second SQL query]</query2>
+</multiple_sql>
+
+
+**FOR SINGLE SQL QUERY:**
+<sql>
+[Your complete SQL query incorporating both original question and clarifications]
+</sql>
+
+**FOR MULTIPLE SQL QUERIES:**
+If analysis requires multiple queries for better understanding:
+<multiple_sql>
+<query1_title>
+[Brief descriptive title for first query - max 8 words]
+</query1_title>
+<query1>
+[First SQL query here]
+</query1>
+<query2_title>
+[Brief descriptive title for second query - max 8 words]
+</query2_title>
+<query2>
+[Second SQL query here]
+</query2>
+</multiple_sql>
+
+    """
 
         for attempt in range(self.max_retries):
             try:
-                print('followup sql',followup_sql_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": followup_sql_prompt}
                 ])
-                print('followup sql llm response',llm_response)
-                
-                # Check for multiple SQL queries first
+                print('follow up sql response',llm_response)
+                # Check for new_question flag first
+                new_question_match = re.search(r'<new_question>.*?<detected>(.*?)</detected>.*?<reasoning>(.*?)</reasoning>.*?</new_question>', llm_response, re.DOTALL)
+                if new_question_match:
+                    detected = new_question_match.group(1).strip().lower() == 'true'
+                    reasoning = new_question_match.group(2).strip()
+                    if detected:
+                        return {
+                            'success': False,
+                            'topic_drift': False,
+                            'new_question': True,
+                            'message': f"You've asked a new question instead of providing clarification. {reasoning}",
+                            'original_followup_question': sql_followup_question,
+                            'detected_new_question': sql_followup_answer
+                        }
+
+                # Check for topic_drift flag
+                topic_drift_match = re.search(r'<topic_drift>.*?<detected>(.*?)</detected>.*?<reasoning>(.*?)</reasoning>.*?</topic_drift>', llm_response, re.DOTALL)
+                if topic_drift_match:
+                    detected = topic_drift_match.group(1).strip().lower() == 'true'
+                    reasoning = topic_drift_match.group(2).strip()
+                    if detected:
+                        return {
+                            'success': False,
+                            'topic_drift': True,
+                            'new_question': False,
+                            'message': f"Your response seems unrelated to the clarification requested. {reasoning}",
+                            'original_followup_question': sql_followup_question
+                        }
+
+                # Check for multiple SQL queries
                 multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
                 if multiple_sql_match:
                     multiple_content = multiple_sql_match.group(1).strip()
@@ -1682,6 +1806,8 @@ SELECTED FILTER CONTEXT (from user clarification):
                             return {
                                 'success': True,
                                 'multiple_sql': True,
+                                'topic_drift': False,
+                                'new_question': False,
                                 'sql_queries': sql_queries,
                                 'query_titles': query_titles,
                                 'query_count': len(sql_queries)
@@ -1701,10 +1827,12 @@ SELECTED FILTER CONTEXT (from user clarification):
                     return {
                         'success': True,
                         'multiple_sql': False,
+                        'topic_drift': False,
+                        'new_question': False,
                         'sql_query': sql_query
                     }
                 else:
-                    raise ValueError("No SQL found in XML tags")
+                    raise ValueError("No valid XML response found (expected sql, multiple_sql, new_question, or topic_drift)")
             
             except Exception as e:
                 print(f"❌ SQL generation with follow-up attempt {attempt + 1} failed: {str(e)}")
@@ -1715,8 +1843,328 @@ SELECTED FILTER CONTEXT (from user clarification):
         
         return {
             'success': False,
+            'topic_drift': False,
+            'new_question': False,
             'error': f"SQL generation with follow-up failed after {self.max_retries} attempts due to Model errors"
-        }
+    }
+
+#     async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
+#         """Generate SQL using original question + follow-up Q&A with multiple SQL support async"""
+        
+#         current_question = context.get('current_question', '')
+#         dataset_metadata = context.get('dataset_metadata', '')
+#         join_clause = state.get('join_clause', '')
+#         selected_filter_context = context.get('selected_filter_context')
+#         if state.get('requires_dataset_clarification', False):
+
+#             followup_reasoning = state.get('followup_reasoning', '')
+#         else:
+#             followup_reasoning = state.get('selection_reasoning','')
+        
+#         # Check if we have multiple tables
+#         selected_datasets = state.get('selected_dataset', [])
+        
+#         # Define mandatory column mapping
+#         mandatory_column_mapping = {
+#             "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
+#                 "Ledger"
+#             ]
+#         }
+        
+#         # Extract mandatory columns based on selected datasets
+#         mandatory_columns_info = []
+#         if isinstance(selected_datasets, list):
+#             for dataset in selected_datasets:
+#                 if dataset in mandatory_column_mapping:
+#                     mandatory_columns = mandatory_column_mapping[dataset]
+#                     for col in mandatory_columns:
+#                         mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
+#                 else:
+#                     mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
+        
+#         # Format mandatory columns for prompt
+#         mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
+        
+#         # Format selected filter context for prompt
+#         filter_context_text = ""
+#         if selected_filter_context:
+#             filter_context_text = f"""
+# SELECTED FILTER CONTEXT Available for SQL generation if the fiter values exactly matches:
+#     final selection : {selected_filter_context}
+# """
+        
+#         has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
+
+#         followup_sql_prompt = f"""
+# You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
+# Your task is to generate a **high-quality Databricks SQL query** based on the user's question
+
+# ORIGINAL USER QUESTION: {current_question}
+# **AVAILABLE METADATA**: {dataset_metadata}
+# MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+# JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+# MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+
+# FILTER VALUES EXTRACTED::
+# {filter_context_text}
+
+# ==============================
+# FOLLOW-UP CLARIFICATION RECEIVED
+# ==============================
+
+# YOUR PREVIOUS QUESTION: {sql_followup_question}
+# USER'S CLARIFICATION: {sql_followup_answer}
+
+# ==============================
+# MULTI-TABLE AND COMPLEX QUERY ANALYSIS
+# ==============================
+    
+# Before generating SQL, assess if this requires multiple queries for better user understanding:
+
+# **SCENARIOS REQUIRING MULTIPLE QUERIES**:
+
+# MULTI-TABLE PATTERNS:
+# - "Ledger revenue + breakdown by drug" → financial table + claim table
+# - "Budget metrics + client breakdown" → forecast table + transaction table
+
+# SINGLE-TABLE COMPLEX PATTERNS:
+# - "Membership trends AND top drugs by revenue" → trend query + ranking query
+# - "Summary metrics AND detailed breakdown" → summary query + detail query
+# - "Current performance AND comparative analysis" → performance query + comparison query
+
+# **DECISION CRITERIA**:
+# - Multiple distinct analytical purposes in one question
+# - Different aggregation levels (summary + detail)
+# - Combines trends with rankings or comparisons
+# - Question contains "AND" connecting different analysis types
+# - Would result in overly complex single query
+
+# **MULTI-QUERY DECISION LOGIC**:
+# 1. **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables with join
+# 2. **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+# 3. **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Complex question with multiple analytical dimensions
+# 4. **SINGLE QUERY**: Simple, focused questions with one analytical dimension
+
+# ==============================
+# FINAL SQL GENERATION TASK
+# ==============================
+
+# Now generate a high-quality Databricks SQL query using:
+# 1. The ORIGINAL user question as the primary requirement
+# 2. The USER'S CLARIFICATION to resolve any ambiguities
+# 3. Available metadata for column mapping
+# 4. Multi-table strategy assessment (single vs multiple queries)
+# 5. All SQL generation best practices below
+
+# IMPORTANT: No more questions allowed - this is the definitive SQL generation using all available information.
+
+# ========================================
+# CRITICAL DATABRICKS SQL GENERATION RULES
+# =========================================
+
+
+# 1. MANDATORY FILTERS - ALWAYS APPLY
+# - Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
+
+# 1b. FILTER VALUES EXTRACTED - APPLY WHEN NO ATTRIBUTE MAPPING
+# **Rule**: If user question does NOT contain an attribute name that maps to metadata columns, check FILTER VALUES EXTRACTED section:
+# - If "final selection" shows: column_name - [column_name], sample values [VALUE]
+# - AND that VALUE exactly appears in the user's question
+# - THEN apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+# - For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+# - Do NOT use filters from  if not in "user question"
+
+# 2. CALCULATED FORMULAS HANDLING (CRITICAL)
+# **When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+
+# CORRECT PATTERN:
+# ```sql
+# SELECT 
+#     ledger, year, month,  -- Business dimensions only
+#     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
+#     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
+#     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
+#     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
+# FROM table
+# WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+# GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
+# ```
+
+# WRONG PATTERN:
+# ```sql
+# GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
+# ```
+
+# **Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+
+# 3. METRICS & AGGREGATIONS
+# - Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
+# - Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
+# - Include time dimensions (month, quarter, year) when relevant to question
+# - Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
+
+# 4. SELECT CLAUSE STRATEGY
+
+# **Simple Aggregates (no breakdown requested):**
+# - Show only the aggregated metric and essential time dimensions if specified
+# - Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
+# - Do NOT include unnecessary business dimensions or filter columns
+
+# **Calculations & Breakdowns (analysis BY dimensions):**
+# - Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
+# - For calculations, show all components for transparency:
+#   * Percentage: Include numerator + denominator + percentage
+#   * Variance: Include original values + variance
+#   * Ratios: Include both components + ratio
+# - Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
+
+# 5. MULTI-TABLE JOIN SYNTAX (when applicable)
+# - Use provided join clause exactly as specified
+# - Qualify all columns with table aliases
+# - Include all necessary tables in FROM/JOIN clauses
+# - Only join if question requires related data together; otherwise use separate queries
+
+# 6. ATTRIBUTE-ONLY QUERIES
+# - If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
+
+# 7. STRING FILTERING - CASE INSENSITIVE
+# - Always use UPPER() on both sides for text/string comparisons
+# - Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+# 8. TOP N/BOTTOM N QUERIES WITH CONTEXT
+# -Show requested top/bottom N records with their individual values
+# -CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
+# -Calculate and show percentage contribution: (individual value / overall total) × 100
+# Overall totals logic:
+#     -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
+#     -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
+# -Use subquery in SELECT to show overall total alongside each individual record
+# -Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
+# -ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
+
+# 9. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
+# - When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
+# - For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
+# - Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
+# - Include variance/difference columns when comparing metrics
+# - Prevents users from manually comparing separate rows
+
+# 10. DATABRICKS SQL COMPATIBILITY
+# - Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+# - Date functions: date_trunc(), year(), month(), quarter()
+# - Conditional logic: CASE WHEN
+# - CTEs: WITH clauses for complex logic
+
+# 11. FORMATTING & ORDERING
+# - Show whole numbers for metrics, round percentages to 4 decimal places
+# - Use ORDER BY only for date columns in descending order
+# - Use meaningful, business-relevant column names aligned with user's question
+
+# ==============================
+# INTEGRATION INSTRUCTIONS
+# ==============================
+
+# - Integrate the user's clarification naturally into the SQL logic
+# - If clarification provided specific formulas, implement them precisely
+# - If clarification resolved time periods, use exact dates/ranges specified  
+# - If clarification defined metrics, use the exact business definitions provided
+# - Maintain all original SQL quality standards while incorporating clarifications
+
+# ==============================
+# OUTPUT FORMATS
+# ==============================
+# IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+# return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+
+# **FOR SINGLE SQL QUERY:**
+# <sql>
+# [Your complete SQL query incorporating both original question and clarifications]
+# </sql>
+
+# **FOR MULTIPLE SQL QUERIES:**
+# If analysis requires multiple queries for better understanding:
+# <multiple_sql>
+# <query1_title>
+# [Brief descriptive title for first query - max 8 words]
+# </query1_title>
+# <query1>
+# [First SQL query here]
+# </query1>
+# <query2_title>
+# [Brief descriptive title for second query - max 8 words]
+# </query2_title>
+# <query2>
+# [Second SQL query here]
+# </query2>
+# </multiple_sql>
+
+# Generate the definitive SQL query now.
+# """
+
+        # for attempt in range(self.max_retries):
+        #     try:
+        #         # print('followup sql',followup_sql_prompt)
+        #         llm_response = await self.db_client.call_claude_api_endpoint_async([
+        #             {"role": "user", "content": followup_sql_prompt}
+        #         ])
+        #         # print('followup sql llm response',llm_response)
+
+        #         # Check for multiple SQL queries first
+        #         multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+        #         if multiple_sql_match:
+        #             multiple_content = multiple_sql_match.group(1).strip()
+                    
+        #             # Extract individual queries with titles
+        #             query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+        #             if query_matches:
+        #                 sql_queries = []
+        #                 query_titles = []
+        #                 for i, (query_num, title, query) in enumerate(query_matches):
+        #                     cleaned_query = query.strip().replace('`', '')
+        #                     cleaned_title = title.strip()
+        #                     if cleaned_query and cleaned_title:
+        #                         sql_queries.append(cleaned_query)
+        #                         query_titles.append(cleaned_title)
+                        
+        #                 if sql_queries:
+        #                     return {
+        #                         'success': True,
+        #                         'multiple_sql': True,
+        #                         'sql_queries': sql_queries,
+        #                         'query_titles': query_titles,
+        #                         'query_count': len(sql_queries)
+        #                     }
+                    
+        #             raise ValueError("Empty or invalid multiple SQL queries in XML response")
+                
+        #         # Check for single SQL query
+        #         match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+        #         if match:
+        #             sql_query = match.group(1).strip()
+        #             sql_query = sql_query.replace('`', '')  # Remove backticks
+                    
+        #             if not sql_query:
+        #                 raise ValueError("Empty SQL query in XML response")
+                    
+        #             return {
+        #                 'success': True,
+        #                 'multiple_sql': False,
+        #                 'sql_query': sql_query
+        #             }
+        #         else:
+        #             raise ValueError("No SQL found in XML tags")
+            
+        #     except Exception as e:
+        #         print(f"❌ SQL generation with follow-up attempt {attempt + 1} failed: {str(e)}")
+                
+        #         if attempt < self.max_retries - 1:
+        #             print(f"🔄 Retrying SQL generation with follow-up... (Attempt {attempt + 1}/{self.max_retries})")
+        #             await asyncio.sleep(2 ** attempt)
+        
+        # return {
+        #     'success': False,
+        #     'error': f"SQL generation with follow-up failed after {self.max_retries} attempts due to Model errors"
+        # }
 
     async def _execute_sql_with_retry_async(self, initial_sql: str, context: Dict, max_retries: int = 3) -> Dict:
         """Execute SQL with intelligent retry logic and async handling"""
@@ -1964,7 +2412,7 @@ SELECTED FILTER CONTEXT (from user clarification):
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": fix_prompt}
                 ])
-                print('sql fix prompt', fix_prompt)
+                # print('sql fix prompt', fix_prompt)
 
                 # Extract SQL from XML tags
                 match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)

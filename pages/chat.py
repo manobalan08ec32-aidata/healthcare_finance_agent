@@ -220,6 +220,15 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                 
                 elif name == 'router_agent':
                     print(f"🎯 Router agent completed - checking outputs... ")
+                    if state.get('sql_followup_but_new_question', False):
+                        print("🔄 New question detected - workflow will continue to navigation_controller")
+                        # Clear placeholders but don't break/return - let stream continue to next node
+                        for placeholder in node_placeholders.values():
+                            placeholder.empty()
+                        # Add a temporary status message
+                        st.info("🔄 Processing your new question...")
+                        # Don't break or return - just continue to let the stream proceed
+                        continue
                     if state.get('router_error_msg'):
                         for placeholder in node_placeholders.values():
                             placeholder.empty()
@@ -245,6 +254,12 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                             placeholder.empty()
                         add_assistant_message(state.get('user_message'), message_type="phi_pii_error")
                         return
+                    if state.get('sql_followup_topic_drift') and state.get('user_message'):
+                        for placeholder in node_placeholders.values():
+                            placeholder.empty()
+                        add_assistant_message(state.get('user_message'), message_type="error")
+                        return
+                    
                     sql_result = state.get('sql_result', {})
                     if sql_result and sql_result.get('success'):
                         # Clear node progress indicators
@@ -362,7 +377,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         # Handle follow-up generation based on where we broke out
         if st.session_state.get('sql_rendered', False):
             print("🔄 SQL was rendered - follow-up will be handled in next execution cycle")
-            # Don't generate follow-ups here - let the main loop handle it after UI update
+            # Don't generate follow-ups here - let the main loop handle it after UI updat
         elif last_state and last_state.get('sql_result', {}).get('success'):
             # This handles the case where workflow completed normally without early break
             try:
@@ -635,11 +650,11 @@ def format_sql_data_for_streamlit(data):
             
             # Handle monetary columns - add $ symbol and remove decimals
             if is_monetary_column:
-                print("coming here monetory column",is_monetary_column)
+                
                 if abs(numeric_val) >= 1000:
-                    return f"${int(round(numeric_val)):,}"
+                    return f"$ {int(round(numeric_val)):,}"
                 else:
-                    return f"${int(round(numeric_val))}"
+                    return f"$ {int(round(numeric_val))}"
             
             # Handle ID columns - never add commas regardless of size
             if is_id_column:
@@ -668,15 +683,21 @@ def format_sql_data_for_streamlit(data):
     
     return df
 
-def render_feedback_section(title, sql_query, data, narrative, user_question=None):
+def render_feedback_section(title, sql_query, data, narrative, user_question=None, message_idx=None):
     """Render feedback section with thumbs up/down buttons"""
     
     # Create a unique key for this feedback section using multiple factors
     # Include session_id, message count, and content hash for uniqueness
     session_id = st.session_state.get('session_id', 'default')
-    message_count = len(st.session_state.get('messages', []))
-    content_hash = abs(hash(f"{title}{str(narrative)[:100]}{str(sql_query)[:50]}"))
-    feedback_key = f"feedback_{session_id}_{message_count}_{content_hash}"
+    if message_idx is not None:
+        feedback_key = f"feedback_{session_id}_msg_{message_idx}"
+    else:
+        # Fallback for edge cases
+        import time
+        timestamp = int(time.time() * 1000)
+        feedback_key = f"feedback_{session_id}_{timestamp}"
+    
+    print(f"🔑 Generated feedback key: {feedback_key}")
     
     # Show feedback buttons if not already submitted
     if not st.session_state.get(f"{feedback_key}_submitted", False):
@@ -792,7 +813,7 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True):
         
         render_single_sql_result(title, sql_query, data, narrative, user_question, show_feedback)
 
-def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True):
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None):
     """Render a single SQL result with warm gold background for title and narrative"""
     
     # Title with custom narrative-content styling
@@ -848,7 +869,7 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         
         # Add feedback buttons after narrative (only for current session)
         if show_feedback:
-            render_feedback_section(title, sql_query, data, narrative, user_question)
+            render_feedback_section(title, sql_query, data, narrative, user_question, message_idx)
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
     """Render strategic analysis response with reasoning and multiple strategic queries"""
@@ -1139,7 +1160,7 @@ async def _insert_session_tracking_row(sql_result: Dict[str, Any]):
         """
         
         print("🗄️ Inserting session tracking row (length chars):", len(payload_json))
-        await db_client.execute_sql_async(insert_sql)
+        await db_client.execute_sql_async_audit(insert_sql)
         print("✅ Session tracking insert succeeded")
             
     except Exception as e:
@@ -1169,7 +1190,7 @@ async def _fetch_session_history():
         print("🕐 Fetching session history for user:", user_id)
         print("🔍 SQL Query:", fetch_sql)
 
-        result = await db_client.execute_sql_async(fetch_sql)
+        result = await db_client.execute_sql_async_audit(fetch_sql)
 
         print(f"🔍 Database result type: {type(result)}")
         print(f"🔍 Database result: {result}")
@@ -1230,7 +1251,7 @@ async def _fetch_session_records(session_id: str):
         print(f"🎯 EXECUTING DATABASE QUERY: Fetching all records for session: {session_id}")
         print("🔍 SQL Query:", fetch_sql)
         
-        result = await db_client.execute_sql_async(fetch_sql)
+        result = await db_client.execute_sql_async_audit(fetch_sql)
         
         print(f"🔍 Database result type: {type(result)}")
         
@@ -1305,7 +1326,7 @@ async def _insert_feedback_row(user_question: str, sql_result: Dict[str, Any], p
         """
         
         print(f"🗄️ Inserting feedback: {'👍' if positive_feedback else '👎'} - {len(payload_json)} chars")
-        await db_client.execute_sql_async(insert_sql)
+        await db_client.execute_sql_async_audit(insert_sql)
         print("✅ Feedback insert succeeded")
         return True
         
@@ -1332,7 +1353,7 @@ async def _fetch_last_session_summary():
         """
         
         print(f"🔍 Fetching last session summary for user: {user_id}")
-        result = await db_client.execute_sql_async(fetch_sql)
+        result = await db_client.execute_sql_async_audit(fetch_sql)
         
         # Handle different response formats from database client
         if isinstance(result, list) and result:
@@ -2482,8 +2503,8 @@ def main():
         # Chat input at the bottom
         if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
             # Immediately clear follow-up questions when new input is detected
-            if hasattr(st.session_state, 'current_followup_questions'):
-                st.session_state.current_followup_questions = []
+            # if hasattr(st.session_state, 'current_followup_questions'):
+            #     st.session_state.current_followup_questions = []
             start_processing(prompt)
             st.rerun()
         
@@ -2575,7 +2596,7 @@ def render_chat_message_enhanced(message, message_idx):
                         print(f"    ❌ Failed to parse SQL result string as JSON: {e}")
                         st.error("Error: Could not parse SQL result data")
                         return
-                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical)
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical,message_idx=message_idx)
             return
         
         # Handle strategic analysis messages

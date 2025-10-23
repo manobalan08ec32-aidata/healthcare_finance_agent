@@ -1,20 +1,5 @@
-async def _llm_dataset_selection(self, search_results: List[Dict], state: AgentState, filter_metadata_results: List[str] = None) -> Dict:
-        """Enhanced LLM selection with validation, disambiguation handling, and filter-based selection"""
-        
-        user_question = state.get('current_question', state.get('original_question', ''))
-        filter_values = state.get('filter_values', [])
-        
-        # Format filter metadata results for the prompt
-        filter_metadata_text = ""
-        if filter_metadata_results:
-            filter_metadata_text = "\n**FILTER METADATA FOUND:**\n"
-            for result in filter_metadata_results:
-                filter_metadata_text += f"- {result}\n"
-        else:
-            filter_metadata_text = "\n**FILTER METADATA:** No specific filter values found in metadata.\n"
-
-        selection_prompt = f"""
-            You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
+selection_prompt = f"""
+You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 
 CURRENT QUESTION: {user_question}
 
@@ -78,19 +63,12 @@ D. **COMPLEMENTARY ANALYSIS CHECK**:
 - Example: "ledger revenue breakdown by drug" → Both (ledger revenue + claims drug_name)
 - Ask clarification only when: Same data in multiple datasets with conflicting contexts
 
-E. **DATASET CLARIFICATION RULES CHECK**:
-- After identifying candidate dataset(s), check if any have "clarification_rules" field
-- Evaluate user's question against each rule (rules are plain text business logic)
-- If ANY rule applies to the user's question → STOP and return "needs_clarification" status
-- Common patterns: missing specification (forecast cycle), unsupported granularity (client-level)
-- Only proceed to dataset selection if NO rules are triggered
-
 F. **FINAL DECISION LOGIC**:
-- **STEP 1**: Check results from sections A through E
+- **STEP 1**: Check results from sections A through D
 - **STEP 2**: MANDATORY Decision order:
 * **FIRST**: Apply suitability constraints - eliminate "not_useful_for" matches
 * **SECOND**: Validate complete coverage (metrics + attributes) on remaining datasets
-* **THIRD**: Single complete dataset → CHECK clarification rules (Section E) → SELECT if no rules triggered
+* **THIRD**: Single complete dataset → SELECT IT
 
 * **SMART FILTER DISAMBIGUATION CHECK**:
 **STEP 3A**: Check if filter values exist in multiple columns
@@ -134,12 +112,8 @@ DECISION CRITERIA
 - User question requests or implies access to PHI/PII columns
 - Must be checked FIRST before other validations
 
-**NEEDS_CLARIFICATION** IF:
-- Dataset identified successfully BUT its "clarification_rules" are triggered by user's question
-- Rule indicates missing specification or unsupported request
-
 **PROCEED** (SELECT DATASET) IF:
-- Dataset passes suitability validation AND all metrics/attributes have Tier 1-3 matches AND clear selection AND no clarification rules triggered
+- Dataset passes suitability validation AND all metrics/attributes have Tier 1-3 matches AND clear selection
 - Single dataset meets all requirements after all checks
 - Complementary datasets identified for complete coverage
 
@@ -155,12 +129,11 @@ DECISION CRITERIA
 ASSESSMENT FORMAT (BRIEF)
 ==============================
 
-**ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) B-ATTR:✓(explicit attr OR single column) C:✓(suitability passed) D:✓(complementary) E:✓(no rules triggered) F:✓(clear selection)
+**ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) B-ATTR:✓(explicit attr OR single column) C:✓(suitability passed) D:✓(complementary) F:✓(clear selection)
 **DECISION**: PROCEED - [One sentence reasoning]
 
 Keep assessment ultra-brief:
 - Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
-- **E**: ✓ means no clarification rules triggered, ❌ means rule applies
 - **B-ATTR**: ✓ means explicit attribute OR only 1 column match, ❌ means no explicit attr AND multiple columns
 - **C (suitability)**: ✓ means no "not_useful_for" conflicts, ❌ means blocked by suitability
 - Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
@@ -173,123 +146,30 @@ RESPONSE FORMAT
 
 IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
 
-"status": "phi_found" | "success" | "missing_items" | "needs_disambiguation" | "needs_clarification",
+"status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
 "final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
 "functional_names": ["functional_name"] if status = success else [],
-"tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation OR needs_clarification else [],
-"requires_clarification": true if status = needs_disambiguation OR needs_clarification else false,
+"tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
+"requires_clarification": true if status = needs_disambiguation else false,
 "selection_reasoning": "2-3 lines max explanation",
 "high_level_table_selected": true/false if status = success else null,
 "user_message": "message to user" if status = phi_found or missing_items else null,
-"clarification_question": "question to user" if status = needs_disambiguation OR needs_clarification else null,
+"clarification_question": "question to user" if status = needs_disambiguation else null,
 "selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
 
-**FIELD POPULATION RULES**:
-- needs_disambiguation: populate tables_identified_for_clarification with all candidate tables (Priority 1) or single table (Priority 2)
-- needs_clarification: populate tables_identified_for_clarification with rule-triggering table, set requires_clarification=true, final_actual_tables=[]
+**FIELD POPULATION RULES FOR needs_disambiguation STATUS**:
+- tables_identified_for_clarification: ALWAYS populate when status = needs_disambiguation
+* If PRIORITY 1 (dataset ambiguity): List all candidate tables that need disambiguation
+* If PRIORITY 2 (column ambiguity): List the single selected table where column disambiguation is needed
 
 """
 
-        
-        max_retries = 1
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                # print("Sending selection prompt to LLM...",selection_prompt)
-                llm_response = await self.db_client.call_claude_api_endpoint_async([
-                    {"role": "user", "content": selection_prompt}
-                ])
-                
-                print("Raw LLM response:", llm_response)
-                
-                # Extract JSON from the response using the existing helper method
-                json_content = self._extract_json_from_response(llm_response)
-                
-                selection_result = json.loads(json_content)
-                
-                # Handle different status types
-                status = selection_result.get('status', 'success')
-                
-                if status == "missing_items":
-                    print(f"❌ Missing items found: {selection_result.get('missing_items')}")
-                    return {
-                        'final_actual_tables': [],
-                        'functional_names': [],
-                        'requires_clarification': False,
-                        'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                        'missing_items': selection_result.get('missing_items', {}),
-                        'user_message': selection_result.get('user_message', ''),
-                        'error_message': '',
-                        'status': 'missing_items',
-                        'selected_filter_context': ''
-                    }
-                
-                elif status in ("needs_disambiguation", "needs_clarification"):
-                    print(f"❓ Clarification needed - preparing follow-up question")
-                    return {
-                        'final_actual_tables': selection_result.get('final_actual_tables', []),
-                        'functional_names': selection_result.get('functional_names', []),
-                        'requires_clarification': True,
-                        'clarification_question': selection_result.get('clarification_question'),
-                        'candidate_actual_tables': selection_result.get('tables_identified_for_clarification', []),
-                        'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                        'missing_items': selection_result.get('missing_items', {}),
-                        'error_message': '',
-                        'selected_filter_context': selection_result.get('selected_filter_context', '')
-                    }
-                
-                elif status == "phi_found":
-                    print(f"❌ PHI/PII information detected: {selection_result.get('selection_reasoning', '')}")
-                    return {
-                        'final_actual_tables': [],
-                        'functional_names': [],
-                        'requires_clarification': False,
-                        'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                        'user_message': selection_result.get('user_message', ''),
-                        'error_message': '',
-                        'status': 'phi_found',
-                         'selected_filter_context': ''
-                    }
-                
-                else:  # status == "success"
-                    high_level_selected = selection_result.get('high_level_table_selected', False)
-                    if high_level_selected:
-                        print(f"✅ Dataset selection complete (High-level table prioritized): {selection_result.get('functional_names')}")
-                    else:
-                        print(f"✅ Dataset selection complete: {selection_result.get('functional_names')}")
-                    return {
-                        'final_actual_tables': selection_result.get('final_actual_tables', []),
-                        'functional_names': selection_result.get('functional_names', []),
-                        'requires_clarification': False,
-                        'selection_reasoning': selection_result.get('selection_reasoning', ''),
-                        'missing_items': selection_result.get('missing_items', {}),
-                        'error_message': '',
-                        'high_level_table_selected': high_level_selected,
-                        'selected_filter_context': selection_result.get('selected_filter_context', '')
-                    }
-                        
-            except Exception as e:
-                retry_count += 1
-                print(f"⚠ Dataset selection attempt {retry_count} failed: {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    return {
-                        'final_actual_tables': [],
-                        'functional_names': [],
-                        'requires_clarification': False,
-                        'selection_reasoning': 'Dataset selection failed',
-                        'missing_items': {'metrics': [], 'attributes': []},
-                        'error': True,
-                        'error_message': f"Model serving endpoint failed after {max_retries} attempts: {str(e)}",
-                        'selected_filter_context': ''
-                    }
 
- assessment_prompt = f"""
+------------------------
+------------------------
+
+
+assessment_prompt = f"""
 You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 
 CURRENT QUESTION: {current_question}
@@ -331,10 +211,19 @@ If yes, check FILTER VALUES EXTRACTED:
 - If exact match but column not in metadata → ❌Mark for follow-up
 - If filter value not mentioned in question → Skip (don't use this filter)
 
+**CHECK 4: Clarification rules validation**
+Check if selected dataset has "clarification_rules" field in metadata.
+If present, evaluate user's question against each rule:
+- Does question trigger any rule? → ❌ Rule triggered (needs clarification)
+- No rules triggered? → ✓ No rules apply
+
+Output: ✓ No rules | ❌ Rule: [brief rule description]
+
 **Output Format:**
 Terms: [list]
 Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
 Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
+Clarification Rules: [status from CHECK 4]
 
 ==============================
 TASK 1: STRICT ASSESSMENT
@@ -374,6 +263,12 @@ Use CHECK 2 validation results directly. No additional examples needed.
 ✓ = Clear if single/multi query or join needed
 ❌ = Multi-table approach unclear
 
+**G. DATASET CLARIFICATION RULES**
+✓ = No clarification rules triggered OR rules don't apply to question
+❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
+
+Use CHECK 4 validation result directly.
+
 ==============================
 ASSESSMENT OUTPUT FORMAT
 ==============================
@@ -382,6 +277,7 @@ ASSESSMENT OUTPUT FORMAT
 Terms: [list]
 Validation: [statuses]
 Filter Context: [status]
+Clarification Rules: [status]
 
 **ASSESSMENT**: 
 A: ✓/❌/N/A (max 5 words)
@@ -390,6 +286,7 @@ C: ✓/❌/⚠️ (max 5 words)
 D: ✓/❌/N/A (max 5 words)
 E: ✓/❌ (list failed mappings if any)
 F: ✓/❌ (max 5 words)
+G: ✓/❌ (rule description if triggered)
 
 **DECISION**: PROCEED | FOLLOW-UP
 
@@ -398,7 +295,7 @@ STRICT DECISION CRITERIA
 ==============================
 
 **MUST PROCEED only if:**
-ALL areas (A, B, C, D, E, F) = ✓ or N/A with NO ❌ and NO blocking ⚠️
+ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
 
 **MUST FOLLOW-UP if:**
 ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
@@ -409,10 +306,18 @@ ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
 FOLLOW-UP GENERATION
 ==============================
 
-**Priority Order:** E (Metadata) → B (Metrics) → C (Context) → A/D/F
+**Priority Order:** G (Clarification Rules) → E (Metadata) → B (Metrics) → C (Context) → A/D/F
 **Maximum 2 questions** - pick most critical blocking issues
 
-**Generic Format for ANY failure:**
+**For G (Clarification Rule) failure:**
+<followup>
+I need clarification based on dataset requirements:
+
+**[Rule Requirement]**: [What the rule says is needed]
+- Please specify: [what user needs to provide]
+</followup>
+
+**Generic Format for ANY other failure:**
 <followup>
 I need clarification to generate accurate SQL:
 
@@ -433,14 +338,6 @@ TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
 ==============================================
 
 (Only execute if Task 1 DECISION says "PROCEED")
-
-**CORE SQL GENERATION RULES:**
-
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
-
-(Only execute if Task 1 says "PROCEED")
 
 **CORE SQL GENERATION RULES:**
 
@@ -568,13 +465,16 @@ Return ONLY the result in XML tags with no additional text.
 EXECUTION INSTRUCTION
 ==============================
 
-1. Complete PRE-VALIDATION (extract and validate all terms)
-2. Complete TASK 1 strict assessment (A-F with clear marks)
+1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules)
+2. Complete TASK 1 strict assessment (A-G with clear marks)
 3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
 4. If PROCEED: Execute TASK 2 with SQL generation
-5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize E → B → C)
+5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize G → E → B → C)
 
 **Show your work**: Display pre-validation, assessment, then SQL or follow-up.
 **Remember**: ONE failure = STOP.
 """
+
+
+
 

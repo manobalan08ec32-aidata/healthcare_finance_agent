@@ -1,3 +1,288 @@
+You are a highly skilled Healthcare Finance SQL analyst. This is PHASE 2 of a two-phase process.
+
+ORIGINAL USER QUESTION: Break down the September 2025 actual vs forecast performance by PBM product category
+**AVAILABLE METADATA**: ## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+**clarification_rules**:If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose
+**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
+**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Research,Generic Scripts,Total Membership,Reported Revenues];Please refer the Mapping synonym Volume or total scripts ->Unadjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
+**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
+**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
+**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
+**month**: Calendar month of submission; it has numerical value (1-12).
+**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
+**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]     
+**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
+**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
+**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
+**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
+**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
+**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
+**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
+**Revenue per Script or rate**:column not exists. calculated as Revenues / Unadjusted Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
+**rate variance**: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume.
+**volume variance**: (prior Month volume - Current Month Volume) x Current Rate.Rate is reveneue_amt divided by unadjusted_script_count. Volume is unajusted_script_count. current month and previous month should be extracted from user question.
+**mix variance**: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas
+**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
+**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
+**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
+**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
+**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
+**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
+**Cost per Script (Adj)**:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
+**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
+**Op Exp per Script (Adj)**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
+**Op Cost per Script (Adj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
+**IOI per Script (Adj)**:column not exists. calculated as IOI / Adjusted Scripts.
+**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
+**Utilization PMPM (Adjusted)**:column not exists. calculated as Adjusted Scripts / Total Membership.
+**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
+**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
+**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
+**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->HDP and SP->Specialty [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH]
+**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
+**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
+
+
+MULTIPLE TABLES AVAILABLE: False
+JOIN INFORMATION: No join clause provided
+MANDATORY FILTER COLUMNS: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
+
+FILTER VALUES EXTRACTED:
+
+    SELECTED FILTER CONTEXT Available for SQL generation based on user follow up answer:
+        final selection : product_category - [product_category], sample values [PBM]
+
+
+====================================
+STEP 1: VALIDATE FOLLOW-UP RESPONSE
+====================================
+
+YOUR PREVIOUS QUESTION: I need clarification based on dataset requirements:
+
+**Forecast Cycle Specification**: The system requires specifying which forecast cycle to use when comparing actual vs forecast performance.
+- Please specify: Which forecast cycle should I use? Available options are 8+4, 5+7, or 2+10
+USER'S RESPONSE: 8+4
+
+**FIRST, analyze if the user's response is relevant:**
+
+1. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
+2. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
+3. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
+
+**If NOT RELEVANT (categories 2 or 3), immediately return the appropriate XML response below and STOP.**
+**If RELEVANT (category 1), proceed to STEP 2 for SQL generation.**
+
+=========================================
+STEP 2: SQL GENERATION (Only if RELEVANT)
+=========================================
+
+Generate a high-quality Databricks SQL query using:
+1. The ORIGINAL user question as the primary requirement
+2. The USER'S CLARIFICATION to resolve any ambiguities
+3. Available metadata for column mapping
+4. Multi-table strategy assessment (single vs multiple queries)
+5. All SQL generation best practices
+
+**MULTI-QUERY DECISION LOGIC**:
+- **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables
+- **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+- **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Multiple analytical dimensions (trends + rankings)
+- **SINGLE QUERY**: Simple, focused questions with one analytical dimension
+
+========================================
+CRITICAL DATABRICKS SQL GENERATION RULES
+=========================================
+
+
+1. MANDATORY FILTERS - ALWAYS APPLY
+- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
+
+1b. FILTER VALUES EXTRACTED - APPLY WHEN NO ATTRIBUTE MAPPING
+**Rule**: If user question does NOT contain an attribute name that maps to metadata columns, check FILTER VALUES EXTRACTED section:
+- If "final selection" shows: column_name - [column_name], sample values [VALUE]
+- AND that VALUE exactly appears in the user's question
+- THEN apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+- Do NOT use filters from  if not in "user question"
+
+2. CALCULATED FORMULAS HANDLING (CRITICAL)
+**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+
+CORRECT PATTERN:
+```sql
+SELECT
+    ledger, year, month,  -- Business dimensions only
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) -
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
+FROM table
+WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
+```
+
+WRONG PATTERN:
+```sql
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
+```
+
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+
+3. METRICS & AGGREGATIONS
+- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
+- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
+- Include time dimensions (month, quarter, year) when relevant to question
+- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
+
+4. SELECT CLAUSE STRATEGY
+
+**Simple Aggregates (no breakdown requested):**
+- Show only the aggregated metric and essential time dimensions if specified
+- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
+- Do NOT include unnecessary business dimensions or filter columns
+
+**Calculations & Breakdowns (analysis BY dimensions):**
+- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
+- For calculations, show all components for transparency:
+  * Percentage: Include numerator + denominator + percentage
+  * Variance: Include original values + variance
+  * Ratios: Include both components + ratio
+- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
+
+5. MULTI-TABLE JOIN SYNTAX (when applicable)
+- Use provided join clause exactly as specified
+- Qualify all columns with table aliases
+- Include all necessary tables in FROM/JOIN clauses
+- Only join if question requires related data together; otherwise use separate queries
+
+6. ATTRIBUTE-ONLY QUERIES
+- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
+
+7. STRING FILTERING - CASE INSENSITIVE
+- Always use UPPER() on both sides for text/string comparisons
+- Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+8. TOP N/BOTTOM N QUERIES WITH CONTEXT
+-Show requested top/bottom N records with their individual values
+-CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
+-Calculate and show percentage contribution: (individual value / overall total) × 100
+Overall totals logic:
+    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
+    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
+-Use subquery in SELECT to show overall total alongside each individual record
+-Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
+-ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
+
+9. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
+- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
+- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
+- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
+- Include variance/difference columns when comparing metrics
+- Prevents users from manually comparing separate rows
+
+10. DATABRICKS SQL COMPATIBILITY
+- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+- Date functions: date_trunc(), year(), month(), quarter()
+- Conditional logic: CASE WHEN
+- CTEs: WITH clauses for complex logic
+
+11. FORMATTING & ORDERING
+- Show whole numbers for metrics, round percentages to 4 decimal places
+- Use ORDER BY only for date columns in descending order
+- Use meaningful, business-relevant column names aligned with user's question
+
+==============================
+INTEGRATION INSTRUCTIONS
+==============================
+
+- Integrate the user's clarification naturally into the SQL logic
+- If clarification provided specific formulas, implement them precisely
+- If clarification resolved time periods, use exact dates/ranges specified
+- If clarification defined metrics, use the exact business definitions provided
+- Maintain all original SQL quality standards while incorporating clarifications
+
+==============================
+OUTPUT FORMATS
+==============================
+IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+
+**OPTION 1: If user's response is a NEW QUESTION**
+<new_question>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is a new question]</reasoning>
+</new_question>
+
+**OPTION 2: If user's response is TOPIC DRIFT (unrelated)**
+<topic_drift>
+<detected>true</detected>
+<reasoning>[Brief 1-sentence why this is off-topic]</reasoning>
+</topic_drift>
+
+**OPTION 3: If RELEVANT - Single SQL Query**
+<sql>
+[Your complete SQL query incorporating both original question and clarifications]
+</sql>
+
+**OPTION 4: If RELEVANT - Multiple SQL Queries**
+<multiple_sql>
+<query1_title>[Brief descriptive title - max 8 words]</query1_title>
+<query1>[First SQL query]</query1>
+<query2_title>[Brief descriptive title - max 8 words]</query2_title>
+<query2>[Second SQL query]</query2>
+</multiple_sql>
+
+
+**FOR SINGLE SQL QUERY:**
+<sql>
+[Your complete SQL query incorporating both original question and clarifications]
+</sql>
+
+**FOR MULTIPLE SQL QUERIES:**
+If analysis requires multiple queries for better understanding:
+<multiple_sql>
+<query1_title>
+[Brief descriptive title for first query - max 8 words]
+</query1_title>
+<query1>
+[First SQL query here]
+</query1>
+<query2_title>
+[Brief descriptive title for second query - max 8 words]
+</query2_title>
+<query2>
+[Second SQL query here]
+</query2>
+</multiple_sql>
+
+
+follow up sql response <sql>
+SELECT
+    product_category,
+    SUM(CASE WHEN UPPER(ledger) = UPPER('GAAP') THEN amount_or_count ELSE 0 END) AS actual_amount,
+    SUM(CASE WHEN UPPER(ledger) = UPPER('8+4') THEN amount_or_count ELSE 0 END) AS forecast_amount,
+    SUM(CASE WHEN UPPER(ledger) = UPPER('GAAP') THEN amount_or_count ELSE 0 END) -
+    SUM(CASE WHEN UPPER(ledger) = UPPER('8+4') THEN amount_or_count ELSE 0 END) AS variance,
+    CASE
+        WHEN SUM(CASE WHEN UPPER(ledger) = UPPER('8+4') THEN amount_or_count ELSE 0 END) != 0
+        THEN ROUND(((SUM(CASE WHEN UPPER(ledger) = UPPER('GAAP') THEN amount_or_count ELSE 0 END) -
+                     SUM(CASE WHEN UPPER(ledger) = UPPER('8+4') THEN amount_or_count ELSE 0 END)) /
+                    SUM(CASE WHEN UPPER(ledger) = UPPER('8+4') THEN amount_or_count ELSE 0 END)) * 100, 4)
+        ELSE 0
+    END AS variance_percentage,
+    metric_type
+FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+WHERE year = 2025
+    AND month = 9
+    AND UPPER(ledger) IN (UPPER('GAAP'), UPPER('8+4'))
+    AND product_category IS NOT NULL
+    AND product_category NOT IN ('-', 'BL')
+GROUP BY product_category, metric_type
+ORDER BY product_category, metric_type
+</sql>
+
+
 selection_prompt = f"""
 You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 

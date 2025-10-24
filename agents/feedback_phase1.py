@@ -1,3 +1,22 @@
+spark.sql(f"""
+            CREATE TABLE IF NOT EXISTS prd_optumrx_orxfdmprdsa.rag.approved_examples_processed (
+                example_id STRING,
+                question STRING,
+                sql_query STRING,
+                question_hash STRING,
+                tables_used string,
+                table_name STRING,
+                question_tokens string,
+                term_frequencies string,
+                thumbs_up_count INT,
+                variant_of STRING,
+                is_variant BOOLEAN,
+                created_at TIMESTAMP,
+                last_updated_at TIMESTAMP
+            ) USING DELTA
+            TBLPROPERTIES (delta.enableChangeDataFeed = true)
+        """)
+
 import hashlib
 import re
 import uuid

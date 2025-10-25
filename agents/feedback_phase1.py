@@ -1,14 +1,3 @@
-"""
-Phase 1: Text-to-SQL Feedback Learning - Simple Function-Based Approach
-
-Simplified version with:
-- Only functions (no classes)
-- Minimal columns (no variants, tables_used, is_variant)
-- Simple data types (INT for counts, TIMESTAMP for dates)
-- Auto-embedding by Databricks
-
-"""
-
 import hashlib
 import re
 import uuid
@@ -18,111 +7,22 @@ from typing import List, Dict, Optional
 from collections import Counter, defaultdict
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
-
-
-# ==================== CONFIGURATION ====================
-
-FEEDBACK_TABLE = "feedback_monitoring"
+FEEDBACK_TABLE = "prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking "
 PROCESSED_TABLE = "prd_optumrx_orxfdmprdsa.rag.approved_examples_processed"
 CORPUS_STATS_TABLE = "prd_optumrx_orxfdmprdsa.rag.bm25_corpus_stats"
 TERM_DF_TABLE = "prd_optumrx_orxfdmprdsa.rag.term_document_frequency"
 
-TIER2_THRESHOLD = 0.95
-GRAY_ZONE_START = 0.92
-TOP_K_CHECK = 20
+# Deduplication thresholds
+TIER2_THRESHOLD = 0.95  # High confidence semantic match
+GRAY_ZONE_START = 0.92  # Start of gray zone (need SQL check)
+VARIANT_VALIDATION_THRESHOLD = 5  # Thumbs-up count to trust existing
+TOP_K_CHECK = 20  # Check top 20 similar questions
 
+# Stop words for tokenization
 STOP_WORDS = {
     'the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on',
     'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'be'
 }
-
-
-# ==================== SETUP FUNCTIONS ====================
-
-def setup_tables(spark: SparkSession):
-    """Create all required tables"""
-    
-    print("Setting up tables...")
-    
-    # Main processed examples table - SIMPLIFIED SCHEMA
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {PROCESSED_TABLE} (
-            example_id STRING,
-            question STRING,
-            sql_query STRING,
-            question_hash STRING,
-            table_name STRING,
-            question_tokens STRING,
-            term_frequencies STRING,
-            thumbs_up_count INT,
-            created_at TIMESTAMP,
-            last_updated_at TIMESTAMP
-        ) USING DELTA
-        TBLPROPERTIES (delta.enableChangeDataFeed = true)
-    """)
-    print("  ✓ Created approved_examples_processed table")
-    
-    # BM25 corpus statistics
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {CORPUS_STATS_TABLE} (
-            stat_name STRING,
-            stat_value STRING,
-            last_updated STRING
-        ) USING DELTA
-    """)
-    print("  ✓ Created bm25_corpus_stats table")
-    
-    # Term document frequencies
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {TERM_DF_TABLE} (
-            term STRING,
-            document_frequency STRING,
-            last_updated STRING
-        ) USING DELTA
-    """)
-    print("  ✓ Created term_document_frequency table")
-    
-    print("\n✓ All tables created successfully\n")
-
-
-def setup_vector_search_index():
-    """Setup Databricks Vector Search with auto-embedding"""
-    
-    from databricks.vector_search.client import VectorSearchClient
-    
-    client = VectorSearchClient()
-    
-    print("Setting up Databricks Vector Search...")
-    
-    # Create endpoint
-    try:
-        client.create_endpoint(
-            name="sql_feedback_endpoint",
-            endpoint_type="STANDARD"
-        )
-        print("  ✓ Created endpoint")
-    except Exception as e:
-        print(f"  ⚠ Endpoint exists: {str(e)[:100]}")
-    
-    # Create vector search index with auto-embedding
-    try:
-        client.create_delta_sync_index(
-            endpoint_name="sql_feedback_endpoint",
-            source_table_name=PROCESSED_TABLE,
-            index_name="sql_examples_vector_index",
-            pipeline_type="TRIGGERED",
-            primary_key="example_id",
-            embedding_source_column="question",
-            embedding_model_endpoint_name="databricks-bge-large-en"
-        )
-        print("  ✓ Created vector search index with auto-embedding")
-    except Exception as e:
-        print(f"  ⚠ Index exists: {str(e)[:100]}")
-    
-    print("\n✓ Vector Search setup complete\n")
-
-
-# ==================== TEXT PROCESSING ====================
 
 def normalize_question(question: str) -> str:
     """Normalize question for exact matching"""
@@ -195,33 +95,43 @@ def extract_aggregate(sql: str) -> Optional[str]:
 # ==================== VECTOR SEARCH ====================
 
 def find_similar_top_k(question_text: str, k: int = 20) -> List[Dict]:
-    """Find top K similar questions using Vector Search"""
-    
+    """
+    Find top K most similar questions using Databricks Vector Search.
+    """
     try:
         from databricks.vector_search.client import VectorSearchClient
-        
+
         client = VectorSearchClient()
-        
-        results = client.similarity_search(
-            index_name="sql_examples_vector_index",
+        index = client.get_index(
+            endpoint_name="metadata_vectore_search_endpoint",
+            index_name="prd_optumrx_orxfdmprdsa.rag.sql_examples_vector_index"
+        )
+
+        # Request columns you want (do not include 'score' if not in table)
+        results = index.similarity_search(
             query_text=question_text,
+            columns=["example_id", "question", "sql_query", "table_name"],
             num_results=k
         )
-        
+
+        matches = []
         if results and results.get('result') and results['result'].get('data_array'):
-            matches = []
-            for item in results['result']['data_array']:
+            # Get column names from manifest (score is always present in data_array)
+            cols = [c['name'] for c in results['manifest']['columns']]
+            # If 'score' is not in columns, add it for mapping
+            if 'score' not in cols:
+                cols.append('score')
+            for row in results['result']['data_array']:
+                row_dict = dict(zip(cols, row))
                 matches.append({
-                    'example_id': item.get('example_id'),
-                    'question': item.get('question'),
-                    'sql_query': item.get('sql_query'),
-                    'table_name': item.get('table_name'),
-                    'similarity': item.get('score', 0)
+                    'example_id': row_dict.get('example_id'),
+                    'question': row_dict.get('question'),
+                    'sql_query': row_dict.get('sql_query'),
+                    'table_name': row_dict.get('table_name'),
+                    'similarity': row_dict.get('score', 0.0)
                 })
-            return matches
-        
-        return []
-        
+        return matches
+
     except Exception as e:
         print(f"⚠ Vector search error: {e}")
         return []
@@ -519,9 +429,7 @@ def update_bm25_statistics(spark: SparkSession):
     print(f"  ✓ BM25 stats: N={N}, avgdl={avgdl:.2f}, unique_terms={len(df_counter)}")
 
 
-# ==================== MAIN BATCH JOB ====================
-
-def run_batch_job(spark: SparkSession):
+def run_batch_job():
     """Main batch processing job"""
     
     print("=" * 70)
@@ -549,12 +457,12 @@ def run_batch_job(spark: SparkSession):
     print("\n[Step 2/6] Loading new feedback...")
     
     feedback_df = spark.sql(f"""
-        SELECT DISTINCT user_question, sql_generated, table_name
+        SELECT DISTINCT user_question, state_info as sql_generated, table_name
         FROM {FEEDBACK_TABLE}
         WHERE user_question IS NOT NULL
-        AND sql_generated IS NOT NULL
+        AND state_info IS NOT NULL
         AND user_question != ''
-        AND sql_generated != ''
+        AND state_info != ''
     """)
     
     feedback_list = [row.asDict() for row in feedback_df.collect()]
@@ -593,8 +501,8 @@ def run_batch_job(spark: SparkSession):
         from databricks.vector_search.client import VectorSearchClient
         client = VectorSearchClient()
         client.get_index(
-            endpoint_name="sql_feedback_endpoint",
-            index_name="sql_examples_vector_index"
+            endpoint_name="metadata_vectore_search_endpoint",
+            index_name="prd_optumrx_orxfdmprdsa.rag.sql_examples_vector_index"
         ).sync()
         print("  ✓ Vector search index synced")
     except Exception as e:
@@ -620,31 +528,3 @@ def run_batch_job(spark: SparkSession):
     print(f"Duplicates found:       {sum(results['count_increments'].values())}")
     print(f"Duration:               {duration:.1f} seconds ({duration/60:.1f} minutes)")
     print("=" * 70)
-
-
-# ==================== USAGE ====================
-
-"""
-DATABRICKS NOTEBOOK USAGE:
-
-# ONE-TIME SETUP
-setup_tables(spark)
-setup_vector_search_index()
-
-# SCHEDULED JOB (Every 3 hours)
-run_batch_job(spark)
-
-# TEST
-spark.sql('''
-    INSERT INTO feedback_monitoring VALUES 
-    ('What is total sales?', 'SELECT SUM(amount) FROM sales', 'sales'),
-    ('Show me total sales', 'SELECT SUM(amount) FROM sales', 'sales')
-''')
-
-run_batch_job(spark)
-
-spark.sql('''
-    SELECT question, sql_query, table_name, thumbs_up_count
-    FROM prd_optumrx_orxfdmprdsa.rag.approved_examples_processed
-''').show(truncate=False)
-"""

@@ -1,3 +1,42 @@
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=False
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=False
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=True
+🔑 Generated feedback key: feedback_d5fa2ad3-1aa6-46ca-ab24-85eb3a71dd36_msg_7
+🔄 Generating follow-up questions after narrative completion...
+
+❓ Followup Question Agent: Generating follow-up questions
+🔍 Generating follow-up questions for: Break down the revenue by PBM product category for July 2025
+📝 Previous follow-ups: 3
+🎯 Domain selection: PBM Network
+📂 Selected dataset(s): ['prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast']
+✅ Loaded consolidated flow from followup/consolidated_flow.json
+✅ Generated 3 follow-up questions
+coming out of follow up question
+follow-up output {'followup_questions': ['What is the revenue per script by PBM product category for July 2025?', 'Break down the volume by PBM product category for July 2025?', 'Show me the cost per script by PBM product category for July 2025?'], 'success': True}
+  ✅ Generated 3 follow-up questions
+  📝 Follow-up questions: ['What is the revenue per script by PBM product category for July 2025?', 'Break down the volume by PBM product category for July 2025?', 'Show me the cost per script by PBM product category for July 2025?']
+  📊 Total follow-up questions in history: 6
+  🔍 State after followup generation: followup_questions=3
+✅ Added followup_questions message (total messages now: 9): 💡 **Would you like to explore further? Here are so...
+📊 Current message summary:
+  Message 6: assistant(selection_reasoning) - ['Peoplesoft General Ledger']
+  Message 7: assistant(sql_result) - SQL analysis complete
+  Message 8: assistant(followup_questions) - 💡 **Would you like to explore ...
+✅ Generated 3 follow-up questions
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🗂️ Displaying 5 cached sessions
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=False
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=False
+🔍 Rendering SQL result: type=<class 'dict'>
+📊 render_sql_results called with: type=<class 'dict'>, show_feedback=True
+🔇 Skipping feedback for historical message (idx=7)
+
 import streamlit as st
 import asyncio
 import uuid

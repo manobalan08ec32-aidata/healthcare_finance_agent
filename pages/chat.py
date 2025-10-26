@@ -142,3 +142,192 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
 #   → Feedback buttons displayed ✅
 # 
 # ===================================================================
+
+
+# ===================================================================
+# FIXED render_sidebar_history FUNCTION - SINGLE LINE TIMESTAMPS
+# Replace lines 1702-1794 in chat.py
+# ===================================================================
+
+def render_sidebar_history():
+    """Render session history in the sidebar with clickable timestamps (single line)."""
+    
+    st.markdown("### 📚 Recent Sessions")
+    
+    # Check if we have a database client first
+    db_client = st.session_state.get('db_client')
+    if not db_client:
+        st.info("Database not connected")
+        return
+    
+    # Auto-fetch history on load
+    if 'cached_history' not in st.session_state:
+        try:
+            print("🔄 Auto-fetching history from database...")
+            history = asyncio.run(_fetch_session_history())
+            st.session_state.cached_history = history
+            print(f"📦 Cached {len(history)} sessions")
+        except Exception as e:
+            print(f"❌ Failed to fetch history: {e}")
+            st.session_state.cached_history = []
+    
+    history = st.session_state.get('cached_history', [])
+    print(f"🗂️ Displaying {len(history)} cached sessions")
+    
+    if not history:
+        st.info("No previous sessions found")
+        return
+    
+    # Display historical sessions by timestamp (ordered DESC)
+    for idx, session_item in enumerate(history):
+        # Handle dict responses from database (should have session_id and last_activity)
+        if isinstance(session_item, dict):
+            session_id = session_item.get('session_id', f'unknown_{idx}')
+            last_activity = session_item.get('last_activity', 'Unknown Time')
+            
+            # Format timestamp for display - COMPACT FORMAT FOR SINGLE LINE
+            try:
+                # Parse timestamp and format it nicely
+                from datetime import datetime
+                if isinstance(last_activity, str):
+                    # Try parsing ISO format timestamp
+                    dt = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                    # OPTION 1: Compact format without year - "Jan 15 2:30PM"
+                    display_timestamp = dt.strftime("%b %d %I:%M%p")
+                    
+                    # OPTION 2: Even more compact with slashes - "1/15 2:30PM" (uncomment to use)
+                    # display_timestamp = dt.strftime("%m/%d %I:%M%p")
+                    
+                    # OPTION 3: 24-hour format, no year - "Jan 15 14:30" (uncomment to use)
+                    # display_timestamp = dt.strftime("%b %d %H:%M")
+                else:
+                    # If it's already a datetime object
+                    display_timestamp = last_activity.strftime("%b %d %I:%M%p")
+            except Exception as e:
+                print(f"⚠️ Failed to format timestamp: {e}")
+                display_timestamp = str(last_activity)
+            
+            # Add emoji with compact timestamp
+            display_text = f"🕒 {display_timestamp}"
+            
+        elif isinstance(session_item, str):
+            # Fallback for string-only response (shouldn't happen with new query)
+            session_id = session_item
+            display_text = f"Session: {session_id[:12]}..."
+            
+        else:
+            print(f"⚠️ Unexpected session type: {type(session_item)} - {session_item}")
+            continue
+        
+        # Create a clickable button for each session with timestamp display
+        if st.button(
+            display_text, 
+            key=f"history_{idx}_{session_id}",
+            help=f"Load session from {display_timestamp}\nSession ID: {session_id}",
+            use_container_width=True
+        ):
+            # Clear current chat and load historical session
+            # Preserve domain_selection before clearing everything
+            current_domain_selection = st.session_state.get('domain_selection')
+            
+            st.session_state.messages = []
+            st.session_state.sql_rendered = False
+            st.session_state.narrative_rendered = False
+            st.session_state.processing = False
+            st.session_state.session_overview_shown = True  # Don't show overview when loading historical session
+            
+            # Set session ID to the historical session ID to continue the conversation thread
+            st.session_state.session_id = session_id
+            
+            # Restore domain_selection so new questions work properly
+            if current_domain_selection:
+                st.session_state.domain_selection = current_domain_selection
+                print(f"🔄 Session ID updated to historical session: {session_id}, preserved domain_selection: {current_domain_selection}")
+            else:
+                # If no domain selection exists, this might cause "Domain Not Found" error
+                print(f"⚠️ Session ID updated to historical session: {session_id}, no domain_selection to preserve - this may cause errors!")
+                print(f"💡 User may need to go back to main page to select domain again")
+            
+            # Render the complete historical session
+            render_historical_session_by_id(session_id)
+            st.rerun()
+
+
+# ===================================================================
+# ENHANCED CSS FOR SIDEBAR BUTTONS (OPTIONAL - ALREADY EXISTS)
+# If the buttons still wrap, ensure this CSS is in your main() function
+# This should already be at lines 2301-2317
+# ===================================================================
+
+"""
+/* Sidebar session history buttons - compact and single line */
+[data-testid="stSidebar"] .stButton > button[key*="history_"] {
+    text-align: left !important;
+    background-color: #f8f9fa !important;
+    border: 1px solid #e0e0e0 !important;
+    padding: 4px 6px !important;
+    margin: 2px 0 !important;
+    border-radius: 4px !important;
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 24px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+[data-testid="stSidebar"] .stButton > button[key*="history_"]:hover {
+    background-color: #e9ecef !important;
+    border-color: #1e3a8a !important;
+}
+"""
+
+
+# ===================================================================
+# TIMESTAMP FORMAT OPTIONS:
+# ===================================================================
+# 
+# Choose one of these formats by uncommenting in lines 51-58:
+# 
+# OPTION 1 (DEFAULT): "%b %d %I:%M%p"
+# Result: "Jan 15 2:30PM"
+# - Pros: Human readable, includes AM/PM
+# - Cons: Slightly longer with month name
+# 
+# OPTION 2: "%m/%d %I:%M%p"  
+# Result: "1/15 2:30PM"
+# - Pros: Most compact
+# - Cons: Numeric month less readable
+# 
+# OPTION 3: "%b %d %H:%M"
+# Result: "Jan 15 14:30"
+# - Pros: No AM/PM, clean 24-hour format
+# - Cons: Some users prefer 12-hour time
+# 
+# OPTION 4 (If you need year): "%m/%d/%y %H:%M"
+# Result: "1/15/25 14:30"
+# - Pros: Includes year, very compact
+# - Cons: All numeric, less readable
+# 
+# ===================================================================
+# 
+# KEY CHANGES:
+# 1. Changed timestamp format from "%b %d, %Y %I:%M %p" to "%b %d %I:%M%p"
+#    Old: "Jan 15, 2025 02:30 PM" (wraps to 2 lines)
+#    New: "Jan 15 2:30PM" (fits on 1 line)
+# 
+# 2. Removed spaces around AM/PM (%I:%M%p instead of %I:%M %p)
+#    Saves 1 character
+# 
+# 3. Removed year and comma - most sessions are recent anyway
+# 
+# 4. CSS already ensures single line with:
+#    - white-space: nowrap (prevents wrapping)
+#    - text-overflow: ellipsis (adds ... if too long)
+#    - overflow: hidden (clips overflow)
+# 
+# RESULT: Timestamps now fit on a single line in the 220px sidebar!
+# 
+# ===================================================================

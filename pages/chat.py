@@ -1,3 +1,6 @@
+Application Error: There are multiple elements with the same key='feedback_87174d2a-6c5b-4f43-be6d-2022af2ae3b1_msg_2_thumbs_up'. To fix this, please make sure that the key argument is unique for each element you create.
+
+
 import streamlit as st
 import asyncio
 import uuid

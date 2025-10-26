@@ -1,13 +1,103 @@
- "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
-"**clarification_rules**:This rule applicable only when the user mentions forecast in the question.If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose",
-"**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]",
-"  ",
-"**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Research,Generic Scripts,Total Membership,Reported Revenues];Please refer the Mapping synonym Volume or total scripts ->Unadjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.",
-"  ",
-"**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results",
-"  ",
-"**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->HDP and SP->Specialty [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].Only for aggregated queries, show product_sub_category_lvl_1,product_sub_category_lvl_2 level as well",
-"**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]",
-"**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]"
+async def search_metadata_sql(self, filter_list: List[str], user_segment: str) -> List[str]:
+        """
+        Search metadata for filter values using optimized SQL query
+        Returns list of concatenated strings in format: "table_name.column_name: matched_values"
+        """
+        try:
+            if not filter_list:
+                return []
+            
+            # Build regex pattern with proper escaping for SQL
+            all_patterns = []
+            score_cases = []
+            
+            for term in filter_list:
+                term_clean = term.strip().lower()
+                escaped_exact = term_clean.replace("'", "\\'")
+                
+                whole_phrase = term_clean.replace(' ', '.*')
+                escaped_whole = whole_phrase.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                all_patterns.append(escaped_whole)
+                
+                score_cases.append(f"CASE WHEN lower(trim(exploded_value)) = '{escaped_exact}' THEN 100 ELSE 0 END")
+                score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_whole})' THEN 50 ELSE 0 END")
+                
+                if ' ' in term_clean:
+                    first_space_idx = term_clean.index(' ')
+                    first_part = term_clean[:first_space_idx]
+                    second_part = term_clean[first_space_idx+1:].replace(' ', '.*')
+                    
+                    escaped_first = first_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                    escaped_second = second_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                    
+                    all_patterns.extend([escaped_first, escaped_second])
+                    score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_first})' THEN 30 ELSE 0 END")
+                    score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_second})' THEN 10 ELSE 0 END")
+            
+                unique_patterns = list(set(all_patterns))
+                regex_pattern = '|'.join(unique_patterns)
+                score_calculation = ' + '.join(score_cases)
+                
+                query = f"""
+                WITH matched_data AS (
+                    SELECT
+                        column_name,
+                        trim(exploded_value) AS individual_value,
+                        ({score_calculation}) AS value_score
+                    FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+                    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+                    WHERE  lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+                ),
+                scored_aggregated AS (
+                    SELECT
+                        column_name,
+                        collect_list(individual_value) AS all_matched_values,
+                        SUM(value_score) AS relevance_score
+                    FROM matched_data
+                    GROUP BY  column_name
+                )
+                SELECT
+                    column_name,
+                    concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+                    relevance_score
+                FROM scored_aggregated
+                ORDER BY relevance_score DESC, column_name
+                LIMIT 7
+                """
+            
+            print(f"🔍 Executing filter values search for terms: {filter_list}")
+            print(f"📊 SQL Query: {query}")
+            
+            # Execute the query using databricks client
+            result_data = await self.db_client.execute_sql_async_audit(query)
+            print('results_data_filter',result_data)
+            
+            # Handle result_data - it's coming as list of dictionaries
+            if not isinstance(result_data, list) or not result_data:
+                print(f"❌ Filter values search failed: {result_data}")
+                return []
+                
+            print(f"✅ Found {len(result_data)} filter value matches")
+            
+            # Group results by table and format for LLM usage
+            table_groups = {}
+            for row in result_data:
+                column_name = row.get('column_name', '')
+                matched_values = row.get('matched_values', '')
 
-]
+                if column_name not in table_groups:
+                    table_groups[column_name] = []
+                
+                table_groups[column_name].append(f"{column_name}: {matched_values}")
+            
+            # Format as grouped strings for LLM
+            concatenated_results = []
+            for column_name, columns in table_groups.items():
+                table_summary = f"Column: {column_name}\n" + "\n".join([f"  - {col}" for col in columns])
+                concatenated_results.append(table_summary)
+            print("results",concatenated_results)
+            return concatenated_results
+                
+        except Exception as e:
+            print(f"❌ Error in search_metadata_sql: {str(e)}")
+            return []

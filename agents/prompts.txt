@@ -1,103 +1,119 @@
 async def search_metadata_sql(self, filter_list: List[str], user_segment: str) -> List[str]:
-        """
-        Search metadata for filter values using optimized SQL query
-        Returns list of concatenated strings in format: "table_name.column_name: matched_values"
-        """
-        try:
-            if not filter_list:
-                return []
-            
-            # Build regex pattern with proper escaping for SQL
-            all_patterns = []
-            score_cases = []
-            
-            for term in filter_list:
-                term_clean = term.strip().lower()
-                escaped_exact = term_clean.replace("'", "\\'")
-                
-                whole_phrase = term_clean.replace(' ', '.*')
-                escaped_whole = whole_phrase.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                all_patterns.append(escaped_whole)
-                
-                score_cases.append(f"CASE WHEN lower(trim(exploded_value)) = '{escaped_exact}' THEN 100 ELSE 0 END")
-                score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_whole})' THEN 50 ELSE 0 END")
-                
-                if ' ' in term_clean:
-                    first_space_idx = term_clean.index(' ')
-                    first_part = term_clean[:first_space_idx]
-                    second_part = term_clean[first_space_idx+1:].replace(' ', '.*')
-                    
-                    escaped_first = first_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                    escaped_second = second_part.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                    
-                    all_patterns.extend([escaped_first, escaped_second])
-                    score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_first})' THEN 30 ELSE 0 END")
-                    score_cases.append(f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)({escaped_second})' THEN 10 ELSE 0 END")
-            
-                unique_patterns = list(set(all_patterns))
-                regex_pattern = '|'.join(unique_patterns)
-                score_calculation = ' + '.join(score_cases)
-                
-                query = f"""
-                WITH matched_data AS (
-                    SELECT
-                        column_name,
-                        trim(exploded_value) AS individual_value,
-                        ({score_calculation}) AS value_score
-                    FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
-                    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-                    WHERE  lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
-                ),
-                scored_aggregated AS (
-                    SELECT
-                        column_name,
-                        collect_list(individual_value) AS all_matched_values,
-                        SUM(value_score) AS relevance_score
-                    FROM matched_data
-                    GROUP BY  column_name
-                )
-                SELECT
-                    column_name,
-                    concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
-                    relevance_score
-                FROM scored_aggregated
-                ORDER BY relevance_score DESC, column_name
-                LIMIT 7
-                """
-            
-            print(f"🔍 Executing filter values search for terms: {filter_list}")
-            print(f"📊 SQL Query: {query}")
-            
-            # Execute the query using databricks client
-            result_data = await self.db_client.execute_sql_async_audit(query)
-            print('results_data_filter',result_data)
-            
-            # Handle result_data - it's coming as list of dictionaries
-            if not isinstance(result_data, list) or not result_data:
-                print(f"❌ Filter values search failed: {result_data}")
-                return []
-                
-            print(f"✅ Found {len(result_data)} filter value matches")
-            
-            # Group results by table and format for LLM usage
-            table_groups = {}
-            for row in result_data:
-                column_name = row.get('column_name', '')
-                matched_values = row.get('matched_values', '')
-
-                if column_name not in table_groups:
-                    table_groups[column_name] = []
-                
-                table_groups[column_name].append(f"{column_name}: {matched_values}")
-            
-            # Format as grouped strings for LLM
-            concatenated_results = []
-            for column_name, columns in table_groups.items():
-                table_summary = f"Column: {column_name}\n" + "\n".join([f"  - {col}" for col in columns])
-                concatenated_results.append(table_summary)
-            print("results",concatenated_results)
-            return concatenated_results
-                
-        except Exception as e:
-            print(f"❌ Error in search_metadata_sql: {str(e)}")
+    """
+    Search metadata with start-of-word matching only
+    """
+    try:
+        if not filter_list:
             return []
+        
+        score_cases = []
+        all_patterns = []
+        
+        for term in filter_list:
+            term_clean = term.strip().lower()
+            escaped_exact = term_clean.replace("'", "\\'")
+            
+            # Pattern 1: For each word, allow optional separators/numbers after it
+            # "covid vaccine" → "covid[19-_]* vaccine[s]*"
+            words = term_clean.split()
+            flexible_words = []
+            for word in words:
+                # Add word boundary at start, allow numbers/separators after
+                flexible_words.append(f"\\b{word}[0-9\\-_]*")
+            
+            flexible_pattern = '.*'.join(flexible_words)
+            escaped_flexible = flexible_pattern.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            all_patterns.append(escaped_flexible)
+            
+            # SCORING TIERS
+            
+            # TIER 1: Exact match (1000 points)
+            # "covid vaccine" = "covid vaccine"
+            score_cases.append(
+                f"CASE WHEN lower(trim(exploded_value)) = '{escaped_exact}' THEN 1000 ELSE 0 END"
+            )
+            
+            # TIER 2: Starts with exact term (800 points)
+            # "covid vaccine" matches "covid vaccine information"
+            escaped_start = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+            score_cases.append(
+                f"CASE WHEN lower(trim(exploded_value)) RLIKE '^{escaped_start}\\b' THEN 800 ELSE 0 END"
+            )
+            
+            # TIER 3: Flexible start match (500 points)
+            # "covid vaccine" matches "covid19 vaccine"
+            score_cases.append(
+                f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^{escaped_flexible}' THEN 500 ELSE 0 END"
+            )
+            
+            # TIER 4: Each word starts a word in the value (200 points)
+            # "covid vaccine" matches "about covid19 vaccine"
+            for word in words:
+                if len(word) > 2:  # Skip very short words
+                    escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                    score_cases.append(
+                        f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\\b{escaped_word}[0-9\\-_]*' THEN 200 ELSE 0 END"
+                    )
+        
+        # Combine patterns for WHERE clause
+        regex_pattern = '|'.join(all_patterns)
+        score_calculation = ' + '.join(score_cases)
+        
+        query = f"""
+        WITH matched_data AS (
+            SELECT
+                column_name,
+                trim(exploded_value) AS individual_value,
+                ({score_calculation}) AS value_score
+            FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+            LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+            WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+              AND ({score_calculation}) >= 200  -- Must meet minimum score threshold
+        ),
+        scored_aggregated AS (
+            SELECT
+                column_name,
+                collect_list(individual_value) AS all_matched_values,
+                SUM(value_score) AS relevance_score
+            FROM matched_data
+            GROUP BY column_name
+        )
+        SELECT
+            column_name,
+            concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+            relevance_score
+        FROM scored_aggregated
+        WHERE relevance_score >= 400  -- Only return strong matches
+        ORDER BY relevance_score DESC, column_name
+        LIMIT 7
+        """
+        
+        print(f"🔍 Executing filter values search for terms: {filter_list}")
+        print(f"📊 SQL Query: {query}")
+        
+        # Execute the query
+        result_data = await self.db_client.execute_sql_async_audit(query)
+        print('results_data_filter', result_data)
+        
+        if not isinstance(result_data, list) or not result_data:
+            print(f"❌ Filter values search failed: {result_data}")
+            return []
+            
+        print(f"✅ Found {len(result_data)} filter value matches")
+        
+        # Format results
+        concatenated_results = []
+        for row in result_data:
+            column_name = row.get('column_name', '')
+            matched_values = row.get('matched_values', '')
+            relevance_score = row.get('relevance_score', 0)
+            
+            table_summary = f"Column: {column_name} (Score: {relevance_score})\n  - Values: {matched_values}"
+            concatenated_results.append(table_summary)
+        
+        print("results", concatenated_results)
+        return concatenated_results
+            
+    except Exception as e:
+        print(f"❌ Error in search_metadata_sql: {str(e)}")
+        return []

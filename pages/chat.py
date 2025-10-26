@@ -274,7 +274,8 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         
                         # Render SQL results immediately
                         rewritten_question = state.get('rewritten_question', initial_state['current_question'])
-                        add_sql_result_message(sql_result, rewritten_question)
+                        table_name = state.get('selected_dataset', None)
+                        add_sql_result_message(sql_result, rewritten_question, table_name)
                         last_state = state
                         
                         # Mark that SQL results are ready and we need to start narrative generation
@@ -683,7 +684,7 @@ def format_sql_data_for_streamlit(data):
     
     return df
 
-def render_feedback_section(title, sql_query, data, narrative, user_question=None, message_idx=None):
+def render_feedback_section(title, sql_query, data, narrative, user_question=None, message_idx=None, table_name=None):
     """Render feedback section with thumbs up/down buttons"""
     
     # Create a unique key for this feedback section using multiple factors
@@ -710,6 +711,8 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
             if st.button("👍 Yes, helpful", key=f"{feedback_key}_thumbs_up"):
                 # Insert positive feedback - use user_question if available, otherwise fallback
                 rewritten_question = user_question or st.session_state.get('current_query', title)
+                
+                
                 sql_result_dict = {
                     'title': title,
                     'sql_query': sql_query,
@@ -720,7 +723,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                 
                 # Run feedback insertion
                 success = asyncio.run(_insert_feedback_row(
-                    rewritten_question, sql_result_dict, True, ""
+                    rewritten_question, sql_query, True, table_name
                 ))
                 
                 if success:
@@ -750,6 +753,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                     if st.form_submit_button("Submit Feedback"):
                         # Insert negative feedback - use user_question if available, otherwise fallback
                         rewritten_question = user_question or st.session_state.get('current_query', title)
+                        
                         sql_result_dict = {
                             'title': title,
                             'sql_query': sql_query,
@@ -759,7 +763,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                         }
                         
                         success = asyncio.run(_insert_feedback_row(
-                            rewritten_question, sql_result_dict, False, feedback_text
+                            rewritten_question, sql_query, False, table_name, feedback_text
                         ))
                         
                         if success:
@@ -780,7 +784,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
         st.markdown("---")
         st.success("✅ Thank you for your feedback!")
 
-def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None):
+def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, table_name=None):
     """Render SQL results with title, expandable SQL query, data table, and narrative"""
     
     print(f"📊 render_sql_results called with: type={type(sql_result)}, show_feedback={show_feedback}")
@@ -804,7 +808,7 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
             narrative = result.get('narrative', '')
             
             # ⭐ Pass message_idx here
-            render_single_sql_result(title, sql_query, data, narrative, user_question, show_feedback, message_idx)
+            render_single_sql_result(title, sql_query, data, narrative, user_question, show_feedback, message_idx, table_name)
     else:
         # Single result - use rewritten_question if available, otherwise default
         title = rewritten_question if rewritten_question else "Analysis Results"
@@ -813,10 +817,10 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
         narrative = sql_result.get('narrative', '')
         
         # ⭐ Pass message_idx here
-        render_single_sql_result(title, sql_query, data, narrative, user_question, show_feedback, message_idx)
+        render_single_sql_result(title, sql_query, data, narrative, user_question, show_feedback, message_idx, table_name)
 
 
-def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None):
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, table_name=None):
     """Render a single SQL result with warm gold background for title and narrative"""
     
     # Title with custom narrative-content styling
@@ -872,7 +876,7 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         
         # Add feedback buttons after narrative (only for current session)
         if show_feedback:
-            render_feedback_section(title, sql_query, data, narrative, user_question, message_idx)
+            render_feedback_section(title, sql_query, data, narrative, user_question, message_idx, table_name)
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
     """Render strategic analysis response with reasoning and multiple strategic queries"""
@@ -967,8 +971,8 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
         """, unsafe_allow_html=True)
         
         # Add feedback buttons for strategic analysis (only for current session)
-        if show_feedback:
-            render_feedback_section(f"Strategic: {title}", sql_query, data, narrative)
+        # if show_feedback:
+        #     render_feedback_section(f"Strategic: {title}", sql_query, data, narrative)
 
 def render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning=None, show_feedback=True):
     """Render drillthrough analysis response with reasoning and multiple operational queries"""
@@ -1065,8 +1069,8 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
         """, unsafe_allow_html=True)
         
         # Add feedback buttons for drillthrough analysis (only for current session)
-        if show_feedback:
-            render_feedback_section(f"Drillthrough: {title}", sql_query, data, display_content)
+        # if show_feedback:
+        #     render_feedback_section(f"Drillthrough: {title}", sql_query, data, display_content)
 
 def add_assistant_message(content, message_type="standard"):
     """
@@ -1110,7 +1114,7 @@ def add_selection_reasoning_message(selection_reasoning):
     st.session_state.messages.append(message)
     print(f"✅ Added selection reasoning message (total messages now: {len(st.session_state.messages)})")
 
-def add_sql_result_message(sql_result, rewritten_question=None):
+def add_sql_result_message(sql_result, rewritten_question=None, table_name=None):
     """
     Add SQL result message to chat history for proper rendering
     """
@@ -1120,7 +1124,8 @@ def add_sql_result_message(sql_result, rewritten_question=None):
         "message_type": "sql_result",
         "timestamp": datetime.now().isoformat(),
         "sql_result": sql_result,
-        "rewritten_question": rewritten_question
+        "rewritten_question": rewritten_question,
+        "table_name": table_name
     }
     
     st.session_state.messages.append(message)
@@ -1294,45 +1299,53 @@ async def _fetch_session_records(session_id: str):
         print(f"🔍 Full traceback: {traceback.format_exc()}")
         return []
 
-async def _insert_feedback_row(user_question: str, sql_result: Dict[str, Any], positive_feedback: bool, feedback_text: str = ""):
+async def _insert_feedback_row(user_question: str, sql_result: str, positive_feedback: bool, table_name: str = "", feedback_text: str = ""):
     """Insert feedback into fdmbotfeedback_tracking table.
-    
+
     Args:
         user_question: The rewritten question from state
-        sql_result: The complete sql_result dictionary
+        sql_result: The SQL query string (not a dict)
         positive_feedback: True for thumbs up, False for thumbs down
         feedback_text: User's text feedback (for thumbs down)
+        table_name: Can be a string or a list of strings
     """
     try:
         db_client = st.session_state.get('db_client')
         if not db_client:
             print("⚠️ No db_client in session; skipping feedback insert")
             return False
-            
+
         session_id = st.session_state.get('session_id', 'unknown')
         user_id = get_authenticated_user()
-        
-        # Serialize sql_result as JSON for VARIANT column
-        payload_json = json.dumps(sql_result, ensure_ascii=False)
-        # Only escape single quotes for Databricks (don't escape newlines or other backslashes)
-        payload_escaped = payload_json.replace("'", "\\'")
-        
+
+        # Escape single quotes and replace \n with blank in sql_result string
+        if sql_result:
+            payload_escaped = sql_result.replace("'", "\\'").replace("\n", " ")
+        else:
+            payload_escaped = ""
+
         # Escape user inputs
         user_question_escaped = user_question.replace("'", "\\'") if user_question else ''
         feedback_escaped = feedback_text.replace("'", "\\'") if feedback_text else ''
-        
+
+        # Handle table_name: extract string(s) from list or use as-is if string
+        if isinstance(table_name, list):
+            table_name_clean = ",".join(str(t).strip("[]'\"") for t in table_name)
+        else:
+            table_name_clean = str(table_name).strip("[]'\"")
+
         insert_sql = f"""
         INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking
-            (session_id, user_id, user_question, state_info, positive_feedback, feedback, insert_ts)
+            (session_id, user_id, user_question, state_info, positive_feedback, feedback, insert_ts, table_name)
         VALUES
-            ('{session_id}', '{user_id}', '{user_question_escaped}', '{payload_escaped}', {positive_feedback}, '{feedback_escaped}', current_timestamp())
+            ('{session_id}', '{user_id}', '{user_question_escaped}', '{payload_escaped}', {positive_feedback}, '{feedback_escaped}', current_timestamp(), '{table_name_clean}')
         """
-        
-        print(f"🗄️ Inserting feedback: {'👍' if positive_feedback else '👎'} - {len(payload_json)} chars")
+
+        print(f"🗄️ Inserting feedback: {'👍' if positive_feedback else '👎'} - {len(payload_escaped)} chars")
         await db_client.execute_sql_async_audit(insert_sql)
         print("✅ Feedback insert succeeded")
         return True
-        
+
     except Exception as e:
         print(f"⚠️ Feedback insert failed: {e}")
         return False
@@ -1456,8 +1469,8 @@ def render_last_session_overview():
         try:
             spinner_placeholder = st.empty()
             with spinner_placeholder, st.spinner("✍️ Writing the story of our last conversation..."):
-                # overview="This feature is disabled to save tokens for now. Will be enabled during demo's"
-                overview = asyncio.run(_generate_session_overview(narrative_summary))
+                overview="This feature is disabled to save cost for now. Will be enabled during demo's"
+                # overview = asyncio.run(_generate_session_overview(narrative_summary))
             spinner_placeholder.empty()
             
             
@@ -2587,6 +2600,7 @@ def render_chat_message_enhanced(message, message_idx):
         if message_type == "sql_result":
             sql_result = message.get('sql_result')
             rewritten_question = message.get('rewritten_question')
+            table_name = message.get('table_name')
             if sql_result:
                 print(f"🔍 Rendering SQL result: type={type(sql_result)}")
                 if isinstance(sql_result, str):
@@ -2599,7 +2613,7 @@ def render_chat_message_enhanced(message, message_idx):
                         print(f"    ❌ Failed to parse SQL result string as JSON: {e}")
                         st.error("Error: Could not parse SQL result data")
                         return
-                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical,message_idx=message_idx)
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical,message_idx=message_idx, table_name=table_name)
             return
         
         # Handle strategic analysis messages

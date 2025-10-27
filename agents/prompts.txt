@@ -1,1 +1,305 @@
-[{"table_name":"prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast","functional_table_name":"Peoplesoft General Ledger","description":"This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.","PHI_PII_Columns":[],"high_level_table":"True","useful_for":["client level revenue analysis,volume,scripts","monthly actuals analysis","high level client analysis","GAAP analysis","actuals vs forecast vs budget comparison","line-of-business level tracking","Rate analysis","Useful for analyzing revenue,expense,gross margin,other mterics,script counts,volume  at high level as long as attributes and metrics available"],"not_useful_for":["client level expense or gross margin alone","claim-level granular analysis","daily granularity"],"metrics":["revenue","expense","rate_variance","mix_variance","volume_variance","cogs","sga","ioi","membership","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","volume","Cost %","Gross Margin %","Operating Expenses %","Operating Cost %","IOI % ","Utilization PMPM (Unadjusted)","Utilization PMPM (Adjusted)","Revenue per Script (Unadj) ","Cost per Script (Unadj) ","Revenue per Script (Unadj) ","Cost per Script (Unadj) ","Margin per Script (Unadj)","Revenue per Script (Unadj) ","Cost per Script (Unadj) ","Revenue per Script (Unadj) ","Cost per Script (Unadj) ","IOI per Script (Unadj)","Revenue per Script (Adj)","Cost per Script (Adj) ","Margin per Script (Adj)","IOI per Script (Adj)","Generic Penetration % ","Op Exp per Script (Unadjusted)","Operating Expenses % ","Operating Cost % ","Op Cost per Script (Unadjsted)","Op Exp per Script (Adjusted)","Op Exp per Script (Ajdusted)"],"attributes":["ledger","Mail service","Home Delivery","Specialty","line_of_business","transaction_date","year","month","quarter","product_category","product_category_lvl1 or hierarchy level 1","product_category_lvl2 or hierarchy level 2","Client_id","Client_name"],"time_grains":["monthly","quarterly","yearly"]},{"table_name":"prd_optumrx_orxfdmprdsa.rag.pbm_claims","functional_table_name":"Rx Claims","description":"Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.","PHI_PII_Columns":["member_id","member_date_of_birth"],"high_level_table":"False","useful_for":["claim-level financial analysis","client-level analysis","drug and therapy class performance","manufacturer-level insights","revenue per script and GDR metrics","line-of-business tracking","daily and monthly trend analysis","rate analysis"],"not_useful_for":["budget-level summaries","forecast comparisons","aggregated financial reporting without claim-level detail"],"metrics":["revenue","client due amount","app due amount","expense","cogs","wac","awp","unadjusted_scripts","adjusted_scripts","30_day_scripts","90_day_scripts","revenue_per_script","generic_dispensing_ratio","volume","rate_variance","mix_variance","volume_variance","gross margin"],"attributes":["claim_nbr","submit_date","client_id","client_Name","pharmacy_npi_no","drug_name","therapy_class_name","drug_manufctr_nm","line_of_business","state_cd","brand_vs_generic","client_type","gpi_no","pharmacy_name","pharmacy_type","carrier_id","member_date_of_birth","member_sex","product_category","claim_status_code"],"time_grains":["daily","monthly","quarterly","yearly"]},{"table_name":"prd_optumrx_orxfdmprdsa.rag.claim_billing","functional_table_name":"CBS Billing","description":"This dataset helps to bring all the billing information at invoice level for client, carrier,account,group.","PHI_PII_Columns":[],"high_level_table":"False","useful_for":["claim-level billing analysis","client-level billing analysis","Invoice analysis"],"not_useful_for":["expense analysis"],"metrics":["billed amount","revenue from billing","claim_fee","claim cost","activity fee"],"attributes":["claim_nbr","claim_status_code","invoice_nbr","invoice_date","invoice_gl_date,invoice general ledger date","carrier_id","account_id","group_id","client_id","client_description","drug_name","therapy_class_name","drug_manufctr_nm","brand_vs_generic","gpi_no","billed_amount","rev_src_type","oracle_prod_code","orcl_prod_desc","actvty_category_cd","blng_entty_cd","blng_entty_name","fqa_cmpny_cd","fqa_geo_cd","fqa_aflt_cd","fqa_acnt_cd","fqa_lob_cd","fqa_dept_cd","fqa_prod_cd","fqa_sub_acnt_cd","line_of_business"],"time_grains":["daily","monthly","quarterly","yearly"]}]
+  assessment_prompt = f"""
+You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
+
+CURRENT QUESTION: {current_question}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+
+FILTER VALUES EXTRACTED:
+{filter_context_text}
+
+AVAILABLE METADATA: {dataset_metadata}
+
+==============================
+PRE-ASSESSMENT VALIDATION
+==============================
+
+Before starting Task 1, perform these mandatory checks:
+
+**CHECK 1: Extract ALL user-mentioned terms**
+Identify every attribute, metric, filter, and dimension term in the question.
+List: [term1, term2, term3...]
+
+**CHECK 2: Validate against metadata**
+For EACH term, check if it maps to columns in AVAILABLE METADATA:
+- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
+- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name). Note carrier is not client_id
+- No match: "xyz" with no similar column → ❌ Not Found
+- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
+
+Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
+
+**CHECK 3: Filter context validation**
+Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
+If yes, check FILTER VALUES EXTRACTED:
+  a) Does the filter value EXACTLY match (not partial) what's in the user's question?
+  b) Does the column name exist in AVAILABLE METADATA?
+- If BOTH pass → ✓Valid (use this column for filtering)
+- If ONLY partial match → ❌Mark for follow-up
+- If exact match but column not in metadata → ❌Mark for follow-up
+- If filter value not mentioned in question → Skip (don't use this filter)
+
+**CHECK 4: Clarification rules validation**
+Check if selected dataset has "clarification_rules" field in metadata.
+If present, evaluate user's question against each rule:
+- Does question trigger any rule? → ❌ Rule triggered (needs clarification)
+- No rules triggered? → ✓ No rules apply
+
+Output: ✓ No rules | ❌ Rule: [brief rule description]
+
+**Output Format:**
+Terms: [list]
+Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
+Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
+Clarification Rules: [status from CHECK 4]
+
+==============================
+TASK 1: STRICT ASSESSMENT
+==============================
+
+Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
+
+**A. TEMPORAL SCOPE**
+✓ = Time period clearly specified
+❌ = Time period needed but missing
+N/A = No time dimension needed
+
+**B. METRIC DEFINITIONS** - Calculation Method Clarity
+Scope: Only numeric metrics requiring aggregation/calculation
+✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
+❌ = Any metric requires custom formula not specified OR calculation method ambiguous
+⚠️ = Metric exists but needs confirmation
+N/A = No metrics/calculations needed
+
+**C. BUSINESS CONTEXT**
+✓ = Filtering criteria clear AND grouping dimensions explicit
+❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
+⚠️ = Partially clear but confirmation recommended
+
+**D. FORMULA & CALCULATION REQUIREMENTS**
+✓ = Standard SQL aggregations sufficient
+❌ = Requires custom formulas without clear definition
+N/A = No calculations needed
+
+**E. METADATA MAPPING** - Column Existence Validation
+✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
+❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
+
+Use CHECK 2 validation results directly. No additional examples needed.
+
+**F. QUERY STRATEGY**
+✓ = Clear if single/multi query or join needed
+❌ = Multi-table approach unclear
+
+**G. DATASET CLARIFICATION RULES**
+✓ = No clarification rules triggered OR rules don't apply to question
+❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
+
+Use CHECK 4 validation result directly.
+
+==============================
+ASSESSMENT OUTPUT FORMAT
+==============================
+
+**PRE-VALIDATION:**
+Terms: [list]
+Validation: [statuses]
+Filter Context: [status]
+Clarification Rules: [status]
+
+**ASSESSMENT**: 
+A: ✓/❌/N/A (max 5 words)
+B: ✓/❌/⚠️/N/A (max 5 words)
+C: ✓/❌/⚠️ (max 5 words)
+D: ✓/❌/N/A (max 5 words)
+E: ✓/❌ (list failed mappings if any)
+F: ✓/❌ (max 5 words)
+G: ✓/❌ (rule description if triggered)
+
+**DECISION**: PROCEED | FOLLOW-UP
+
+==============================
+STRICT DECISION CRITERIA
+==============================
+
+**MUST PROCEED only if:**
+ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
+
+**MUST FOLLOW-UP if:**
+ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
+
+**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
+
+==============================
+FOLLOW-UP GENERATION
+==============================
+
+**Priority Order:** G (Clarification Rules) → E (Metadata) → B (Metrics) → C (Context) → A/D/F
+**Maximum 2 questions** - pick most critical blocking issues
+
+**For G (Clarification Rule) failure:**
+<followup>
+I need clarification based on dataset requirements:
+
+**[Rule Requirement]**: [What the rule says is needed]
+- Please specify: [what user needs to provide]
+</followup>
+
+**Generic Format for ANY other failure:**
+<followup>
+I need clarification to generate accurate SQL:
+
+**[What's Missing/Unclear]**: [Specific term or concept that failed]
+- Available in metadata: [list actual column names or options]
+- Please clarify: [what user needs to specify]
+
+[Second issue only if needed - max 2 total]
+</followup>
+
+**Example:**
+**Missing Column**: I cannot find "state_code" in the available data.
+- Available in metadata: state_name, state_abbr
+- Please clarify: Which column should I use?
+
+==============================================
+TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
+==============================================
+
+(Only execute if Task 1 DECISION says "PROCEED")
+
+**CORE SQL GENERATION RULES:**
+
+1. MANDATORY FILTERS - ALWAYS APPLY
+- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
+
+2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
+**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
+- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
+- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+
+The validation was already done in CHECK 3. Only use filters marked as ✓Valid
+
+3. CALCULATED FORMULAS HANDLING (CRITICAL)
+**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+
+CORRECT PATTERN:
+```sql
+SELECT 
+    ledger, year, month,  -- Business dimensions only
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
+FROM table
+WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
+```
+
+WRONG PATTERN:
+```sql
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
+```
+
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+
+4. METRICS & AGGREGATIONS
+- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
+- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
+- Include time dimensions (month, quarter, year) when relevant to question
+- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
+
+5. SELECT CLAUSE STRATEGY
+
+**Simple Aggregates (no breakdown requested):**
+- Show only the aggregated metric and essential time dimensions if specified
+- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
+- Do NOT include unnecessary business dimensions or filter columns
+
+**Calculations & Breakdowns (analysis BY dimensions):**
+- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
+- For calculations, show all components for transparency:
+  * Percentage: Include numerator + denominator + percentage
+  * Variance: Include original values + variance
+  * Ratios: Include both components + ratio
+- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
+
+6. MULTI-TABLE JOIN SYNTAX (when applicable)
+- Use provided join clause exactly as specified
+- Qualify all columns with table aliases
+- Include all necessary tables in FROM/JOIN clauses
+- Only join if question requires related data together; otherwise use separate queries
+
+7. ATTRIBUTE-ONLY QUERIES
+- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
+
+8. STRING FILTERING - CASE INSENSITIVE
+- Always use UPPER() on both sides for text/string comparisons
+- Example: WHERE UPPER(product_category) = UPPER('Specialty')
+
+9. TOP N/BOTTOM N QUERIES WITH CONTEXT
+-Show requested top/bottom N records with their individual values
+-CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
+-Calculate and show percentage contribution: (individual value / overall total) × 100
+Overall totals logic:
+    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
+    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
+-Use subquery in SELECT to show overall total alongside each individual record
+-Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
+-ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
+
+10. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
+- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
+- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
+- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
+- Include variance/difference columns when comparing metrics
+- Prevents users from manually comparing separate rows
+
+11. DATABRICKS SQL COMPATIBILITY
+- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
+- Date functions: date_trunc(), year(), month(), quarter()
+- Conditional logic: CASE WHEN
+- CTEs: WITH clauses for complex logic
+
+12. FORMATTING & ORDERING
+- Show whole numbers for metrics, round percentages to 4 decimal places
+- Use ORDER BY only for date columns in descending order
+- Use meaningful, business-relevant column names aligned with user's question
+
+==============================
+OUTPUT FORMATS
+==============================
+
+Return ONLY the result in XML tags with no additional text.
+
+**SINGLE SQL QUERY:**
+<sql>
+[Your complete SQL query]
+</sql>
+
+**MULTIPLE SQL QUERIES:**
+<multiple_sql>
+<query1_title>[Title - max 8 words]</query1_title>
+<query1>[SQL query]</query1>
+<query2_title>[Title - max 8 words]</query2_title>
+<query2>[SQL query]</query2>
+</multiple_sql>
+
+**FOLLOW-UP REQUEST:**
+<followup>
+[Use format above]
+</followup>
+
+==============================
+EXECUTION INSTRUCTION
+==============================
+
+1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules)
+2. Complete TASK 1 strict assessment (A-G with clear marks)
+3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
+4. If PROCEED: Execute TASK 2 with SQL generation
+5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize G → E → B → C)
+
+**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
+**Remember**: ONE failure = STOP.
+"""

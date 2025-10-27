@@ -1,4 +1,23 @@
-        selection_prompt = f"""
+Raw LLM response: **ASSESSMENT**: A:✓(no PHI) B:✓(revenue found) B-ATTR:✓(explicit carrier/product mentioned) C:✓(suitability passed) D:✓(single complete) F:✓(clear selection)
+**DECISION**: PROCEED - Ledger table has revenue metric and all required attributes for PBM MPDOVA analysis.
+
+<json>
+{
+  "status": "success",
+  "final_actual_tables": ["prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast"],
+  "functional_names": ["Peoplesoft General Ledger"],
+  "tables_identified_for_clarification": [],
+  "functional_table_name_identified_for_clarification": [],
+  "requires_clarification": false,
+  "selection_reasoning": "The Peoplesoft General Ledger table contains the revenue metric and has both product_category and carrier_id attributes needed to filter for PBM and MPDOVA. It supports monthly granularity for July 2025 analysis and is specifically useful for client level revenue analysis.",
+  "high_level_table_selected": true,
+  "user_message": null,
+  "clarification_question": null,
+  "selected_filter_context": null
+}
+</json>
+
+selection_prompt = f"""
 You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 
 CURRENT QUESTION: {user_question}

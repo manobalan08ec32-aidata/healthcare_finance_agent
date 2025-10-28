@@ -6,13 +6,13 @@ from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
 
 class LLMNavigationController:
-    """Streamlined async navigation controller with consolidated LLM calls"""
+    """Two-prompt navigation controller with enhanced accuracy and transparency"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
     
     async def process_user_query(self, state: AgentState) -> Dict[str, any]:
-        """Main entry point: Smart consolidated async system"""
+        """Main entry point: Two-step LLM processing"""
         
         current_question = state.get('current_question', state.get('original_question', ''))
         existing_domain_selection = state.get('domain_selection', [])
@@ -21,500 +21,57 @@ class LLMNavigationController:
         print(f"Navigation Input - Current: '{current_question}'")
         print(f"Navigation Input - Existing Domain: {existing_domain_selection}")
         
-
-        # Consolidated: input analysis + question processing in one call  
-        return await self._analyze_and_process_input(
-                current_question, existing_domain_selection, total_retry_count, state
-            )
+        # Two-step processing: Decision → Rewriting
+        return await self._two_step_processing(
+            current_question, existing_domain_selection, total_retry_count, state
+        )
     
-    async def _analyze_and_process_input(self, current_question: str, existing_domain_selection: List[str], 
+    async def _two_step_processing(self, current_question: str, existing_domain_selection: List[str], 
                                    total_retry_count: int, state: AgentState) -> Dict[str, any]:
-        """CONSOLIDATED: Analyze input type + process business questions in single LLM call"""
+        """Two-step LLM processing: PROMPT 1 (Decision) → PROMPT 2 (Rewriting)"""
         
         questions_history = state.get('user_question_history', [])
+        previous_question = questions_history[-1]['rewritten_question'] if questions_history else ""
         history_context = questions_history[-2:] if questions_history else []
-        
-        # SINGLE COMPREHENSIVE PROMPT - Simplified without team selection logic
-        comprehensive_prompt = f"""You are a healthcare finance analytics assistant.
-
-════════════════════════════════════
-NOW ANALYZE THIS USER INPUT:
-════════════════════════════════════
-User Input: "{current_question}"
-
-Previous Questions History: {history_context}
-
-════════════════════════════════════
-SECTION 1: SYSTEM KNOWLEDGE
-════════════════════════════════════
-
-This system analyzes healthcare finance data including:
-- **Claims & Ledgers**: claim volumes, costs, utilization, reconciliation,billing,invoices
-- **Pharmacy & Drugs**: drug analysis (revenue/volume/performance), therapy classes, medications, pharmaceutical trends,services
-- **Financial Metrics**: revenue, expenses, payments, budgets, forecasts, invoices,operating expenses
-
-**Important**: Drug, therapy class, medication, and pharmaceutical questions are CORE healthcare finance topics.
-
-═══════════════════════════════════════════════════════════════════
-SECTION 2: SQL VALIDATION DETECTION (CHECK FIRST)
-═══════════════════════════════════════════════════════════════════
-
-**Before processing, check if this is a SQL validation request:**
-
-Validation keywords: "validate", "check", "verify", "correct", "fix", "wrong", "incorrect result", "not getting correct", "query is wrong", "SQL is wrong", "result doesn't look right"
-
-**If validation keywords detected:**
-1. Use LAST question from history as base question
-2. Append validation context to indicate correction request
-3. Format: "[Last question] - VALIDATION REQUEST: [current input]"
-
-Example:
-- Previous: "What is revenue for Specialty for July 2025"
-- Current: "validate the last query, not getting correct result"
-- Rewritten: "What is revenue for Specialty for July 2025 - VALIDATION REQUEST: validate the last query, not getting correct result"
-
-═══════════════════════════════════════════════════════════════════
-SECTION 3: INPUT CLASSIFICATION
-═══════════════════════════════════════════════════════════════════
-
-Classify user input into ONE category:
-
-**GREETING** - Greetings, capability questions, general chat, dataset availability questions
-Examples: "Hi", "Hello", "What can you do?", "Help me", "What data do you have about claims?", "What information is available?"
-
-**DML/DDL** - Data modification requests (NOT supported)
-Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
-
-**BUSINESS_QUESTION** - Healthcare finance queries
-Must be VALIDATED for healthcare relevance:
-
-✅ **VALID**: Claims, ledgers, payments, members, providers, pharmacy, drugs, medications, therapy classes, pharmaceuticals, revenue, expenses, invoices, medical costs, utilization, financial metrics
-
-❌ **INVALID**: Weather, sports, retail, manufacturing, general technology, entertainment, non-healthcare topics
-
-═══════════════════════════════════════════════════════════════════
-SECTION 4: CONTEXT INHERITANCE (FILL WHAT'S MISSING)
-═══════════════════════════════════════════════════════════════════
-
-### Step 1: Extract Components from Questions
-
-**From CURRENT question, identify what it explicitly mentions:**
-- **Metric**: revenue, expense, claims, billed amount, cost, volume, payments, utilization
-- **Carrier/Entity**: carrier names (carrier XYZ, carrier ABC), clients, partners, accounts
-- **Time Period**: quarters (Q1, Q2, Q3, Q4), months (July, August), years (2024, 2025)
-- **Geography**: regions, states, countries (North region, California, Texas)
-- **Line of Business**: Commercial, Medicare, Medicaid, segments
-- **Filters**: drug names (covid vaccine, Humira), therapy classes, categories, specific items
-- **Aggregate Signals**: "as a whole", "overall", "total", "top N", "all carriers", "all customers"
-
-**From HISTORY question (last rewritten question), identify:**
-- Same components as above
-
-### Step 2: Determine Question Type
-
-**NEW QUESTION (no inheritance):**
-- Completely different topic with no semantic overlap (weather, sports, non-healthcare)
-- Current has ALL required components = COMPLETE question:
-  - Has metric + scope (carrier/geography/LOB) + time = complete
-  - Example: "What is claims data for carrier ABC for Q2 2025" (has everything)
-- No relationship to history
-
-**FOLLOW-UP QUESTION (fill missing components):**
-- Current is missing one or more components (metric, carrier, time, etc.)
-- Semantically related to history (same domain, continuation)
-- Implicit continuation of previous analysis
-
-### Step 3: Fill Missing Components
-
-**IF NEW QUESTION:**
-→ Use current question as-is, no inheritance, no filling
-
-**IF FOLLOW-UP QUESTION:**
-→ Fill missing components from history using these rules:
-
-**Filling Rules:**
-1. **Current Always Wins**: If current mentions a component, use current's value (don't override with history)
-   - Example: Current says "carrier ABC", don't use history's "carrier XYZ"
-
-2. **Fill Only What's Missing**: Look at what current lacks and fill from history
-   - Missing metric → fill from history
-   - Missing carrier → fill from history
-   - Missing time → fill from history
-   - Missing filter → fill from history
-
-3. **Component Replacement**: If current mentions same TYPE of component but different value, REPLACE it
-   - History: "carrier XYZ", Current: "carrier ABC" → Use ABC (replace)
-   - History: "Q1", Current: "Q2" → Use Q2 (replace)
-
-4. **Pronouns Fill Everything**: If current has pronouns ("that", "it", "those", "this"), fill ALL components from history
-   - "why is that high" → inherit everything (metric + carrier + time + filter)
-
-5. **"X breakdown" Pattern - Metric vs Filter Detection:**
- 
- If current has pattern "[X] breakdown" or "breakdown of [X]":
- 
- **Step A: Check if X is a METRIC**
- 
- Recognized Metrics (these ARE metrics):
- - revenue, expense, claims, billed amount, cost, volume, payments, utilization, claims count, spend, amount, fee, payment amount, total cost
- 
- **Step B: Apply Logic**
- 
- IF X is a recognized METRIC:
- → Use X as the metric (replace previous metric)
- → Fill missing carrier/time/geography from history
- 
- IF X is NOT a recognized METRIC (drug name, therapy class, category, entity):
- → KEEP previous metric from history
- → ADD X as a new filter
- → Fill missing carrier/time/geography from history
-
-### Step 4: Handle Edge Cases
-
-**Edge Case 1: Strong Aggregate Signals Override Scope**
-
-If current has strong aggregate signals:
-- "overall", "all carriers", "all customers", "across the board", "unfiltered", "complete", "entire", "grand total"
-
-**Action:**
-→ Fill ONLY metric + time (if missing)
-→ DROP all scope filters (carriers, geography, LOB)
-→ DROP specific item filters (drugs, categories)
-
-**Why:** These signals mean user wants the BIG PICTURE without filters
-
-**Example:**
-History: "What is expense for carrier XYZ for Q3"
-Current: "as a whole"
-→ Strong aggregate signal detected
-→ Fill: metric (expense), time (Q3)
-→ Drop: carrier (XYZ)
-→ Result: "What is the expense as a whole for Q3"
-
-**Edge Case 2: Complete Questions Don't Fill**
-
-If current has ALL THREE core components:
-- Has metric (revenue, expense, claims, etc.)
-- Has scope (carrier/geography/LOB)
-- Has time (Q1, July, 2025)
-
-**Action:**
-→ Treat as NEW QUESTION
-→ NO filling from history
-
-**Why:** If user provides complete context, they're starting fresh
-
-**Example:**
-History: "What is expense for carrier XYZ"
-Current: "claims data for carrier ABC for Q2 2025"
-→ Complete question detected (has metric + carrier + time)
-→ No filling needed
-→ Result: "What is claims data for carrier ABC for Q2 2025"
-
-
-
-### Step 5: Construct Rewritten Question
-
-Combine current components + filled components → complete rewritten question
-
-**Professional Structure:**
-- Pattern: "What is the [metric] for [filters] for [scope] for [timeframe]"
-- Transform informal to formal: "I need expense" → "What is the expense..."
-- Proper grammar, capitalized first letter, trimmed spaces
-
-═══════════════════════════════════════════════════════════════════
-SECTION 5: QUESTION REWRITING (APPLY CONTEXT INHERITANCE)
-═══════════════════════════════════════════════════════════════════
-
-### Determine if Question Needs History
-
-**Self-Contained** (DON'T use history - treat as NEW):
-- Contains specific metric + scope + timeframe = COMPLETE
-- Completely different topic from previous questions
-- No semantic relationship to history
-
-**Incomplete** (USE history - FOLLOW-UP):
-- Contains pronouns: "that", "it", "those", "this"
-- Vague references: "why is that", "show me more", "what about"
-- Missing critical components: metric, carrier, time, or filter
-- Direct follow-ups: "for carrier ABC", "for Q2", "as a whole"
-
-### Rewriting Process
-
-1. **Extract components** from current and history (Section 5, Step 1)
-2. **Determine question type** - NEW or FOLLOW-UP (Section 5, Step 2)
-3. **Apply filling logic** if FOLLOW-UP (Section 5, Step 3)
-4. **Check edge cases** (Section 5, Step 4)
-5. **Build rewritten question** (Section 5, Step 5)
-
-**Temporal Enhancement:**
-- If month mentioned without year → add current year (2025 for now, update annually)
-- If "next [month]" → add next year
-- If "last [month]" → determine based on context
-- Don't modify if year already present
-
-**Quality Requirements:**
-- Length: 15-500 characters
-- Self-contained (readable without history)
-- Well-formed business question (not command or fragment)
-- Proper grammar, capitalized first letter, trimmed spaces
-
-### Examples
-
-**Example 1 - Fill Missing Components with Replacement:**
-History: "What is expense for carrier XYZ for Q3"
-Current: "for carrier ABC for Q4"
-→ Type: FOLLOW-UP (missing metric)
-→ Current has: carrier=ABC (replaces XYZ), time=Q4 (replaces Q3)
-→ Missing: metric
-→ Fill: metric=expense
-→ Result: "What is expense for carrier ABC for Q4"
-
-**Example 2 - Strong Aggregate Signal (Edge Case 1):**
-History: "What is expense for carrier XYZ for Q3"
-Current: "as a whole"
-→ Type: FOLLOW-UP with strong aggregate signal
-→ Current has: aggregate signal "as a whole"
-→ Missing: metric, time
-→ Fill: metric=expense, time=Q3
-→ Drop: carrier=XYZ (aggregate signal overrides scope)
-→ Result: "What is expense as a whole for Q3"
-
-**Example 3 - Complete Question (Edge Case 2):**
-History: "What is expense for carrier XYZ"
-Current: "claims data for carrier ABC for Q2 2025"
-→ Type: NEW QUESTION (has metric + carrier + time = complete)
-→ No filling needed
-→ Result: "What is claims data for carrier ABC for Q2 2025"
-
-**Example 4 - Pronoun (Fill Everything):**
-History: "What is billed amount for covid vaccines for carrier MDOVA"
-Current: "why is that high"
-→ Type: FOLLOW-UP with pronoun
-→ Current has: pronoun "that"
-→ Fill: everything (metric + filter + carrier)
-→ Result: "Why is billed amount for covid vaccines for carrier MDOVA high"
-
-═══════════════════════════════════════════════════════════════════
-SECTION 6: FILTER VALUES EXTRACTION (FROM REWRITTEN QUESTION)
-═══════════════════════════════════════════════════════════════════
-
-**IMPORTANT:** Extract filter values from the REWRITTEN question (after applying context inheritance), not from the current user input.
-
-**GENERIC EXTRACTION LOGIC:**
-
-For every word/phrase in the rewritten question, apply these checks in order:
-
-**Step 1: Does it have an attribute label?**
-- Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, member number, patient ID, provider ID, client, account, transaction ID, reference number, contract number, policy number
-- If YES → EXCLUDE (LLM will handle it in SQL)
-- If NO → Go to Step 2
-
-**Step 2: Is it a pure number (digits only)?**
-- Check if value contains ONLY digits: 0-9
-- If YES → EXCLUDE
-- If NO → Go to Step 3
-
-**Step 3: Is it in the exclusion list?**
-- Check against exclusion categories below
-- If YES → EXCLUDE
-- If NO → Go to Step 4
-
-**Step 4: Does it contain letters (string/alphanumeric)?**
-- Check if value contains at least one letter (a-z, A-Z)
-- If YES → **EXTRACT IT** ✅
-- If NO → EXCLUDE
-
-**EXCLUSION CATEGORIES (Step 3):**
-- **Common terms**: PBM, HDP, Home Delivery, SP, Specialty, Mail, Claim Fee, Claim Cost, Activity Fee
-- **Time/Date**: months (January, February, July, etc.), quarters (Q1, Q2, Q3, Q4), years, dates, temporal words (last, next, monthly, quarterly, yearly)
-- **Generic words**: revenue, cost, expense, data, analysis, report, top, bottom, show, get, total, overall, what, is, the, for, in, of, and, or
-- **Metrics**: revenue, billed amount, claims count, expense, volume, cost, amount, fee, payment
-
-**If the word/phrase appears in ANY of the above categories, EXCLUDE it immediately.**
-
-**Multi-word handling:**
-- Keep phrases together: "covid vaccine" → ["covid vaccine"]
-- Multiple terms: Separate → "diabetes, asthma" as ["diabetes", "asthma"]
-
-**EDGE CASES:**
-
-**Multiple values with same attribute:**
-"carrier MPDOVA and BCBS" → both have attribute "carrier" → exclude both
-
-**Mixed standalone and attributed:**
-"diabetes for member ID 12345" → "diabetes" passes all checks ✅ | "12345" has attribute + pure number ❌
-
-**EXAMPLES:**
-
-Example 1:
-Rewritten: "What is the revenue amount for MPDOVA for September 2025"
-→ "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "September 2025": time/date term → EXCLUDE
-→ filter_values: ["MPDOVA"]
-
-Example 2:
-Rewritten: "What is invoice #76273623 for diabetes drugs in California for carrier BCBS"
-→ "76273623": has attribute "invoice #" → EXCLUDE
-→ "diabetes": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "California": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "BCBS": has attribute "carrier" → EXCLUDE
-→ filter_values: ["diabetes", "California"]
-
-Example 3:
-Rewritten: "What is claim number 982967283632 for cardiology for HDP for July 2025"
-→ "982967283632": has attribute "claim number" → EXCLUDE
-→ "cardiology": no attribute ✓, not pure number ✓, not in exclusion list ✓, has letters ✓ → **EXTRACT** ✅
-→ "HDP": common term in exclusion list → EXCLUDE
-→ "July 2025": time/date term → EXCLUDE
-→ filter_values: ["cardiology"]
-
-Example 4:
-Rewritten: "What is the revenue for PBM for July 2025"
-→ "PBM": no attribute ✓, not pure number ✓, IN exclusion list (common terms) ❌ → **EXCLUDE**
-→ "July 2025": time/date term → EXCLUDE
-→ filter_values: []
-
-═══════════════════════════════════════════════════
-SECTION 7: RESPONSE MESSAGE GENERATION
-═══════════════════════════════════════════════════
-
-Based on input classification:
-
-**GREETING**: Friendly introduction to capabilities (2-3 sentences)
-Example: "Hello! I'm your healthcare finance analytics assistant. I can help you analyze claims, ledgers, payments, drug performance, therapy classes, revenue, expenses, and other healthcare finance data. What would you like to explore?"
-
-**DML/DDL**: Polite refusal (2-3 sentences)
-Example: "I can only analyze data, not modify it. I cannot perform INSERT, UPDATE, DELETE, CREATE, or DROP operations. Please ask me questions about your healthcare finance data instead."
-
-**VALID BUSINESS_QUESTION**: Empty string "" (will be processed further)
-
-**INVALID BUSINESS_QUESTION**: Helpful redirect (2-3 sentences)
-Example: "I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, drugs, therapy classes, members, providers, or other healthcare finance data."
-
-═══════════════════════════════════════════════
-SECTION 8: CONSOLIDATED EXAMPLES
-═══════════════════════════════════════════════
-
-**GREETING EXAMPLE:**
-
-Input: "Hi, what can you do?"
-→ input_type="greeting", valid=false, response="Hello! I'm your healthcare finance analytics assistant..."
-
-**DML/DDL EXAMPLE:**
-
-Input: "INSERT new data into table"
-→ input_type="dml_ddl", valid=false, response="I can only analyze data, not modify it..."
-
-**BUSINESS QUESTION EXAMPLE:**
-
-Input: "Show me revenue for last 6 months"
-→ input_type="business_question", valid=true, response="", rewritten="What is the revenue for last 6 months", question_type="what", filter_values=[]
-
-**CONTEXT INHERITANCE EXAMPLES:**
-
-Example 1 - Drill-Down:
-Previous: "What is revenue for carrier MDOVA for Q3"
-Current: "covid vaccine breakdown"
-→ Intent: DRILL-DOWN (specific breakdown)
-→ Type: WHAT
-→ Result: "What is covid vaccine breakdown for carrier MDOVA for Q3"
-
-Example 2 - Aggregate:
-Previous: "What is covid vaccine data for carrier MDOVA for Q3"
-Current: "show me top 10 drugs"
-→ Intent: AGGREGATE (drop covid vaccine filter)
-→ Type: WHAT
-→ Result: "What are the top 10 drugs for carrier MDOVA for Q3"
-
-Example 3 - New Focus:
-Previous: "What is drug A for carrier MDOVA"
-Current: "what about drug B"
-→ Intent: NEW FOCUS (replace drug A with drug B)
-→ Type: WHAT
-→ Result: "What is drug B for carrier MDOVA"
-
-Example 4 - Why Question with Context:
-Previous: "What is revenue for carrier MDOVA for Q3"
-Current: "why is that high"
-→ Intent: DRILL-DOWN (pronoun "that")
-→ Type: WHY (explicit "why")
-→ Result: "Why is the revenue for carrier MDOVA for Q3 high"
-
-**SQL VALIDATION EXAMPLES:**
-
-Previous: "What is revenue for Specialty for July 2025"
-Current: "validate the last query, not getting correct result"
-→ rewritten="What is revenue for Specialty for July 2025 - VALIDATION REQUEST: validate the last query, not getting correct result"
-
-Previous: "Show expense and gross margin for HDP for July 2025"
-Current: "the query is wrong"
-→ rewritten="Show expense and gross margin for HDP for July 2025 - VALIDATION REQUEST: the query is wrong"
-
-**FILTER EXTRACTION EXAMPLE:**
-
-Input: "for covid vaccines"
-Previous: "What is revenue for carrier MDOVA for Q3"
-Rewritten: "What is the revenue for covid vaccines for carrier MDOVA for Q3"
-→ filter_values: ["covid vaccines", "MDOVA"]
-
-═══════════════════════════════════════════════════════════════════
-SECTION 1: OUTPUT FORMAT (Strictly JSON Format and dont stream reasoning)
-═══════════════════════════════════════════════════════════════════
-
-RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
-CRITICAL - Do not show any reasoning and only provide the JSON response.
-
-{{
-    "input_type": "greeting|dml_ddl|business_question",
-    "is_valid_business_question": true|false,
-    "response_message": "",
-    "context_type": "new_independent|true_followup|filter_refinement|metric_expansion",
-    "inherited_context": "specific context inherited or 'none'",
-    "rewritten_question": "complete rewritten question with context",
-    "question_type": "what|why",
-    "used_history": true|false,
-    "filter_values": ["array", "of", "extracted", "filter", "terms"]
-}}
-
-"""
         
         max_retries = 3
         retry_count = 0
         
         while retry_count < max_retries:
             try:
+                # ═══════════════════════════════════════════════════════════════
+                # STEP 1: CALL PROMPT 1 - DECISION MAKER
+                # ═══════════════════════════════════════════════════════════════
                 
-                llm_response = await self.db_client.call_claude_api_endpoint_async([
-                    {"role": "user", "content": comprehensive_prompt}
+                prompt_1 = self._build_prompt_1_decision_maker(
+                    current_question, 
+                    previous_question, 
+                    history_context
+                )
+                
+                print("Calling PROMPT 1 (Decision Maker)...")
+                decision_response = await self.db_client.call_claude_api_endpoint_async([
+                    {"role": "user", "content": prompt_1}
                 ])
                 
-                print("Comprehensive LLM response:", llm_response)
+                print("PROMPT 1 Response:", decision_response)
                 
-                # Try to parse as JSON, if it fails, treat as greeting message
                 try:
-                    response_json = json.loads(llm_response)
-                    
-                    input_type = response_json.get('input_type', 'business_question')
-                    is_valid_business_question = response_json.get('is_valid_business_question', False)
-                    response_message = response_json.get('response_message', '')
-                    rewritten_question = response_json.get('rewritten_question', '')
-                    question_type = response_json.get('question_type', 'what')
-                    filter_values = response_json.get('filter_values', [])
-                    
+                    decision_json = json.loads(decision_response)
                 except json.JSONDecodeError as json_error:
-                    print(f"LLM response is not valid JSON, treating as greeting: {json_error}")
-                    # Treat non-JSON response as a greeting message
-                    input_type = 'greeting'
-                    is_valid_business_question = False
-                    response_message = llm_response.strip()  # Use the raw response as greeting message
-                    rewritten_question = ''
-                    question_type = 'what'
-                    filter_values = []
+                    print(f"PROMPT 1 response is not valid JSON: {json_error}")
+                    # Treat as greeting
+                    decision_json = {
+                        'input_type': 'greeting',
+                        'is_valid_business_question': False,
+                        'response_message': decision_response.strip()
+                    }
                 
-                total_retry_count += retry_count
+                # Handle non-business questions (greeting, DML, invalid)
+                input_type = decision_json.get('input_type', 'business_question')
+                is_valid_business_question = decision_json.get('is_valid_business_question', False)
+                response_message = decision_json.get('response_message', '')
                 
-                # Handle non-business inputs
                 if input_type in ['greeting', 'dml_ddl', 'invalid_business']:
                     return {
                         'rewritten_question': current_question,
@@ -526,34 +83,69 @@ CRITICAL - Do not show any reasoning and only provide the JSON response.
                         'domain_selection': existing_domain_selection,
                         'greeting_response': response_message,
                         'is_dml_ddl': input_type == 'dml_ddl',
-                        'llm_retry_count': total_retry_count,
+                        'llm_retry_count': total_retry_count + retry_count,
                         'pending_business_question': '',
-                        'filter_values': []
+                        'filter_values': [],
+                        'user_friendly_message': response_message
                     }
                 
-                # Handle valid business questions
+                # ═══════════════════════════════════════════════════════════════
+                # STEP 2: CALL PROMPT 2 - REWRITER
+                # ═══════════════════════════════════════════════════════════════
+                
                 if input_type == 'business_question' and is_valid_business_question:
                     
-                    # Process business question with existing domain selection
-                    if rewritten_question:
-                        next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
-                        
-                        return {
-                            'rewritten_question': rewritten_question,
-                            'question_type': question_type,
-                            'context_type': response_json.get('context_type', 'new_independent'),
-                            'inherited_context': response_json.get('inherited_context', ''),
-                            'next_agent': next_agent,
-                            'next_agent_disp': next_agent.replace('_', ' ').title(),
-                            'requires_domain_clarification': False,
-                            'domain_followup_question': None,
-                            'domain_selection': existing_domain_selection,
-                            'llm_retry_count': total_retry_count,
-                            'pending_business_question': '',
-                            'filter_values': filter_values
+                    prompt_2 = self._build_prompt_2_rewriter(
+                        current_question,
+                        previous_question,
+                        decision_json
+                    )
+                    
+                    print("Calling PROMPT 2 (Rewriter)...")
+                    rewrite_response = await self.db_client.call_claude_api_endpoint_async([
+                        {"role": "user", "content": prompt_2}
+                    ])
+                    
+                    print("PROMPT 2 Response:", rewrite_response)
+                    
+                    try:
+                        final_json = json.loads(rewrite_response)
+                    except json.JSONDecodeError as json_error:
+                        print(f"PROMPT 2 response is not valid JSON: {json_error}")
+                        # Fallback
+                        final_json = {
+                            'rewritten_question': current_question,
+                            'filter_values': [],
+                            'question_type': 'what',
+                            'user_message': ''
                         }
+                    
+                    # Get user message directly from LLM
+                    user_message = final_json.get('user_message', '')
+                    
+                    # Determine next agent based on question type
+                    question_type = final_json.get('question_type', 'what')
+                    next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
+                    
+                    # Return complete result with transparency
+                    return {
+                        'rewritten_question': final_json.get('rewritten_question', current_question),
+                        'question_type': question_type,
+                        'context_type': decision_json.get('context_decision', 'new_independent'),
+                        'inherited_context': user_message,  # Simple string from LLM
+                        'next_agent': next_agent,
+                        'next_agent_disp': next_agent.replace('_', ' ').title(),
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': final_json.get('filter_values', []),
+                        'user_friendly_message': user_message,  # For UI display
+                        'decision_from_prompt1': decision_json.get('context_decision', '')  # For debugging
+                    }
                 
-                # Fallback - treat as invalid business question
+                # Fallback - invalid business question
                 return {
                     'rewritten_question': current_question,
                     'question_type': 'what',
@@ -563,21 +155,22 @@ CRITICAL - Do not show any reasoning and only provide the JSON response.
                     'domain_followup_question': None,
                     'domain_selection': existing_domain_selection,
                     'greeting_response': "I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data.",
-                    'llm_retry_count': total_retry_count,
+                    'llm_retry_count': total_retry_count + retry_count,
                     'pending_business_question': '',
-                    'filter_values': filter_values if 'filter_values' in locals() else []
+                    'filter_values': [],
+                    'user_friendly_message': "I specialize in healthcare finance analytics."
                 }
                         
             except Exception as e:
                 retry_count += 1
-                print(f"Comprehensive analysis attempt {retry_count} failed: {str(e)}")
+                print(f"Two-step processing attempt {retry_count} failed: {str(e)}")
                 
                 if retry_count < max_retries:
-                    print(f"Retrying comprehensive analysis... ({retry_count}/{max_retries})")
+                    print(f"Retrying... ({retry_count}/{max_retries})")
                     await asyncio.sleep(2 ** retry_count)
                     continue
                 else:
-                    print(f"All comprehensive analysis retries failed: {str(e)}")
+                    print(f"All retries failed: {str(e)}")
                     return {
                         'rewritten_question': current_question,
                         'question_type': 'what',
@@ -591,6 +184,447 @@ CRITICAL - Do not show any reasoning and only provide the JSON response.
                         'pending_business_question': '',
                         'error': True,
                         'error_message': f"Model serving endpoint failed after {max_retries} attempts",
-                        'filter_values': []
+                        'filter_values': [],
+                        'user_friendly_message': "Service temporarily unavailable."
                     }
-                
+    
+    def _build_prompt_1_decision_maker(self, current_question: str, previous_question: str, 
+                                       history_context: List) -> str:
+        """
+        PROMPT 1: Decision Maker
+        Job: Classify input type and decide NEW vs FOLLOW-UP (no rewriting yet)
+        """
+        
+        prompt = f"""You are a healthcare finance analytics assistant.
+
+════════════════════════════════════════════════════════════
+NOW ANALYZE THIS USER INPUT:
+════════════════════════════════════════════════════════════
+User Input: "{current_question}"
+Previous Question: "{previous_question if previous_question else 'None'}"
+Previous Questions History: {history_context}
+
+════════════════════════════════════════════════════════════
+SECTION 1: SYSTEM KNOWLEDGE
+════════════════════════════════════════════════════════════
+
+This system analyzes healthcare finance data including:
+- **Claims & Ledgers**: claim volumes, costs, utilization, reconciliation, billing, invoices
+- **Pharmacy & Drugs**: drug analysis (revenue/volume/performance), therapy classes, medications, pharmaceutical trends, services
+- **Financial Metrics**: revenue, expenses, payments, budgets, forecasts, invoices, operating expenses
+
+**Important**: Drug, therapy class, medication, and pharmaceutical questions are CORE healthcare finance topics.
+
+════════════════════════════════════════════════════════════
+SECTION 2: SQL VALIDATION DETECTION
+════════════════════════════════════════════════════════════
+
+**Check if this is a SQL validation request:**
+
+Validation keywords: "validate", "check", "verify", "correct", "fix", "wrong", "incorrect result", "not getting correct", "query is wrong", "SQL is wrong", "result doesn't look right"
+
+**If validation keywords detected:**
+→ Set is_validation = true
+→ This will be formatted as: "[Previous Question] - VALIDATION REQUEST: [current input]"
+
+════════════════════════════════════════════════════════════
+SECTION 3: INPUT CLASSIFICATION
+════════════════════════════════════════════════════════════
+
+Classify user input into ONE category:
+
+**GREETING** - Greetings, capability questions, general chat, dataset availability questions
+Examples: "Hi", "Hello", "What can you do?", "Help me", "What data do you have about claims?"
+
+**DML/DDL** - Data modification requests (NOT supported)
+Examples: "INSERT data", "UPDATE table", "DELETE records", "CREATE table", "DROP column"
+
+**BUSINESS_QUESTION** - Healthcare finance queries
+Must be VALIDATED for healthcare relevance:
+
+✅ **VALID**: Claims, ledgers, payments, members, providers, pharmacy, drugs, medications, therapy classes, pharmaceuticals, revenue, expenses, invoices, medical costs, utilization, financial metrics, actuals, forecasts
+
+❌ **INVALID**: Weather, sports, retail, manufacturing, general technology, entertainment, non-healthcare topics
+
+════════════════════════════════════════════════════════════
+SECTION 4: COMPONENT DETECTION & DECISION
+════════════════════════════════════════════════════════════
+
+**Your job: Detect components and decide NEW vs FOLLOW-UP (don't rewrite yet)**
+
+### Step 1: Analyze CURRENT question components
+
+Identify what CURRENT question explicitly mentions (these are EXAMPLES - recognize similar concepts):
+
+- **Metric** (any measurable value): 
+  Examples: revenue, expense, claims, billed amount, cost, volume, payments, utilization, actuals, forecast, margin, profit, loss, rate, count, total, spend, amount, fee, percentage
+  → Recognize ANY financial/operational metric, not just these examples
+
+- **Scope** (who/what/where the analysis is about):
+  Examples: carrier names (carrier XYZ), geography (California, North region), Line of Business (Commercial, Medicare, Medicaid), departments, provider types, service categories, plan types, segments
+  → Recognize ANY grouping/filtering dimension, not just these examples
+
+- **Time Period**: 
+  - Full time: "August 2025", "Q3 2025", "July 2024" (month/quarter/year together)
+  - Partial time: "August" (month only), "Q3" (quarter only) ← Mark time_is_partial = true
+  → Recognize ANY time reference (dates, periods, ranges)
+
+- **Filters** (specific items being analyzed):
+  Examples: drug names (covid vaccine, Humira), therapy classes (diabetes, asthma), categories, procedure codes, diagnosis codes, NDC codes, member IDs, claim types
+  → Recognize ANY specific filter value, not just these examples
+
+- **Signals** (words indicating user's intent):
+  - Pronouns: "that", "it", "those", "this", "these"
+  - Continuation verbs: "compare", "show me", "what about", "for", "breakdown", "drill"
+  - Aggregate words: "overall", "as a whole", "all carriers", "total", "across the board"
+  - Validation words: "validate", "wrong", "incorrect", "fix", "check"
+  → Recognize similar words with same intent
+
+### Step 2: Analyze PREVIOUS question components (if exists)
+
+Identify same components from previous question.
+
+### Step 3: Make Decision (NEW vs FOLLOW-UP)
+
+**Decision Logic:**
+
+IF validation keywords detected → context_decision = "VALIDATION"
+
+ELSE IF no previous question → context_decision = "NEW"
+
+ELSE IF current has pronouns ("that", "it", "this", "those") → context_decision = "FOLLOW-UP"
+
+ELSE IF current has ALL THREE components (metric + scope + time with year):
+→ context_decision = "NEW" (complete question, starting fresh)
+
+ELSE IF current has continuation verbs ("compare", "for", "show me") AND missing components:
+→ context_decision = "FOLLOW-UP" (continuing previous analysis)
+
+ELSE IF current missing one or more components (metric, scope, or time):
+→ context_decision = "FOLLOW-UP" (needs to inherit missing parts)
+
+ELSE IF current semantically related to previous:
+→ context_decision = "FOLLOW-UP"
+
+ELSE → context_decision = "NEW"
+
+════════════════════════════════════════════════════════════
+DECISION EXAMPLES
+════════════════════════════════════════════════════════════
+
+Example 1: Complete New Question
+Previous: "What is revenue for carrier MDOVA for Q3"
+Current: "Show me claims for carrier BCBS for July 2025"
+→ Has metric (claims) + scope (BCBS) + time (July 2025) = COMPLETE
+→ Decision: NEW
+
+Example 2: Follow-up with Pronoun
+Previous: "What is revenue for carrier MDOVA for Q3"
+Current: "why is that high"
+→ Has pronoun "that"
+→ Decision: FOLLOW-UP
+
+Example 3: Missing Components
+Previous: "What is revenue for carrier MDOVA for Q3"
+Current: "for covid vaccines"
+→ Missing metric, missing scope, missing time
+→ Decision: FOLLOW-UP
+
+Example 4: Continuation Verb with Missing Scope
+Previous: "What is actuals vs forecast for PBM for August"
+Current: "compare actuals vs forecast for September"
+→ Has continuation verb "compare"
+→ Has metric (actuals vs forecast) + time (September)
+→ Missing scope (PBM not mentioned)
+→ Missing year (September without year)
+→ Decision: FOLLOW-UP
+
+Example 5: Validation Request
+Previous: "What is revenue for Specialty for July 2025"
+Current: "validate the last query, not getting correct result"
+→ Has validation keywords
+→ Decision: VALIDATION
+
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
+════════════════════════════════════════════════════════════
+
+Return ONLY valid JSON. Do NOT include ```json``` or any markdown.
+
+{{
+    "input_type": "greeting|dml_ddl|business_question",
+    "is_valid_business_question": true|false,
+    "response_message": "message if greeting/dml, empty string otherwise",
+    "is_validation": true|false,
+    "context_decision": "NEW|FOLLOW_UP|VALIDATION",
+    "components_current": {{
+        "metric": "value or null",
+        "scope": "value or null",
+        "time": "value or null",
+        "time_is_partial": true|false,
+        "filters": ["list", "of", "filters"],
+        "signals": {{
+            "has_pronouns": true|false,
+            "has_continuation_verbs": true|false,
+            "has_aggregate_words": true|false,
+            "has_validation_words": true|false
+        }}
+    }},
+    "components_previous": {{
+        "metric": "value or null",
+        "scope": "value or null",
+        "time": "value or null",
+        "filters": ["list"]
+    }},
+    "reasoning": "brief explanation of decision"
+}}
+"""
+        return prompt
+    
+    def _build_prompt_2_rewriter(self, current_question: str, previous_question: str, 
+                                 decision_json: dict) -> str:
+        """
+        PROMPT 2: Rewriter
+        Job: Execute rewriting based on Prompt 1's decision + Extract filters
+        """
+        
+        prompt = f"""You are a question rewriter and filter extractor.
+
+════════════════════════════════════════════════════════════
+INPUT INFORMATION
+════════════════════════════════════════════════════════════
+Current Question: "{current_question}"
+Previous Question: "{previous_question if previous_question else 'None'}"
+
+Decision from PROMPT 1:
+{json.dumps(decision_json, indent=2)}
+
+Current Date: October 27, 2025
+Current Year: 2025
+
+════════════════════════════════════════════════════════════
+SECTION 4: EXECUTE CONTEXT INHERITANCE
+════════════════════════════════════════════════════════════
+
+Based on context_decision: {decision_json.get('context_decision', 'NEW')}
+
+**IF context_decision = "NEW":**
+→ Use current question as-is (properly formatted)
+→ No inheritance from previous
+→ Format professionally: "What is the [metric] for [scope] for [time]"
+
+**IF context_decision = "VALIDATION":**
+→ Format: "[Previous Question] - VALIDATION REQUEST: [current question]"
+→ Keep everything from previous question
+
+**IF context_decision = "FOLLOW_UP":**
+→ Apply inheritance rules below ↓
+
+### FOLLOW-UP INHERITANCE RULES (Apply in order):
+
+**Rule 1: Current Always Wins**
+If current mentions a component → use current's value (don't override with previous)
+Example: Current says "carrier ABC", don't use previous "carrier XYZ"
+
+**Rule 2: Fill Only What's Missing**
+Look at what current lacks and fill from previous:
+- Missing metric → fill from previous
+- Missing scope → fill from previous
+- Missing time → fill from previous
+- Missing filters → inherit from previous (unless aggregate signal detected)
+
+**Rule 3: Component Replacement**
+If current mentions same TYPE but different value → REPLACE
+- Previous: "carrier XYZ", Current: "carrier ABC" → Use ABC
+- Previous: "Q1", Current: "Q2" → Use Q2
+- Previous: "diabetes drugs", Current: "asthma drugs" → Use asthma
+
+**Rule 4: Year Defaulting (CRITICAL for fixing year problem)**
+If time_is_partial = true in current components:
+→ Add current year (2025) automatically
+Examples:
+- "August" → "August 2025"
+- "Q3" → "Q3 2025"
+- "September" → "September 2025"
+→ Track this in auto_completed output
+
+**Rule 5: Pronouns Fill Everything**
+If has_pronouns = true:
+→ Inherit ALL components (metric + scope + time + filters)
+Example: "why is that high" → inherit everything
+
+**Rule 6: Continuation Verbs Inherit Context**
+If has_continuation_verbs = true ("compare", "for", "show me"):
+→ This is continuing previous analysis
+→ Inherit missing components (especially scope and time)
+Example: "compare actuals vs forecast for September" 
+→ If previous had "PBM" scope, inherit it
+→ If "September" has no year, add 2025
+
+**Rule 7: Breakdown Pattern - Metric vs Filter**
+If pattern is "[X] breakdown" or "breakdown of [X]":
+
+Check if X is a METRIC:
+- Metrics: revenue, expense, claims, billed amount, cost, volume, payments, utilization, actuals, forecast
+- If X is metric → use X as metric, fill scope/time from previous
+- If X is NOT metric (drug name, category) → keep previous metric, add X as filter
+
+**Rule 8: Aggregate Signals Clear Filters**
+If has_aggregate_words = true ("overall", "all carriers", "as a whole", "total"):
+→ Fill metric + time from previous
+→ DROP all scope filters and specific item filters
+→ User wants big picture without filters
+
+### Edge Cases:
+
+**Same Metric, Different Time:**
+If current has same metric as previous but different time period:
+→ Replace time
+→ Inherit scope if missing
+Example: 
+- Previous: "actuals vs forecast for PBM for August"
+- Current: "compare actuals vs forecast for September"
+→ Result: "Compare actuals vs forecast for PBM for September 2025"
+→ Inherited: scope (PBM)
+→ Auto-completed: year (2025)
+
+**Partial Overlap:**
+If current has some components but not all:
+→ Fill what's missing from previous
+Example:
+- Previous: "revenue for carrier MDOVA for Q3"
+- Current: "for covid vaccines"
+→ Result: "What is revenue for covid vaccines for carrier MDOVA for Q3"
+→ Inherited: metric (revenue), scope (MDOVA), time (Q3)
+
+### Construct Final Rewritten Question:
+
+Combine current + inherited components → complete professional question
+Pattern: "What is the [metric] for [filters] for [scope] for [timeframe]"
+OR for why questions: "Why is the [metric] for [filters] for [scope] for [timeframe] [condition]"
+
+Transform informal to formal:
+- "I need expense" → "What is the expense..."
+- "show me revenue" → "What is the revenue..."
+
+Proper grammar, capitalize first letter, trim spaces.
+
+════════════════════════════════════════════════════════════
+SECTION 6: FILTER VALUES EXTRACTION
+════════════════════════════════════════════════════════════
+
+**CRITICAL: Extract filter values from the REWRITTEN question (after inheritance)**
+
+**GENERIC EXTRACTION LOGIC:**
+
+For every word/phrase in the rewritten question, apply these checks:
+
+**Step 1: Does it have an attribute label?**
+Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, provider ID, client, account
+→ If YES: EXCLUDE (LLM will handle in SQL)
+
+**Step 2: Is it a pure number (digits only)?**
+→ If YES: EXCLUDE
+
+**Step 3: Is it in the exclusion list?**
+- **Common terms**: PBM, HDP, Home Delivery, SP, Specialty, Mail, Claim Fee, Claim Cost, Activity Fee
+- **Time/Date**: months (January-December), quarters (Q1-Q4), years (2024, 2025), dates
+- **Generic words**: revenue, cost, expense, data, analysis, total, overall, what, is, for, the
+- **Metrics**: revenue, billed amount, claims count, expense, volume, actuals, forecast
+→ If in ANY category: EXCLUDE
+
+**Step 4: Does it contain letters?**
+→ If YES and passed above checks: EXTRACT ✅
+
+**Multi-word handling:**
+Keep phrases together: "covid vaccine" → ["covid vaccine"]
+Multiple terms: "diabetes, asthma" → ["diabetes", "asthma"]
+
+**EXAMPLES:**
+
+Example 1:
+Rewritten: "What is the revenue for MPDOVA for September 2025"
+→ "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion ✓, has letters ✓ → EXTRACT ✅
+→ filter_values: ["MPDOVA"]
+
+Example 2:
+Rewritten: "What is actuals vs forecast for PBM for September 2025"
+→ "PBM": in exclusion list (common terms) → EXCLUDE
+→ filter_values: []
+
+Example 3:
+Rewritten: "What is revenue for covid vaccines for carrier MDOVA for Q3"
+→ "covid vaccines": no attribute ✓, not pure number ✓, not in exclusion ✓, has letters ✓ → EXTRACT ✅
+→ "MDOVA": has attribute "carrier" → EXCLUDE
+→ filter_values: ["covid vaccines"]
+
+Example 4:
+Rewritten: "What is claim number 12345 for cardiology for HDP for July 2025"
+→ "12345": has attribute "claim number" → EXCLUDE
+→ "cardiology": passes all checks → EXTRACT ✅
+→ "HDP": in exclusion list (common terms) → EXCLUDE
+→ filter_values: ["cardiology"]
+
+════════════════════════════════════════════════════════════
+REWRITING EXAMPLES
+════════════════════════════════════════════════════════════
+
+Example 1: Year Defaulting
+Decision: FOLLOW_UP, time_is_partial = true
+Current: "actuals vs forecast for PBM for August"
+Previous: None
+→ Rewritten: "What is actuals vs forecast for PBM for August 2025"
+→ User message: "Added 2025 as the year."
+
+Example 2: Missing Scope with Continuation Verb
+Decision: FOLLOW_UP
+Current: "compare actuals vs forecast for September"
+Previous: "What is actuals vs forecast for PBM for August 2025"
+Components: metric same, scope missing, time different (partial)
+→ Rewritten: "Compare actuals vs forecast for PBM for September 2025"
+→ User message: "I'm using PBM from your last question. Added 2025 as the year."
+
+Example 3: Drill-down with Filter
+Decision: FOLLOW_UP
+Current: "for covid vaccines"
+Previous: "What is revenue for carrier MDOVA for Q3"
+→ Rewritten: "What is revenue for covid vaccines for carrier MDOVA for Q3"
+→ User message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
+→ filter_values: ["covid vaccines"]
+
+Example 4: Pronoun Reference
+Decision: FOLLOW_UP, has_pronouns = true
+Current: "why is that high"
+Previous: "What is revenue for carrier MDOVA for Q3"
+→ Rewritten: "Why is the revenue for carrier MDOVA for Q3 high"
+→ User message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
+→ question_type: "why"
+
+Example 5: New Complete Question
+Decision: NEW
+Current: "Show me claims for carrier BCBS for July 2025"
+→ Rewritten: "What are the claims for carrier BCBS for July 2025"
+→ User message: ""
+→ filter_values: []
+
+Example 6: Validation Request
+Decision: VALIDATION
+Current: "validate the query, results look wrong"
+Previous: "What is revenue for Specialty for July 2025"
+→ Rewritten: "What is revenue for Specialty for July 2025 - VALIDATION REQUEST: validate the query, results look wrong"
+→ User message: "Validating previous query."
+
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+════════════════════════════════════════════════════════════
+
+Return valid JSON without markdown formatting.
+
+{{
+    "rewritten_question": "complete rewritten question with full context",
+    "question_type": "what|why",
+    "filter_values": ["array", "of", "extracted", "filter", "values"],
+    "user_message": "simple statement about what was inherited or completed - empty string if nothing to say"
+}}
+"""
+        return prompt

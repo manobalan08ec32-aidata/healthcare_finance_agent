@@ -286,27 +286,32 @@ Identify same components from previous question.
 
 ### Step 3: Make Decision (NEW vs FOLLOW-UP)
 
-**Decision Logic:**
+**Decision Logic (apply in order, stop at first match):**
 
-IF validation keywords detected → context_decision = "VALIDATION"
+IF validation keywords detected ("validate", "wrong", "fix") → context_decision = "VALIDATION"
 
 ELSE IF no previous question → context_decision = "NEW"
 
 ELSE IF current has pronouns ("that", "it", "this", "those") → context_decision = "FOLLOW-UP"
 
 ELSE IF current has ALL THREE components (metric + scope + time with year):
-→ context_decision = "NEW" (complete question, starting fresh)
+→ Check the nature of the question:
+   • If scope is "by [dimension]" or "breakdown" or "aggregate" → Could be FOLLOW-UP if it's adding grouping to previous filter
+   • If all components are explicitly NEW values (different carrier, different timeframe, etc.) → NEW
+→ Default for complete questions: NEW
 
-ELSE IF current has continuation verbs ("compare", "for", "show me") AND missing components:
+ELSE IF current has continuation verbs ("compare", "for", "show me", "breakdown", "by") AND missing components:
 → context_decision = "FOLLOW-UP" (continuing previous analysis)
 
 ELSE IF current missing one or more components (metric, scope, or time):
 → context_decision = "FOLLOW-UP" (needs to inherit missing parts)
 
-ELSE IF current semantically related to previous:
-→ context_decision = "FOLLOW-UP"
-
 ELSE → context_decision = "NEW"
+
+**Important Notes:**
+- "by [dimension]" (e.g., "by line of business", "by carrier", "by therapy class") usually means adding a grouping dimension while keeping previous filters
+- "breakdown by X" typically means FOLLOW-UP, not starting fresh
+- Pronouns ("that", "it") are the strongest FOLLOW-UP signal
 
 ════════════════════════════════════════════════════════════
 DECISION EXAMPLES
@@ -316,21 +321,29 @@ Example 1: Complete New Question
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "Show me claims for carrier BCBS for July 2025"
 → Has metric (claims) + scope (BCBS) + time (July 2025) = COMPLETE
+→ All components are explicitly different from previous
 → Decision: NEW
 
-Example 2: Follow-up with Pronoun
+Example 2: Breakdown/Grouping (Should Keep Previous Filter)
+Previous: "What is unadjusted revenue per script for PBM for August 2025"
+Current: "Show me script volume trends by line of business for July vs August 2025"
+→ Has metric (script volume trends) + scope (by line of business) + time (July vs August 2025) = COMPLETE
+→ "by line of business" means GROUP BY LOB dimension, should keep previous PBM filter
+→ Decision: FOLLOW-UP (to inherit PBM as filter while adding LOB grouping)
+
+Example 3: Follow-up with Pronoun
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "why is that high"
 → Has pronoun "that"
 → Decision: FOLLOW-UP
 
-Example 3: Missing Components
+Example 4: Missing Components
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "for covid vaccines"
 → Missing metric, missing scope, missing time
 → Decision: FOLLOW-UP
 
-Example 4: Continuation Verb with Missing Scope
+Example 5: Continuation Verb with Missing Scope
 Previous: "What is actuals vs forecast for PBM for August"
 Current: "compare actuals vs forecast for September"
 → Has continuation verb "compare"
@@ -339,7 +352,7 @@ Current: "compare actuals vs forecast for September"
 → Missing year (September without year)
 → Decision: FOLLOW-UP
 
-Example 5: Validation Request
+Example 6: Validation Request
 Previous: "What is revenue for Specialty for July 2025"
 Current: "validate the last query, not getting correct result"
 → Has validation keywords
@@ -478,6 +491,29 @@ If has_aggregate_words = true ("overall", "all carriers", "as a whole", "total")
 → DROP all scope filters and specific item filters
 → User wants big picture without filters
 
+**Rule 9: "by [dimension]" Grouping Keeps Previous Filters (CRITICAL)**
+If current question has "by [dimension]" or "breakdown by [dimension]":
+→ This means GROUP BY that dimension while KEEPING previous filters
+→ Inherit previous scope/filters (like PBM, Specialty, etc.)
+→ Current question adds grouping dimension on top
+
+Examples:
+- Previous: "revenue for PBM for Q3"
+- Current: "script volume by line of business for July"  
+- Result: "script volume for PBM by line of business for July" ← PBM inherited!
+
+- Previous: "claims for carrier MDOVA for August"
+- Current: "show me breakdown by therapy class"
+- Result: "claims for carrier MDOVA by therapy class for August" ← MDOVA inherited!
+
+Common grouping phrases:
+- "by line of business" / "by LOB" → group by LOB
+- "by carrier" → group by carrier
+- "by therapy class" → group by therapy class
+- "breakdown by [X]" → group by X
+
+→ Track in user_message: "I'm using [filter] from your last question."
+
 ### Edge Cases:
 
 **Same Metric, Different Time:**
@@ -530,10 +566,13 @@ Attribute labels: carrier, invoice #, invoice number, claim #, claim number, mem
 → If YES: EXCLUDE
 
 **Step 3: Is it in the exclusion list?**
-- **Common terms**: PBM, HDP, Home Delivery, SP, Specialty, Mail, Claim Fee, Claim Cost, Activity Fee
+- **Common terms**: PBM, HDP, Home Delivery, SP, Specialty, Mail, Retail, Claim Fee, Claim Cost, Activity Fee
+- **Attribute/Dimension names**: therapy class, line of business, LOB, carrier, geography, region, state, channel, plan type, member type, provider type, facility type, drug class, drug category
+- **Metric modifiers**: unadjusted, adjusted, normalized, raw, calculated, derived, per script, per claim, per member, per capita, average, total, net, gross
 - **Time/Date**: months (January-December), quarters (Q1-Q4), years (2024, 2025), dates
-- **Generic words**: revenue, cost, expense, data, analysis, total, overall, what, is, for, the
-- **Metrics**: revenue, billed amount, claims count, expense, volume, actuals, forecast
+- **Generic words**: revenue, cost, expense, data, analysis, total, overall, what, is, for, the, by, breakdown, trend, trends, volume, count, script, scripts, claim, claims
+- **Metrics**: revenue, billed amount, claims count, expense, volume, actuals, forecast, script count, claim count, amount
+- **Grouping keywords**: by, breakdown, group, grouped, aggregate, aggregated, across, each, per
 → If in ANY category: EXCLUDE
 
 **Step 4: Does it contain letters?**
@@ -568,6 +607,33 @@ Rewritten: "What is claim number 12345 for cardiology for HDP for July {current_
 → "HDP": in exclusion list (common terms) → EXCLUDE
 → filter_values: ["cardiology"]
 
+Example 5:
+Rewritten: "What is unadjusted script count by therapy class for diabetes for PBM for July {current_year}"
+→ "unadjusted": in exclusion list (metric modifiers) → EXCLUDE
+→ "script": in exclusion list (generic words) → EXCLUDE
+→ "count": in exclusion list (generic words) → EXCLUDE
+→ "by": in exclusion list (grouping keywords) → EXCLUDE
+→ "therapy class": in exclusion list (attribute names) → EXCLUDE
+→ "diabetes": passes all checks → EXTRACT ✅
+→ "PBM": in exclusion list (common terms) → EXCLUDE
+→ filter_values: ["diabetes"]
+
+Example 6:
+Rewritten: "What is revenue for PBM by line of business for July {current_year}"
+→ "PBM": in exclusion list (common terms) → EXCLUDE
+→ "by": in exclusion list (grouping keywords) → EXCLUDE
+→ "line of business": in exclusion list (attribute names) → EXCLUDE
+→ filter_values: []
+
+Example 7:
+Rewritten: "What is script volume trends for covid vaccines for Specialty for August {current_year}"
+→ "script": in exclusion list (generic words) → EXCLUDE
+→ "volume": in exclusion list (generic words) → EXCLUDE
+→ "trends": in exclusion list (generic words) → EXCLUDE
+→ "covid vaccines": passes all checks → EXTRACT ✅
+→ "Specialty": in exclusion list (common terms) → EXCLUDE
+→ filter_values: ["covid vaccines"]
+
 ════════════════════════════════════════════════════════════
 REWRITING EXAMPLES
 ════════════════════════════════════════════════════════════
@@ -587,7 +653,16 @@ Components: metric same, scope missing, time different (partial)
 → Rewritten: "Compare actuals vs forecast for PBM for September {current_year}"
 → User message: "I'm using PBM from your last question. Added {current_year} as the year."
 
-Example 3: Drill-down with Filter
+Example 3: By Dimension Grouping (Keeps Previous Filter)
+Decision: FOLLOW_UP
+Current: "Show me script volume trends by line of business for July vs August"
+Previous: "What is unadjusted revenue per script for PBM for August {current_year}"
+→ Rule 9 applies: "by line of business" means GROUP BY LOB while keeping PBM filter
+→ Rewritten: "What are the script volume trends for PBM by line of business for July vs August {current_year}"
+→ User message: "I'm using PBM from your last question. Added {current_year} as the year."
+→ filter_values: []
+
+Example 4: Drill-down with Filter
 Decision: FOLLOW_UP
 Current: "for covid vaccines"
 Previous: "What is revenue for carrier MDOVA for Q3"
@@ -595,7 +670,7 @@ Previous: "What is revenue for carrier MDOVA for Q3"
 → User message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
 → filter_values: ["covid vaccines"]
 
-Example 4: Pronoun Reference
+Example 5: Pronoun Reference
 Decision: FOLLOW_UP, has_pronouns = true
 Current: "why is that high"
 Previous: "What is revenue for carrier MDOVA for Q3"
@@ -603,14 +678,14 @@ Previous: "What is revenue for carrier MDOVA for Q3"
 → User message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
 → question_type: "why"
 
-Example 5: New Complete Question
+Example 6: New Complete Question
 Decision: NEW
 Current: "Show me claims for carrier BCBS for July {current_year}"
 → Rewritten: "What are the claims for carrier BCBS for July {current_year}"
 → User message: ""
 → filter_values: []
 
-Example 6: Validation Request
+Example 7: Validation Request
 Decision: VALIDATION
 Current: "validate the query, results look wrong"
 Previous: "What is revenue for Specialty for July {current_year}"

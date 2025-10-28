@@ -30,8 +30,9 @@ class LLMNavigationController:
                                    total_retry_count: int, state: AgentState) -> Dict[str, any]:
         """Two-step LLM processing: PROMPT 1 (Decision) → PROMPT 2 (Rewriting)"""
         
+        print("coming here ")
         questions_history = state.get('user_question_history', [])
-        previous_question = questions_history[-1]['rewritten_question'] if questions_history else ""
+        previous_question = state.get('rewritten_question', '') 
         history_context = questions_history[-2:] if questions_history else []
         
         max_retries = 3
@@ -49,7 +50,6 @@ class LLMNavigationController:
                     history_context
                 )
                 
-                print("Calling PROMPT 1 (Decision Maker)...")
                 decision_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": prompt_1}
                 ])
@@ -101,7 +101,7 @@ class LLMNavigationController:
                         decision_json
                     )
                     
-                    print("Calling PROMPT 2 (Rewriter)...")
+                    
                     rewrite_response = await self.db_client.call_claude_api_endpoint_async([
                         {"role": "user", "content": prompt_2}
                     ])
@@ -286,32 +286,27 @@ Identify same components from previous question.
 
 ### Step 3: Make Decision (NEW vs FOLLOW-UP)
 
-**Decision Logic (apply in order, stop at first match):**
+**Decision Logic:**
 
-IF validation keywords detected ("validate", "wrong", "fix") → context_decision = "VALIDATION"
+IF validation keywords detected → context_decision = "VALIDATION"
 
 ELSE IF no previous question → context_decision = "NEW"
 
 ELSE IF current has pronouns ("that", "it", "this", "those") → context_decision = "FOLLOW-UP"
 
 ELSE IF current has ALL THREE components (metric + scope + time with year):
-→ Check the nature of the question:
-   • If scope is "by [dimension]" or "breakdown" or "aggregate" → Could be FOLLOW-UP if it's adding grouping to previous filter
-   • If all components are explicitly NEW values (different carrier, different timeframe, etc.) → NEW
-→ Default for complete questions: NEW
+→ context_decision = "NEW" (complete question, starting fresh)
 
-ELSE IF current has continuation verbs ("compare", "for", "show me", "breakdown", "by") AND missing components:
+ELSE IF current has continuation verbs ("compare", "for", "show me") AND missing components:
 → context_decision = "FOLLOW-UP" (continuing previous analysis)
 
 ELSE IF current missing one or more components (metric, scope, or time):
 → context_decision = "FOLLOW-UP" (needs to inherit missing parts)
 
-ELSE → context_decision = "NEW"
+ELSE IF current semantically related to previous:
+→ context_decision = "FOLLOW-UP"
 
-**Important Notes:**
-- "by [dimension]" (e.g., "by line of business", "by carrier", "by therapy class") usually means adding a grouping dimension while keeping previous filters
-- "breakdown by X" typically means FOLLOW-UP, not starting fresh
-- Pronouns ("that", "it") are the strongest FOLLOW-UP signal
+ELSE → context_decision = "NEW"
 
 ════════════════════════════════════════════════════════════
 DECISION EXAMPLES
@@ -321,29 +316,21 @@ Example 1: Complete New Question
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "Show me claims for carrier BCBS for July 2025"
 → Has metric (claims) + scope (BCBS) + time (July 2025) = COMPLETE
-→ All components are explicitly different from previous
 → Decision: NEW
 
-Example 2: Breakdown/Grouping (Should Keep Previous Filter)
-Previous: "What is unadjusted revenue per script for PBM for August 2025"
-Current: "Show me script volume trends by line of business for July vs August 2025"
-→ Has metric (script volume trends) + scope (by line of business) + time (July vs August 2025) = COMPLETE
-→ "by line of business" means GROUP BY LOB dimension, should keep previous PBM filter
-→ Decision: FOLLOW-UP (to inherit PBM as filter while adding LOB grouping)
-
-Example 3: Follow-up with Pronoun
+Example 2: Follow-up with Pronoun
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "why is that high"
 → Has pronoun "that"
 → Decision: FOLLOW-UP
 
-Example 4: Missing Components
+Example 3: Missing Components
 Previous: "What is revenue for carrier MDOVA for Q3"
 Current: "for covid vaccines"
 → Missing metric, missing scope, missing time
 → Decision: FOLLOW-UP
 
-Example 5: Continuation Verb with Missing Scope
+Example 4: Continuation Verb with Missing Scope
 Previous: "What is actuals vs forecast for PBM for August"
 Current: "compare actuals vs forecast for September"
 → Has continuation verb "compare"
@@ -352,7 +339,7 @@ Current: "compare actuals vs forecast for September"
 → Missing year (September without year)
 → Decision: FOLLOW-UP
 
-Example 6: Validation Request
+Example 5: Validation Request
 Previous: "What is revenue for Specialty for July 2025"
 Current: "validate the last query, not getting correct result"
 → Has validation keywords
@@ -362,7 +349,8 @@ Current: "validate the last query, not getting correct result"
 OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
 ════════════════════════════════════════════════════════════
 
-Return ONLY valid JSON. Do NOT include ```json``` or any markdown.
+- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. 
+- The response MUST not start with ```json and end with ```.
 
 {{
     "input_type": "greeting|dml_ddl|business_question",
@@ -647,10 +635,10 @@ Previous: None
 
 Example 2: Missing Scope with Continuation Verb
 Decision: FOLLOW_UP
-Current: "compare actuals vs forecast for September"
-Previous: "What is actuals vs forecast for PBM for August {current_year}"
+Current: "compare actuals vs forecast  for September"
+Previous: "What is actuals vs forecast 8+4 for PBM for August {current_year}"
 Components: metric same, scope missing, time different (partial)
-→ Rewritten: "Compare actuals vs forecast for PBM for September {current_year}"
+→ Rewritten: "Compare actuals vs forecast 8+4 for PBM for September {current_year}"
 → User message: "I'm using PBM from your last question. Added {current_year} as the year."
 
 Example 3: By Dimension Grouping (Keeps Previous Filter)
@@ -696,7 +684,8 @@ Previous: "What is revenue for Specialty for July {current_year}"
 OUTPUT FORMAT
 ════════════════════════════════════════════════════════════
 
-Return valid JSON without markdown formatting.
+- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. 
+- The response MUST not start with ```json and end with ```.
 
 {{
     "rewritten_question": "complete rewritten question with full context",

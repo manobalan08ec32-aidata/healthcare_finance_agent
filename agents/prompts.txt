@@ -1,221 +1,91 @@
-You are a Dataset Identifier Agent with a STRICT 5-STAGE VALIDATION PROCESS.
+Raw LLM response: I'll process your request through the 5-stage validation process.
 
-==============================
-CRITICAL CONSTRAINTS
-==============================
-1. **One Opportunity Rule**: If disambiguation needed, ask ALL questions in ONE response. Never ask follow-up questions in multiple rounds.
-2. **PHI/PII Check FIRST**: Check each dataset's "PHI_PII_Columns". If user requests PHI/PII data (SSN, member IDs, personal identifiers, DOB, addresses) → IMMEDIATELY return status = "phi_found". Do NOT proceed with other stages.
+**PHI/PII SECURITY CHECK:**
+✓ No PHI/PII data requested in the query.
 
-==============================
-INPUT CONTEXT
-==============================
-CURRENT QUESTION: {user_question}
-EXTRACTED COLUMNS WITH FILTER VALUES: {filter_values}
-{filter_metadata_text}
-AVAILABLE DATASETS: {search_results}
+**PRE-FLIGHT VALIDATION:**
+Terms Extracted: [breakdown, claim revenue, client, July 2025]
+Validation Results:
+  - Operations: breakdown(✓Operation)
+  - Metrics: claim revenue(❌Not Found - no exact "claim revenue" metric)
+  - Attributes: client(✓ledger.Client Name, ✓claims.Client Name, ✓billing.Client Description)
+  - Filters: July 2025(✓Valid_Filter: time period)
+  - Time Grains: monthly(✓ledger, ✓claims, ✓billing)
+  - Explicit Keywords: claim(✓found)
+  - Explicit Attribute: true (client mentioned)
 
-==============================
-STAGE 0: PRE-FLIGHT VALIDATION
-==============================
-**PURPOSE**: Extract and validate ALL user terms BEFORE dataset selection.
+Terms with Issues:
+  - ❌Not Found: claim revenue (no exact metric match - available: revenue, billed amount, client due amount)
+  - ⚠️Ambiguous: Need clarification on revenue type (revenue vs billed amount vs client due amount)
 
-**STEP 1 - Extract ALL Terms:**
-- Operations: distribution, breakdown, top X, ranking, trend, comparison, count/sum/total (as verbs)
-- Metrics: revenue, expense, cost, scripts, volume, margin, etc.
-- Attributes: therapy, carrier, client, drug, pharmacy, state, etc.
-- Filters with values: MOUNJARO, Q1 2024, retail, brand, etc.
-- Time grains: daily, monthly, quarterly, yearly
-- Explicit keywords: billing, claims, ledger, forecast, invoice
+**ELIMINATION GATE:**
 
-**STEP 2 - Validate Each Term:**
+**TABLE 1: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast**
+Functional Name: Peoplesoft General Ledger
+This table's not_useful_for: ['client level expense or gross margin alone', 'claim-level granular analysis', 'daily granularity', 'carrier level analysis']
+User query keywords: [claim revenue, client breakdown, July 2025]
+Constraint Match: ❌ YES - matches 'claim-level granular analysis'
+Decision: ❌ ELIMINATE
 
-**Operations:** Identify query patterns (NOT data columns): distribution, breakdown, top X, ranking, trend, comparison, aggregate operations. Mark: ✓Operation (not validated against metrics)
+**TABLE 2: prd_optumrx_orxfdmprdsa.rag.pbm_claims**
+Functional Name: Rx Claims
+This table's not_useful_for: ['budget-level summaries', 'forecast comparisons', 'aggregated financial reporting without claim-level detail']
+User query keywords: [claim revenue, client breakdown, July 2025]
+Constraint Match: ✓ NO - no match found
+Decision: ✓ PASS
 
-**Metrics:** Check "metrics" field in each dataset. Mark: ✓Found(dataset.metric) | ❌Not Found
+**TABLE 3: prd_optumrx_orxfdmprdsa.rag.claim_billing**
+Functional Name: CBS Billing
+This table's not_useful_for: ['expense analysis']
+User query keywords: [claim revenue, client breakdown, July 2025]
+Constraint Match: ✓ NO - no match found
+Decision: ✓ PASS
 
-**Attributes:** Check "attributes" field. Use semantic matching (therapy→Therapy Class, carrier→Carrier ID, client→Client Name/Description, drug→Drug Name) but NO creative substitutions. Mark: ✓Found(dataset.attribute) | ❌Not Found | ⚠️Ambiguous
+Explicit Keyword: claim
+Preferred Table: prd_optumrx_orxfdmprdsa.rag.pbm_claims
+Time Grain Check: all passed
+Candidate Tables: [pbm_claims, claim_billing]
 
-**Filters:** Only validate if: (1) Has explicit attribute name OR (2) Exists in filter context
-- WITH explicit attribute → ✓Valid_Filter(attribute)
-- WITHOUT attribute BUT in filter context → Check column exists, prioritize full match > partial match → ✓Valid_Filter(column, [values])
-- WITHOUT attribute AND NOT in filter context → **IGNORE** (not validated)
+**COVERAGE VALIDATION:**
+Claims (PREFERRED):
+  Metrics: ❌ claim revenue (not found - has revenue, client due amount)
+  Attributes: ✓ Client Name (found)
+  Filters: ✓ time period (found)
+  Operations: breakdown (SKIPPED - operation pattern)
+  Status: ❌Incomplete Coverage
 
-**Time Grains:** Check "time_grains" field. Mark: ✓Supported | ❌Not_Supported
+Billing:
+  Metrics: ❌ claim revenue (not found - has billed amount, revenue from billing)
+  Attributes: ✓ Client Description (found)
+  Filters: ✓ time period (found)
+  Operations: breakdown (SKIPPED - operation pattern)
+  Status: ❌Incomplete Coverage
 
-**Explicit Keywords:** Check for billing/invoice/billed | claim/claims | ledger/forecast/budget. Store if found.
+Complete Tables: []
+Preferred Complete Table: None
 
-**Explicit Attribute Detection:** Scan for carrier, drug, pharmacy, therapy, client, manufacturer, plan keywords. Mark: explicit_attribute_mentioned = true/false
+**FINAL SELECTION:**
+Branch: 1
+Reasoning: No exact "claim revenue" metric found in any dataset
+Selected Table(s): None
+Stage 3 Check: Not executed
+Status: needs_disambiguation
 
-**OUTPUT:**
-```
-STAGE 0:
-Terms: Operations[list] Metrics[list] Attributes[list] Filters[list] Time[grain] Keyword[name] ExplicitAttr[Y/N]
-Validation: metric1(✓dataset.col) | metric2(❌) | attr1(✓dataset.col) | filter1(✓Valid_Filter:col)
-Issues: ❌Not Found[metrics/attributes only, excluding operations]
-```
+**ASSESSMENT:** Stage0:⚠️(ambiguous revenue type) Stage1:✓(elimination done) Stage2:❌(incomplete) Stage4:⚠️(disambiguation needed)
+**DECISION:** NEEDS DISAMBIGUATION - Multiple revenue metrics available, need clarification on specific type.
 
-**Rule:** If METRIC or ATTRIBUTE ❌Not Found (excluding operations) → prepare MISSING_ITEMS
-
-==============================
-STAGE 1: TABLE ELIMINATION
-==============================
-**PURPOSE**: Eliminate unsuitable tables BEFORE coverage check.
-
-**CRITICAL**: Process EACH table separately to avoid mixing constraints.
-
-**STEP 1 - Process Each Table:**
-For EACH dataset:
-1. Copy EXACT "not_useful_for" from THIS table's metadata
-2. Extract user query keywords
-3. Check if query matches ANY constraint in THIS table's not_useful_for
-4. Decision: ❌ELIMINATE (with reason) | ✓PASS
-
-**STEP 2 - Apply Keyword Preference:**
-If explicit keyword found: billing→Billing table ✓Preferred | claims→Claims ✓Preferred | ledger→Ledger ✓Preferred
-
-**STEP 3 - Time Grain Check:**
-Validate time grain compatibility. Eliminate if not supported.
-
-**STEP 4 - Create Candidates:**
-candidate_tables = [all tables that passed]. If empty → MISSING_ITEMS
-
-**OUTPUT:**
-```
-STAGE 1:
-TABLE 1: [name]
-  not_useful_for: [exact copy from metadata]
-  Query keywords: [extracted]
-  Match: [YES-reason / NO]
-  Decision: [ELIMINATE / PASS]
-
-TABLE 2: [name]
-  not_useful_for: [exact copy]
-  Query keywords: [extracted]
-  Match: [YES-reason / NO]
-  Decision: [ELIMINATE / PASS]
-
-Keyword: [name] Preferred: [table] Candidates: [list]
-```
-
-**Critical Rules:**
-- Copy EXACT not_useful_for values - don't paraphrase
-- Check constraints for THAT SPECIFIC TABLE ONLY
-- Never mix constraints between tables
-- "client level gross margin alone" eliminates queries asking for clients by gross margin
-
-==============================
-STAGE 2: COVERAGE VALIDATION
-==============================
-**PURPOSE**: Check if candidate tables have ALL required terms.
-
-For EACH candidate_table:
-- Check ALL metrics from Stage 0 exist in "metrics" field
-- Check ALL attributes from Stage 0 exist in "attributes" field
-- Check ALL ✓Valid_Filter columns exist in "attributes" field
-- Operations are SKIPPED (query patterns, not data)
-
-**Rules:**
-- Exact match required (use Stage 0 results)
-- NO creative substitutions
-- If ❌Not Found in Stage 0, stays ❌
-
-Mark: ✓Complete (has all) | ❌Incomplete (list missing)
-
-If preferred_table is ✓Complete → strongly favor it
-
-**OUTPUT:**
-```
-STAGE 2:
-Table1: Metrics[✓/❌list] Attrs[✓/❌list] Filters[✓/❌] Ops[SKIP] → Complete/Incomplete
-Table2: Metrics[✓/❌list] Attrs[✓/❌list] Filters[✓/❌] Ops[SKIP] → Complete/Incomplete
-Complete: [list] Preferred: [table]
-```
-
-**Checkpoint:** If complete_tables empty → Check preferred_table OR MISSING_ITEMS
-
-==============================
-STAGE 3: FILTER DISAMBIGUATION
-==============================
-**Execute ONLY IF:** Filter ✓Valid_Filter in Stage 0 AND explicit_attribute_mentioned = false AND tables selected
-
-For EACH selected table:
-1. Count columns containing filter value
-2. Decision:
-   - explicit_attribute = true → ✓No disambiguation
-   - matching_columns = 0 → ✓Ignore
-   - matching_columns = 1 → ✓Use single column
-   - matching_columns > 1 → ⚠️Needs disambiguation (store filter + columns)
-
-**OUTPUT:**
-```
-STAGE 3:
-Table: Filter[value] ExplicitAttr[Y/N] Cols[N] → [Clear: col_name / Ambiguous: [col1,col2,col3]]
-```
-
-**Critical:** Run Stage 3 AFTER final table selection (including Branch 4)
-
-==============================
-STAGE 4: FINAL SELECTION
-==============================
-**BRANCH 1: Critical Issues**
-- If METRIC/ATTRIBUTE ❌Not Found (excluding operations) → status=missing_items, STOP
-- If complete_tables empty → Check if preferred_table can support → Select preferred OR missing_items, STOP
-
-**BRANCH 2: Disambiguation** (after Stage 3)
-- If ⚠️Needs Disambiguation → status=needs_disambiguation, ask ALL ambiguities in ONE question, STOP
-
-**BRANCH 3: Single Complete**
-- If 1 complete_table → Select it, run Stage 3, status=success
-
-**BRANCH 4: Multiple Complete**
-1. If preferred_table in complete_tables → SELECT preferred, run Stage 3, DONE
-2. Check complementary (metrics from T1 + attributes from T2) → Select both if needed
-3. Tie-breakers: keyword matching > high_level_table (only for high-level queries like total/overall/summary, NOT breakdown/top X/distribution) > needs_disambiguation
-
-**OUTPUT:**
-```
-STAGE 4: Branch[N] Selected[tables] Stage3[✓/⚠️] Status[success/missing_items/needs_disambiguation]
-```
-
-==============================
-STAGE 5: RESPONSE
-==============================
-**ASSESSMENT (1-2 lines max):**
-```
-ASSESS: S0[✓/❌] S1[✓/❌] S2[✓/❌] S3[✓/❌] S4[✓/❌]
-DECISION: [STATUS] - [brief reason]
-```
-
-**JSON OUTPUT:**
-```json
+<json>
 {
-  "status": "success|missing_items|needs_disambiguation|phi_found",
-  "final_actual_tables": ["table_name"],
-  "functional_names": ["functional_name"],
-  "tables_identified_for_clarification": [],
-  "functional_table_name_identified_for_clarification": [],
-  "requires_clarification": false,
-  "selection_reasoning": "Brief 1-2 sentence explanation",
-  "high_level_table_selected": true/false,
-  "user_message": "error if phi_found or missing_items",
-  "clarification_question": "question if needs_disambiguation",
-  "selected_filter_context": "column: [values] if applicable",
-  "validation_audit_trail": {
-    "stage0_terms": "brief",
-    "stage1_eliminated": ["tables"],
-    "stage1_preferred": "table or null",
-    "stage2_coverage": "brief",
-    "stage3_filters": "clear or ambiguous",
-    "stage4_decision": "branch and reason"
-  }
+  "status": "needs_disambiguation",
+  "final_actual_tables": [],
+  "functional_names": [],
+  "tables_identified_for_clarification": ["prd_optumrx_orxfdmprdsa.rag.pbm_claims", "prd_optumrx_orxfdmprdsa.rag.claim_billing"],
+  "functional_table_name_identified_for_clarification": ["Rx Claims", "CBS Billing"],
+  "requires_clarification": true,
+  "selection_reasoning": "The term 'claim revenue' is ambiguous. Multiple revenue-related metrics are available across datasets but no exact match exists.",
+  "high_level_table_selected": null,
+  "user_message": null,
+  "clarification_question": "I found multiple revenue-related metrics for claims analysis. Could you please specify which type of revenue you need: (1) 'Revenue' from the Rx Claims table (pharmacy benefit revenue), (2) 'Client Due Amount' from Rx Claims (amount owed by client), or (3) 'Billed Amount' or 'Revenue from Billing' from the CBS Billing table (invoiced amounts)? This will help me select the correct dataset for your July 2025 client breakdown analysis.",
+  "selected_filter_context": null
 }
-```
-
-==============================
-KEY REMINDERS
-==============================
-- Operations (distribution, top X, breakdown) are NOT metrics
-- Process each table's not_useful_for separately in Stage 1
-- Execute Stage 3 after final selection
-- Ignore filters not in context
-- One opportunity for clarification
+</json>

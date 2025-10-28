@@ -3,7 +3,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     session_id = st.session_state.session_id
     user_questions_history = [m['content'] for m in st.session_state.messages if m.get('role') == 'user']
     
-    # Get domain selection from session state (inherited from main page) and normalize to string
+    # Get domain selection from session state
     raw_domain_selection = st.session_state.get('domain_selection', None)
     if isinstance(raw_domain_selection, list):
         print(f"⚠️ domain_selection came as list {raw_domain_selection}; normalizing to first item")
@@ -11,10 +11,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     else:
         domain_selection = raw_domain_selection
     print(f"🔍 Using domain selection (string) in chat workflow: {domain_selection} (type={type(domain_selection).__name__})")
-    print(f"🔍 Session state domain_selection raw: {raw_domain_selection}")
-    print(f"🔍 Current session_id: {session_id}")
     
-    # Check if domain_selection is valid before proceeding
     if not domain_selection or domain_selection.strip() == '':
         st.error("⚠️ Please select a domain from the main page before asking questions.")
         st.info("👉 Go back to the main page and select either 'PBM Network' or 'Optum Pharmacy' domain first.")
@@ -24,9 +21,9 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         'original_question': user_query,
         'current_question': user_query,
         'session_id': session_id,
-        'user_id': get_authenticated_user(),  # Use authenticated user instead of session-based ID
+        'user_id': get_authenticated_user(),
         'user_questions_history': user_questions_history,
-        'domain_selection': domain_selection,  # Pass normalized domain selection to workflow
+        'domain_selection': domain_selection,
         'errors': [],
         'session_context': {
             'app_instance_id': session_id,
@@ -38,32 +35,14 @@ async def run_streaming_workflow_async(workflow, user_query: str):
 
     last_state = None
     followup_placeholder = st.empty()
-    node_placeholders = {}
-    nodes_seen = set()  # Track which nodes we've already shown status for
     
-    # Single status display that shows current progress (stays visible)
+    # Single status display and spinner
     status_display = st.empty()
-    
-    # Spinner placeholder - shows persistent loading indicator
     spinner_placeholder = st.empty()
-
-    async def show_progressive_router_status(status_display):
-        """Show progressive status updates for router_agent node"""
-        try:
-            await asyncio.sleep(4)  # Wait 4 seconds
-            
-            # Update the status display (replaces previous message)
-            status_display.info("⏳ Generating SQL query based on metadata...")
-            print(f"🔄 Router status update: Generating SQL (T+4s)")
-            
-            await asyncio.sleep(2)  # Wait 2 more seconds
-            
-            # Update again
-            status_display.info("⏳ Executing SQL query...")
-            print(f"🔄 Router status update: Executing SQL (T+6s)")
-        except Exception as e:
-            print(f"⚠️ Progressive status update error: {e}")
     
+    # Track which node is currently being shown in status
+    current_status_node = None
+
     def show_spinner():
         """Show a persistent spinner indicator"""
         spinner_placeholder.markdown("""
@@ -91,8 +70,55 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         """Hide the spinner indicator"""
         spinner_placeholder.empty()
     
+    def update_status_for_node(node_name: str):
+        """Update status display for the given node that is STARTING"""
+        nonlocal current_status_node
+        
+        if node_name == current_status_node:
+            return  # Already showing this node's status
+        
+        current_status_node = node_name
+        print(f"🎨 STATUS UPDATE: Showing status for {node_name}")
+        
+        if node_name == 'entry_router':
+            status_display.info("⏳ Routing your question...")
+        elif node_name == 'navigation_controller':
+            status_display.info("⏳ Validating your question...")
+        elif node_name == 'router_agent':
+            status_display.info("⏳ Finding the right dataset for your question...")
+            # Start progressive updates
+            asyncio.create_task(show_progressive_router_status())
+        elif node_name == 'strategy_planner_agent':
+            status_display.info("⏳ Planning strategic analysis...")
+        elif node_name == 'drillthrough_planner_agent':
+            status_display.info("⏳ Preparing drillthrough analysis...")
+        else:
+            status_display.info(f"⏳ Processing: {node_name}...")
+
+    async def show_progressive_router_status():
+        """Show progressive status updates for router_agent node"""
+        try:
+            await asyncio.sleep(4)
+            if current_status_node == 'router_agent':  # Still on router
+                status_display.info("⏳ Generating SQL query based on metadata...")
+                print(f"🔄 Router status update: Generating SQL (T+4s)")
+            
+            await asyncio.sleep(2)
+            if current_status_node == 'router_agent':  # Still on router
+                status_display.info("⏳ Executing SQL query...")
+                print(f"🔄 Router status update: Executing SQL (T+6s)")
+        except Exception as e:
+            print(f"⚠️ Progressive status update error: {e}")
+    
     # Show spinner at start
     show_spinner()
+    
+    # Show initial status - workflow always starts with entry_router
+    update_status_for_node('entry_router')
+    
+    print("\n" + "="*80)
+    print("🎬 WORKFLOW STARTING - Event stream beginning")
+    print("="*80 + "\n")
                 
     try:
         async for ev in workflow.astream_events(initial_state, config=config):
@@ -100,104 +126,65 @@ async def run_streaming_workflow_async(workflow, user_query: str):
             name = ev.get('name')
             state = ev.get('data', {}) or {}
             
-            # Enhanced debug logging with event type
-            print(f"🎭 UI Event: type={et}, name={name}, state_keys={list(state.keys()) if isinstance(state, dict) else 'None'}")
+            print(f"📦 Event: type={et}, name={name}")
             
-            # FIXED: Detect node START more accurately
-            # Trigger on 'on_chain_start' event type OR when we see a new node name for the first time
-            node_is_starting = False
-            
-            if name and name not in ('__end__', 'workflow_end', '__start__'):
-                # Check if this is a chain start event (node actually starting)
-                if et in ('on_chain_start', 'chain_start'):
-                    node_is_starting = True
-                    print(f"🎬 CHAIN START detected for: {name}")
-                # Fallback: if we haven't seen this node yet, assume it's starting
-                elif name not in nodes_seen:
-                    node_is_starting = True
-                    print(f"🎬 NEW NODE detected: {name}")
-            
-            # Update status display when node ACTUALLY starts
-            if node_is_starting:
-                nodes_seen.add(name)
-                print(f"✅ Node started: {name} (event type: {et})")
-
-                # Update the single status display with current step
-                if name == 'entry_router':
-                    status_display.info("⏳ Routing your question...")
-                    print(f"🎨 Status: Routing question")
-                    
-                elif name == 'navigation_controller':
-                    status_display.info("⏳ Validating your question...")
-                    print(f"🎨 Status: Validating your question")
-                    
-                elif name == 'router_agent':
-                    status_display.info("⏳ Finding the right dataset for your question...")
-                    print(f"🎨 Status: Finding the right dataset")
-                    # Start progressive status updates (will update status_display)
-                    asyncio.create_task(show_progressive_router_status(status_display))
-                    
-                elif name == 'strategy_planner_agent':
-                    status_display.info("⏳ Planning strategic analysis...")
-                    print(f"🎨 Status: Planning strategic analysis")
-                    
-                elif name == 'drillthrough_planner_agent':
-                    status_display.info("⏳ Preparing drillthrough analysis...")
-                    print(f"🎨 Status: Preparing drillthrough")
-                    
-                else:
-                    status_display.info(f"⏳ Processing: {name}...")
-                    print(f"🎨 Status: {name} running")
-            
-            # Handle node completion events
-            if et in ('on_chain_end', 'chain_end', 'node_end', 'workflow_end'):
-                print(f"✅ Node completed: {name} (event type: {et})")
+            # ✅ KEY FIX: When a node ENDS, show status for the NEXT node that's about to start
+            if et == 'node_end':
+                print(f"✅ Node completed: {name}")
                 
-                # Only update status for important completions
-                if name == 'router_agent':
-                    # Router completed successfully - show brief success message
-                    status_display.success("✅ Query execution complete")
-                    await asyncio.sleep(0.5)  # Let user see success message briefly
+                # Determine what the next node will be based on routing logic
+                # and show its status IMMEDIATELY (before it starts processing)
                 
-                # Handle specific node outputs based on actual state content
                 if name == 'entry_router':
-                    print(f"✅ Entry router completed - routing to next node")
+                    # After entry_router, next is usually navigation_controller
+                    # (unless there's dataset clarification or SQL followup)
+                    if state.get('requires_dataset_clarification') or state.get('is_sql_followup'):
+                        update_status_for_node('router_agent')
+                    else:
+                        update_status_for_node('navigation_controller')
                 
                 elif name == 'navigation_controller':
-                    print(f"🧭 Navigation controller completed - checking outputs...")
+                    # Check navigation outputs
                     nav_err = state.get('nav_error_msg')
                     greeting = state.get('greeting_response')
                     user_friendly_msg = state.get('user_friendly_message')
 
                     if user_friendly_msg:
-                        # Show user-friendly message in the status display
                         status_display.info(f"💬 {user_friendly_msg}")
                         print(f"💬 Displayed user-friendly message: {user_friendly_msg}")
-                        await asyncio.sleep(2)  # Let user read it for 2 seconds
-                    
-                    print(f"   nav_error_msg: {nav_err}")
-                    print(f"   greeting_response: {greeting}")
+                        await asyncio.sleep(2)
                     
                     if nav_err:
                         hide_spinner()
-                        status_display.empty()  # Clear status before showing error
+                        status_display.empty()
                         add_assistant_message(nav_err, message_type="error")
                         return
                     if greeting:
                         hide_spinner()
-                        status_display.empty()  # Clear status before showing greeting
+                        status_display.empty()
                         add_assistant_message(greeting, message_type="greeting")
                         return
+                    
+                    # After navigation, next is usually router_agent or END
+                    question_type = state.get('question_type')
+                    if question_type == 'root_cause':
+                        update_status_for_node('strategy_planner_agent')
+                    else:
+                        update_status_for_node('router_agent')
                 
                 elif name == 'router_agent':
-                    print(f"🎯 Router agent completed - checking outputs... ")
+                    print(f"🎯 Router agent completed - checking outputs...")
+                    
+                    # Show success briefly before checking results
+                    status_display.success("✅ Query execution complete")
+                    await asyncio.sleep(0.5)
+                    
+                    # Check for various router outcomes
                     if state.get('sql_followup_but_new_question', False):
-                        print("🔄 New question detected - workflow will continue to navigation_controller")
-                        # Clear status and show temporary message
-                        status_display.empty()
-                        st.info("🔄 Processing your new question...")
-                        # Don't break or return - just continue to let the stream proceed
+                        print("🔄 New question detected - will loop back to navigation")
+                        update_status_for_node('navigation_controller')
                         continue
+                    
                     if state.get('router_error_msg'):
                         hide_spinner()
                         status_display.empty()
@@ -231,29 +218,24 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                     
                     sql_result = state.get('sql_result', {})
                     if sql_result and sql_result.get('success'):
-                        # Hide spinner and clear status display
                         hide_spinner()
                         status_display.empty()
                         
-                        # Display selection_reasoning after AI rewritten question if available
                         functional_names = state.get('functional_names', [])
                         if functional_names:
                             add_selection_reasoning_message(functional_names)
                             print(f"✅ Added functional_names display: {functional_names}")
                         
-                        # Render SQL results immediately
                         rewritten_question = state.get('rewritten_question', initial_state['current_question'])
                         table_name = state.get('selected_dataset', None)
                         add_sql_result_message(sql_result, rewritten_question, table_name)
                         last_state = state
                         
-                        # Mark that SQL results are ready and we need to start narrative generation
                         st.session_state.sql_rendered = True
                         st.session_state.narrative_state = state
                         st.session_state.followup_state = state
                         
-                        print("🔄 SQL results rendered - breaking to allow st.rerun() to display results")
-                        # Force UI to update by breaking
+                        print("🔄 SQL results rendered - breaking")
                         break
                     else:
                         hide_spinner()
@@ -262,41 +244,29 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         return
                 
                 elif name == 'strategy_planner_agent':
-                    print(f"🧠 Strategic planner completed - checking outputs...")
+                    print(f"🧠 Strategic planner completed")
                     
-                    # Check for errors first
                     if state.get('strategy_planner_err_msg'):
                         hide_spinner()
                         status_display.empty()
                         add_assistant_message(state.get('strategy_planner_err_msg'), message_type="error")
                         return
                     
-                    # Check for strategic results
                     strategic_results = state.get('strategic_query_results', [])
                     if strategic_results:
-                        # Hide spinner and clear status display
                         hide_spinner()
                         status_display.empty()
                         
-                        # Render strategic analysis immediately
                         strategic_reasoning = state.get('strategic_reasoning', '')
                         add_strategic_analysis_message(strategic_results, strategic_reasoning)
                         last_state = state
                         
-                        print("🔄 Strategic analysis rendered - checking for drillthrough availability")
-                        
-                        # Check if drillthrough exists and should be executed
                         drillthrough_exists = state.get('drillthrough_exists', '')
                         if drillthrough_exists == "Available":
-                            # Mark strategic analysis as rendered and prepare for drillthrough
                             st.session_state.strategic_rendered = True
                             st.session_state.drillthrough_state = state
-                            
-                            print("🔄 Strategic analysis complete - drillthrough will be executed separately")
-                            # Force UI to update by breaking and using session state to continue drillthrough later
                             break
                         else:
-                            # No drillthrough available - this is the end, prepare for follow-ups
                             st.session_state.sql_rendered = True
                             st.session_state.followup_state = state
                             break
@@ -307,57 +277,44 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         return
                 
                 elif name == 'drillthrough_planner_agent':
-                    print(f"🔧 Drillthrough planner completed - checking outputs...")
+                    print(f"🔧 Drillthrough planner completed")
                     
-                    # Check for errors first
                     if state.get('drillthrough_planner_err_msg'):
                         hide_spinner()
                         status_display.empty()
                         add_assistant_message(state.get('drillthrough_planner_err_msg'), message_type="error")
                         return
                     
-                    # Check for drillthrough results
                     drillthrough_results = state.get('drillthrough_query_results', [])
                     if drillthrough_results:
-                        # Hide spinner and clear status display
                         hide_spinner()
                         status_display.empty()
                         
-                        # Render drillthrough analysis immediately
                         drillthrough_reasoning = state.get('drillthrough_reasoning', '')
                         add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoning)
                         last_state = state
-                        
-                        print("🔄 Drillthrough analysis rendered - workflow complete")
                         break
                     else:
                         hide_spinner()
                         status_display.empty()
                         add_assistant_message("No drillthrough analysis results available.", message_type="error")
                         return
-                
-                # Capture final state for follow-up generation
-                if et == 'workflow_end':
-                    print(f"🏁 Workflow completed - final state captured")
-                    
-                    # Hide spinner and clear status display
-                    hide_spinner()
-                    status_display.empty()
-                    
-                    if not last_state:
-                        last_state = state
+            
+            elif et == 'workflow_end':
+                print(f"🏁 Workflow completed")
+                hide_spinner()
+                status_display.empty()
+                if not last_state:
+                    last_state = state
 
-        # Hide spinner when done
         hide_spinner()
         
-        # Handle follow-up generation based on where we broke out
+        # Handle follow-up generation
         if st.session_state.get('sql_rendered', False):
-            print("🔄 SQL was rendered - follow-up will be handled in next execution cycle after st.rerun()")
-            # Don't generate follow-ups here - let the main loop handle it after UI update
+            print("🔄 SQL was rendered - follow-up will be handled in next execution cycle")
         elif last_state and last_state.get('sql_result', {}).get('success'):
-            # This handles the case where workflow completed normally without early break
             try:
-                print("🔄 Starting follow-up generation after complete workflow...")
+                print("🔄 Starting follow-up generation")
                 followup_state = last_state
                 follow_res = await workflow.ainvoke_followup(followup_state, config)
                 fq = follow_res.get('followup_questions', [])
@@ -378,7 +335,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
             print("⚠️ No final state captured from workflow")
             
     except Exception as e:
-        hide_spinner()  # Hide spinner on error
-        status_display.empty()  # Clear status on error
+        hide_spinner()
+        status_display.empty()
         add_assistant_message(f"Workflow failed: {e}", message_type="error")
         print(f"❌ Workflow error: {e}")

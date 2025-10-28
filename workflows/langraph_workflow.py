@@ -1,100 +1,3 @@
-# ============ ASYNC STREAMING METHODS ============
-
-async def astream(self, initial_state: AgentState, config: Dict[str, Any]):
-    """Async streaming method for the main workflow (up to router_agent)"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25  # Allow up to 25 node executions (enough for cycles)
-    
-    async for step_data in self.app.astream(initial_state, config=enhanced_config):
-        yield step_data
-
-async def astream_events(self, initial_state: AgentState, config: Dict[str, Any], version: str = "v2"):
-    """Low-level event stream (node_start/node_end/log/error) to enable granular UI updates."""
-    print("🔧 Using fallback astream approach for reliable events")
-    
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    async for step in self.app.astream(initial_state, config=enhanced_config):
-        print(f"📦 Astream step: {list(step.keys())}")
-        for node_name, node_state in step.items():
-            if node_name == '__end__':
-                print(f"🏁 Workflow end - final state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}") 
-                yield {"type": "workflow_end", "name": node_name, "data": node_state}
-            else:
-                print(f"✅ Node completed: {node_name} - state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
-                yield {"type": "node_end", "name": node_name, "data": node_state}
-
-async def astream_followup(self, state_after_main: AgentState, config: Dict[str, Any]):
-    """Async streaming method for the follow-up workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    async for step_data in self.followup_app.astream(state_after_main, config=enhanced_config):
-        yield step_data
-
-async def astream_drillthrough(self, state_after_strategic: AgentState, config: Dict[str, Any]):
-    """Async streaming method for the drillthrough workflow"""
-    # ⭐ ADD recursion_limit to config  
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    async for step_data in self.drillthrough_app.astream(state_after_strategic, config=enhanced_config):
-        yield step_data
-
-async def ainvoke(self, initial_state: AgentState, config: Dict[str, Any]) -> AgentState:
-    """Async invoke method for the main workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    return await self.app.ainvoke(initial_state, config=enhanced_config)
-
-async def ainvoke_followup(self, state_after_main: AgentState, config: Dict[str, Any]) -> AgentState:
-    """Async invoke method for the follow-up workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    return await self.followup_app.ainvoke(state_after_main, config=enhanced_config)
-
-async def ainvoke_drillthrough(self, state_after_strategic: AgentState, config: Dict[str, Any]) -> AgentState:
-    """Async invoke method for the drillthrough workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    return await self.drillthrough_app.ainvoke(state_after_strategic, config=enhanced_config)
-
-async def astream_narrative(self, state_with_sql: AgentState, config: Dict[str, Any]):
-    """Async streaming method for the narrative workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    async for step_data in self.narrative_app.astream(state_with_sql, config=enhanced_config):
-        yield step_data
-
-async def ainvoke_narrative(self, state_with_sql: AgentState, config: Dict[str, Any]) -> AgentState:
-    """Async invoke method for the narrative workflow"""
-    # ⭐ ADD recursion_limit to config
-    enhanced_config = {**config}
-    if 'recursion_limit' not in enhanced_config:
-        enhanced_config['recursion_limit'] = 25
-    
-    return await self.narrative_app.ainvoke(state_with_sql, config=enhanced_config)
-
 import asyncio
 import time
 from datetime import datetime
@@ -166,6 +69,8 @@ class AsyncHealthcareFinanceWorkflow:
                 "router_agent": "router_agent"
             }
         )
+
+        # workflow.add_edge("navigation_controller", END)
 
         # Routing from navigation_controller
         workflow.add_conditional_edges(
@@ -243,6 +148,8 @@ class AsyncHealthcareFinanceWorkflow:
         state['router_error_msg'] = None 
         state['follow_up_error_msg'] = None
         state['sql_gen_error_msg'] = None
+        state['strategy_planner_err_msg'] = None
+        state['user_friendly_message'] = None
         state['domain_selection']=state.get('domain_selection', [])
         
         # Simple routing logic
@@ -279,18 +186,20 @@ class AsyncHealthcareFinanceWorkflow:
         try:
             # Call navigation controller - ASYNC CALL
             nav_result = await self.nav_controller.process_user_query(state)
-            
+            print('nav_result',nav_result) 
             # Update state with navigation results
             state['current_question'] = nav_result['rewritten_question']
             state['question_type'] = nav_result['question_type']
             state['next_agent'] = nav_result['next_agent']
             state['filter_values'] = nav_result['filter_values']
+            state['user_friendly_message'] = nav_result.get('user_friendly_message', 'Considered as a new question')
             state['current_agent'] = 'Question Validator'
             state['nav_error_msg'] = nav_result.get('error_message')  
             state['topic_drift'] = False   
             state['missing_dataset_items'] = False
             state['sql_followup_topic_drift'] = False
             state['sql_followup_but_new_question'] = False
+
 
             # Add retry count tracking
             state['llm_retry_count'] = nav_result.get('llm_retry_count', 0)
@@ -444,6 +353,7 @@ class AsyncHealthcareFinanceWorkflow:
                 print(f"🔄 SQL follow-up detected new question - routing back to navigation")
                 state['sql_followup_topic_drift'] = False
                 state['sql_followup_but_new_question'] = True
+                state['next_agent'] = ['navigation_controller']
                
                 
                 # Prepare state for new question processing
@@ -576,6 +486,7 @@ class AsyncHealthcareFinanceWorkflow:
         # Priority 1: If new question detected, loop back to navigation
         if sql_followup_new_question:
             print(f"  🔄 Routing to: navigation_controller (new question detected)")
+            print('route navigation state info', state)
             return "navigation_controller"
         
         # Priority 2: If topic drift or normal completion, end workflow
@@ -902,6 +813,7 @@ class AsyncHealthcareFinanceWorkflow:
                 else:
                     print(f"✅ Node completed: {node_name} - state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
                     yield {"type": "node_end", "name": node_name, "data": node_state}
+                    
     async def astream_followup(self, state_after_main: AgentState, config: Dict[str, Any]):
         """Async streaming method for the follow-up workflow"""
         async for step_data in self.followup_app.astream(state_after_main, config=config):

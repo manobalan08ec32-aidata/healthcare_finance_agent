@@ -1,35 +1,36 @@
-**YOUR ONLY JOB:** Match user terms to metadata and select table(s) that have those terms.
-- You are a TABLE SELECTOR, not a data interpreter
-- Match user's requested metrics/attributes to what exists in metadata
-- Select the table(s) with those terms
-- Do NOT suggest alternatives, interpret meanings, or recommend specific metrics
-```
-
----
-
-## Fix 2: Add Business Context Filter
-**Insert right before "STEP 1 - Extract ALL Terms" (around line 45):**
-```
-**STEP 0 - Ignore Business/Domain Context Terms:**
-Do NOT extract or validate these types of terms:
-- Industry jargon: PBM, healthcare, pharmacy, medical, clinical, benefit management, prescription
-- Generic words: data, information, analysis, report, dashboard, system, platform, tool
-- Descriptive context: current, recent, latest, historical, overall, general
-
-These provide context but are NOT database columns. Skip them entirely.
-```
-
----
-
-## Fix 3: Update Metric Matching Rules
-**Replace the "For Metrics:" section (around line 62-66) with:**
-```
-**For Metrics:**
-- Check "metrics" field in each dataset
-- Use FLEXIBLE matching - ignore case, punctuation, spaces, parentheses, qualifiers like (Unadj)/(Adj)/%
-- Match the CORE metric concept:
-  * "revenue per script" matches "Revenue per Script (Unadj)", "Revenue per Script (Adj)" ✓
-  * "gross margin" matches "Gross Margin %", "gross margin" ✓
-  * "scripts" matches "unadjusted_scripts", "adjusted_scripts" ✓
-- If multiple variations exist (like Unadj/Adj), match as ✓Found with ALL variations
-- Mark: ✓Found(dataset.metric_name) | ❌Not Found (only if NO semantic match exists)
+Navigation Input - Current: 'compare actuals vs forecast 8+4 for september for PBM'
+2025-10-28T15:28:16.5895298Z Navigation Input - Existing Domain: PBM Network
+2025-10-28T15:28:16.5895328Z coming here
+2025-10-28T15:28:16.5895359Z PROMPT 1 Response: {
+2025-10-28T15:28:16.5895389Z     "input_type": "business_question",
+2025-10-28T15:28:16.5895628Z     "is_valid_business_question": true,
+2025-10-28T15:28:16.5895684Z     "response_message": "",
+2025-10-28T15:28:16.5895716Z     "is_validation": false,
+2025-10-28T15:28:16.5895745Z     "context_decision": "FOLLOW_UP",
+2025-10-28T15:28:16.5895776Z     "components_current": {
+2025-10-28T15:28:16.5895822Z         "metric": "actuals vs forecast 8+4",
+2025-10-28T15:28:16.5895855Z         "scope": null,
+2025-10-28T15:28:16.5895886Z         "time": "september",
+2025-10-28T15:28:16.5895916Z         "time_is_partial": true,
+2025-10-28T15:28:16.5895946Z         "filters": ["PBM"],
+2025-10-28T15:28:16.5896074Z         "signals": {
+2025-10-28T15:28:16.5896105Z             "has_pronouns": false,
+2025-10-28T15:28:16.5896136Z             "has_continuation_verbs": true,
+2025-10-28T15:28:16.5896167Z             "has_aggregate_words": false,
+2025-10-28T15:28:16.5896224Z             "has_validation_words": false
+2025-10-28T15:28:16.5896254Z         }
+2025-10-28T15:28:16.5896283Z     },
+2025-10-28T15:28:16.5896312Z     "components_previous": {
+2025-10-28T15:28:16.5896343Z         "metric": "PBM revenue",
+2025-10-28T15:28:16.5896388Z         "scope": "line of business",
+2025-10-28T15:28:16.5896418Z         "time": "July 2025",
+2025-10-28T15:28:16.5896448Z         "filters": ["PBM"]
+2025-10-28T15:28:16.5896477Z     },
+2025-10-28T15:28:16.5896535Z     "reasoning": "Current question has continuation verb 'compare' and is missing scope (no line of business mentioned) and missing year (September without year). While PBM is mentioned, it appears to be the filter/entity being analyzed rather than the scope dimension. Previous question provides context for PBM analysis."
+2025-10-28T15:28:16.5896595Z }
+2025-10-28T15:28:16.5896624Z PROMPT 2 Response: {
+2025-10-28T15:28:16.5896657Z     "rewritten_question": "Compare actuals vs forecast 8+4 for PBM by line of business for September 2025",
+2025-10-28T15:28:16.5896689Z     "question_type": "what",
+2025-10-28T15:28:16.5896719Z     "filter_values": [],
+2025-10-28T15:28:16.5896771Z     "user_message": "I'm using line of business from your last question. Added 2025 as the year."
+2025-10-28T15:28:16.5896803Z }

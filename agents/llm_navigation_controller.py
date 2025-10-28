@@ -388,6 +388,10 @@ Return ONLY valid JSON. Do NOT include ```json``` or any markdown.
         Job: Execute rewriting based on Prompt 1's decision + Extract filters
         """
         
+        # Get current year dynamically
+        from datetime import datetime
+        current_year = datetime.now().year
+        
         prompt = f"""You are a question rewriter and filter extractor.
 
 ════════════════════════════════════════════════════════════
@@ -399,8 +403,7 @@ Previous Question: "{previous_question if previous_question else 'None'}"
 Decision from PROMPT 1:
 {json.dumps(decision_json, indent=2)}
 
-Current Date: October 27, 2025
-Current Year: 2025
+Current Year: {current_year}
 
 ════════════════════════════════════════════════════════════
 SECTION 4: EXECUTE CONTEXT INHERITANCE
@@ -441,12 +444,12 @@ If current mentions same TYPE but different value → REPLACE
 
 **Rule 4: Year Defaulting (CRITICAL for fixing year problem)**
 If time_is_partial = true in current components:
-→ Add current year (2025) automatically
+→ Add current year ({current_year}) automatically
 Examples:
-- "August" → "August 2025"
-- "Q3" → "Q3 2025"
-- "September" → "September 2025"
-→ Track this in auto_completed output
+- "August" → "August {current_year}"
+- "Q3" → "Q3 {current_year}"
+- "September" → "September {current_year}"
+→ Track this in user_message: "Added {current_year} as the year."
 
 **Rule 5: Pronouns Fill Everything**
 If has_pronouns = true:
@@ -459,7 +462,7 @@ If has_continuation_verbs = true ("compare", "for", "show me"):
 → Inherit missing components (especially scope and time)
 Example: "compare actuals vs forecast for September" 
 → If previous had "PBM" scope, inherit it
-→ If "September" has no year, add 2025
+→ If "September" has no year, add current year ({current_year})
 
 **Rule 7: Breakdown Pattern - Metric vs Filter**
 If pattern is "[X] breakdown" or "breakdown of [X]":
@@ -543,12 +546,12 @@ Multiple terms: "diabetes, asthma" → ["diabetes", "asthma"]
 **EXAMPLES:**
 
 Example 1:
-Rewritten: "What is the revenue for MPDOVA for September 2025"
+Rewritten: "What is the revenue for MPDOVA for September {current_year}"
 → "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion ✓, has letters ✓ → EXTRACT ✅
 → filter_values: ["MPDOVA"]
 
 Example 2:
-Rewritten: "What is actuals vs forecast for PBM for September 2025"
+Rewritten: "What is actuals vs forecast for PBM for September {current_year}"
 → "PBM": in exclusion list (common terms) → EXCLUDE
 → filter_values: []
 
@@ -559,7 +562,7 @@ Rewritten: "What is revenue for covid vaccines for carrier MDOVA for Q3"
 → filter_values: ["covid vaccines"]
 
 Example 4:
-Rewritten: "What is claim number 12345 for cardiology for HDP for July 2025"
+Rewritten: "What is claim number 12345 for cardiology for HDP for July {current_year}"
 → "12345": has attribute "claim number" → EXCLUDE
 → "cardiology": passes all checks → EXTRACT ✅
 → "HDP": in exclusion list (common terms) → EXCLUDE
@@ -573,16 +576,16 @@ Example 1: Year Defaulting
 Decision: FOLLOW_UP, time_is_partial = true
 Current: "actuals vs forecast for PBM for August"
 Previous: None
-→ Rewritten: "What is actuals vs forecast for PBM for August 2025"
-→ User message: "Added 2025 as the year."
+→ Rewritten: "What is actuals vs forecast for PBM for August {current_year}"
+→ User message: "Added {current_year} as the year."
 
 Example 2: Missing Scope with Continuation Verb
 Decision: FOLLOW_UP
 Current: "compare actuals vs forecast for September"
-Previous: "What is actuals vs forecast for PBM for August 2025"
+Previous: "What is actuals vs forecast for PBM for August {current_year}"
 Components: metric same, scope missing, time different (partial)
-→ Rewritten: "Compare actuals vs forecast for PBM for September 2025"
-→ User message: "I'm using PBM from your last question. Added 2025 as the year."
+→ Rewritten: "Compare actuals vs forecast for PBM for September {current_year}"
+→ User message: "I'm using PBM from your last question. Added {current_year} as the year."
 
 Example 3: Drill-down with Filter
 Decision: FOLLOW_UP
@@ -602,16 +605,16 @@ Previous: "What is revenue for carrier MDOVA for Q3"
 
 Example 5: New Complete Question
 Decision: NEW
-Current: "Show me claims for carrier BCBS for July 2025"
-→ Rewritten: "What are the claims for carrier BCBS for July 2025"
+Current: "Show me claims for carrier BCBS for July {current_year}"
+→ Rewritten: "What are the claims for carrier BCBS for July {current_year}"
 → User message: ""
 → filter_values: []
 
 Example 6: Validation Request
 Decision: VALIDATION
 Current: "validate the query, results look wrong"
-Previous: "What is revenue for Specialty for July 2025"
-→ Rewritten: "What is revenue for Specialty for July 2025 - VALIDATION REQUEST: validate the query, results look wrong"
+Previous: "What is revenue for Specialty for July {current_year}"
+→ Rewritten: "What is revenue for Specialty for July {current_year} - VALIDATION REQUEST: validate the query, results look wrong"
 → User message: "Validating previous query."
 
 ════════════════════════════════════════════════════════════

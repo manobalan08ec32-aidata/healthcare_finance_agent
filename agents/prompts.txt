@@ -1,3 +1,16 @@
-Research	$ 2,272,464	$ 2,010,801	$ 261,663	13.01%
-Revenues	7,500,886,102	7,500,765,908	$ 120,194	0.20%
-SG&A COGS Reclass	$ 0	$ 1,008,329	$ -1,008,329	-100.00%
+FIND THIS CODE:
+python            # Handle monetary columns - add $ symbol and remove decimals
+            if is_monetary_column:
+                
+                if abs(numeric_val) >= 1000:
+                    return f"$ {int(round(numeric_val)):,}"
+                else:
+                    return f"$ {int(round(numeric_val))}"
+REPLACE WITH THIS CODE:
+python            # Handle monetary columns - add $ symbol and remove decimals (ALL amounts get $)
+            if is_monetary_column:
+                rounded_val = int(round(numeric_val))
+                if abs(rounded_val) >= 1000:
+                    return f"$ {rounded_val:,}"
+                else:
+                    return f"$ {rounded_val}"

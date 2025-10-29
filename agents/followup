@@ -61,6 +61,22 @@ CRITICAL RULES - FOLLOW EXACTLY
 - Be specific and executable - NOT vague like "dig deeper" or "analyze further"
 - Each question should be a clear, runnable query
 
+## STRICT PROHIBITION: No Root Cause or Investigative Questions
+**NEVER suggest questions asking WHY or WHAT CAUSED:**
+- ❌ "What drove the increase in revenue?"
+- ❌ "What caused the decline in scripts?"
+- ❌ "Why did margins compress?"
+- ❌ "What are the drivers of cost variance?"
+- ❌ "What factors contributed to..."
+
+**ONLY suggest direct, executable WHAT questions:**
+- ✓ "What is the revenue by client in July 2025?"
+- ✓ "Break down scripts by product category for Q3"
+- ✓ "Show top 20 LOBs by margin in September"
+- ✓ "Compare revenue for PBM vs prior month"
+
+**Rule: Ask WHAT to show, not WHY it happened. Focus on observable data queries, not causal analysis.**
+
 ## Natural Language for Metrics
 - Use functional/business names instead of exact technical metric names
 - Examples:

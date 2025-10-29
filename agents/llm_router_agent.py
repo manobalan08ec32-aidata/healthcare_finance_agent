@@ -29,7 +29,9 @@ Replace the existing rule 12 with this concise version:
 If you want even shorter, combine into rule 12:
 ```
 12. FORMATTING & NAMING
-- Amounts: ROUND(value, 0) AS column_name_amount
-- Percentages: ROUND(value, 3) AS column_name_percent  
-- ORDER BY date columns DESC only
-- Business-relevant names aligned with question
+**Numeric columns:**
+- Amounts/Counts/Totals: ROUND(value, 0) AS name_amount
+- Percentages/Ratios (÷ operations × 100): ROUND(value, 3) AS name_percent
+- Examples: total_revenue_amount, cost_ratio_percent, script_count_amount
+
+**Ordering:** ORDER BY date columns DESC only. Use business-relevant names.

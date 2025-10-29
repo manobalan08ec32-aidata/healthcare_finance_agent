@@ -1,4 +1,97 @@
-followup_prompt = f"""
+from typing import Dict, List, Optional
+import json
+import asyncio
+from core.state_schema import AgentState
+from core.databricks_client import DatabricksClient
+
+class FollowupQuestionAgent:
+    """Smart follow-up question generator: creates intelligent drill-down questions based on context and metadata"""
+    
+    def __init__(self, databricks_client: DatabricksClient):
+        self.db_client = databricks_client
+    
+    async def generate_followup_question(self, state: AgentState) -> Dict[str, any]:
+        """Generate intelligent follow-up questions based on current context and history"""
+        current_question = state.get('current_question', '')
+        user_question_history = state.get('user_question_history', [])
+        followup_questions_history = state.get('follow_up_questions_history', [])
+        selected_dataset = state.get('selected_dataset', [])
+        narrative_response = state.get('narrative_history', '')
+        domain_selection = state.get('domain_selection', [])
+
+        print(f"🔍 Generating follow-up questions for: {current_question}")
+        print(f"📝 Previous follow-ups: {len(followup_questions_history)}")
+        print(f"🎯 Domain selection: {domain_selection}")
+        print(f"📂 Selected dataset(s): {selected_dataset}")
+
+        # Resolve selected dataset list
+        if isinstance(selected_dataset, str):
+            selected_list = [selected_dataset]
+        elif isinstance(selected_dataset, list):
+            selected_list = selected_dataset
+        else:
+            selected_list = []
+
+        # Attempt to load consolidated_flow.json from preferred then fallback path
+        metadata = {}
+        flow_paths = [
+            'config/followup/consolidated_flow.json',  # preferred (as requested)
+            'followup/consolidated_flow.json'          # fallback (existing location)
+        ]
+        full_flow = None
+        load_error = None
+        for path in flow_paths:
+            try:
+                with open(path, 'r') as f:
+                    full_flow = json.load(f)
+                    print(f"✅ Loaded consolidated flow from {path}")
+                    break
+            except Exception as e:
+                load_error = e
+                continue
+
+        if full_flow is None:
+            print(f"❌ Could not load consolidated_flow.json from any path: {load_error}")
+            full_flow = {}
+
+        # Filter metadata by selected dataset list
+        if isinstance(full_flow, dict) and selected_list:
+            filtered = {}
+            for ds in selected_list:
+                if ds in full_flow:
+                    filtered[ds] = full_flow[ds]
+            if filtered:
+                metadata = filtered
+            else:
+                metadata = full_flow  # fallback to entire structure if no exact match
+        else:
+            metadata = full_flow if isinstance(full_flow, dict) else {}
+
+        followup_result = await self._generate_smart_followup(
+            current_question=current_question,
+            user_history=user_question_history,
+            followup_history=followup_questions_history,
+            metadata=metadata,
+            narrative_response=narrative_response,
+            domain_selection=domain_selection
+        )
+
+        print('coming out of follow up question')
+        return followup_result
+    
+    async def _generate_smart_followup(self, current_question: str, user_history: List[str], 
+                    followup_history: List[str], metadata: Dict,
+                    narrative_response: str, domain_selection: List[str]) -> Dict[str, any]:
+        """Generate smart follow-up questions using LLM with retry logic"""
+        
+        # Prepare context strings
+        recent_user_questions = "\n".join(user_history[-15:]) if user_history else "No previous questions"
+        narrative_response_hist = "\n".join(narrative_response[-1:]) if narrative_response else "No previous questions"
+        
+        # Convert metadata to string for LLM
+        # metadata_str = json.dumps(metadata, indent=2) if metadata else "No metadata available"
+        
+        followup_prompt = f"""
 You are generating intelligent follow-up questions for healthcare finance analysis to help users drill down deeper into their data.
 
 CURRENT CONTEXT:
@@ -23,18 +116,18 @@ PRODUCT CATEGORY FILTERING RULES:
 
 FORECAST CYCLE CONTEXT RULES:
 - When user asks forecast-related questions (forecast, projection, projected, future, plan), always include the appropriate forecast cycle
-- **If user already mentioned a specific cycle** (e.g., forecast_cycle_1, forecast_cycle_2, forecast_cycle_3, cycle 1, cycle 2, cycle 3):
+- **If user already mentioned a specific cycle** (e.g., forecast 8+4, forecast 5+7, forecast 2+10):
   - Use the SAME cycle mentioned by the user in all forecast-related follow-up questions
-  - Example: If user asked "show forecast for cycle 2", all follow-ups should reference "forecast_cycle_2"
+  - Example: If user asked "show forecast for cycle 8+4", all follow-ups should reference "forecast 8+4"
 - **If user did NOT mention a specific cycle**:
   - Calculate the appropriate forecast cycle based on current month using this logic:
-    - Month 1 (Jan): Use forecast_cycle_1  [pattern: 0+12]
-    - Months 2-4 (Feb-Apr): Use forecast_cycle_1  [pattern: 2+10]
-    - Months 5-7 (May-Jul): Use forecast_cycle_2  [pattern: 5+7]
-    - Months 8-12 (Aug-Dec): Use forecast_cycle_3  [pattern: 8+4]
+    - Month 1 (Jan): Use forecast 8+4  [pattern: 0+12]
+    - Months 2-4 (Feb-Apr): Use forecast 8+4  [pattern: 2+10]
+    - Months 5-7 (May-Jul): Use forecast 5+7  [pattern: 5+7]
+    - Months 8-12 (Aug-Dec): Use forecast 8+4  [pattern: 8+4]
   - Include this calculated cycle in ALL forecast-related follow-up questions
-  - Example: If current month is July and user asks "what is forecast revenue", follow-ups should include "forecast_cycle_2"
-  - Example: If current month is September and user asks "what is forecast revenue", follow-ups should include "forecast_cycle_3"
+  - Example: If current month is July and user asks "what is forecast revenue", follow-ups should include "forecast 5+7"
+  - Example: If current month is September and user asks "what is forecast revenue", follow-ups should include "forecast 8+4"
 - **MANDATORY**: Every forecast-related follow-up question MUST include the appropriate cycle (either user-specified or calculated)
 
 DATASET METADATA:
@@ -72,17 +165,17 @@ CRITICAL RULES - FOLLOW EXACTLY
 ## Forecast Cycle Handling (CRITICAL - ALWAYS APPLY)
 - **Step 1**: Check if current_question contains forecast-related keywords (forecast, projection, projected, future, plan)
 - **Step 2**: If yes, check if user specified a cycle in their question
-  - Look for: "forecast_cycle_1", "forecast_cycle_2", "forecast_cycle_3", "cycle 1", "cycle 2", "cycle 3", "fc1", "fc2", "fc3"
+  - Look for: "forecast 8+4", "forecast 5+7", "forecast 2+10", "8+4", "cycle 5+7", "cycle 3", "fc1", "fc2", "fc3"
 - **Step 3**: Determine which cycle to use:
   - If user specified cycle → Use that exact cycle in all follow-ups
   - If user did NOT specify cycle → Calculate cycle based on current month:
-    - Current month 1 (Jan) → forecast_cycle_1 [pattern: 0+12]
-    - Current month 2-4 (Feb-Apr) → forecast_cycle_1 [pattern: 2+10]
-    - Current month 5-7 (May-Jul) → forecast_cycle_2 [pattern: 5+7]
-    - Current month 8-12 (Aug-Dec) → forecast_cycle_3 [pattern: 8+4]
+    - Current month 1 (Jan) → forecast 0+12 [pattern: 0+12]
+    - Current month 2-4 (Feb-Apr) → forecast 2+10 [pattern: 2+10]
+    - Current month 5-7 (May-Jul) → forecast 5+7 [pattern: 5+7]
+    - Current month 8-12 (Aug-Dec) → forecast 8+4 [pattern: 8+4]
 - **Step 4**: Include the determined cycle in EVERY forecast-related follow-up question
-  - ✓ CORRECT: "Show forecast revenue by client for forecast_cycle_2 in July 2025"
-  - ✓ CORRECT: "Break down forecast expenses for forecast_cycle_3 in September 2025"
+  - ✓ CORRECT: "Show forecast revenue by lob for forecast 8+4 in July 2025"
+  - ✓ CORRECT: "Break down forecast expenses for forecast 5+7 in September 2025"
   - ✗ WRONG: "Show forecast revenue by client" (missing cycle)
   - ✗ WRONG: "What is the forecast for next quarter" (missing cycle)
 
@@ -162,46 +255,47 @@ RESPONSE FORMAT
   ]
 }}
 
-==============================
-EXAMPLES
-==============================
 
-Example 1: Forecast Query Without Cycle Specified
-User Question: "What is forecast revenue for September 2025?"
-Current Month: September (month 9)
-Calculated Cycle: forecast_cycle_3 (because September is in months 8-12 range, pattern 8+4)
 
-Generated Follow-ups:
-1. "Show forecast revenue by client for forecast_cycle_3 in September 2025"
-2. "Break down forecast revenue by drug for forecast_cycle_3 in September 2025"
-3. "What is forecast revenue by therapy class for forecast_cycle_3 in September 2025"
-
-Example 2: Forecast Query With Cycle Specified
-User Question: "What is forecast revenue for forecast_cycle_1?"
-User Specified Cycle: forecast_cycle_1
-
-Generated Follow-ups:
-1. "Show forecast revenue by client for forecast_cycle_1"
-2. "Break down forecast revenue by drug for forecast_cycle_1"
-3. "Compare actual vs forecast revenue for forecast_cycle_1"
-
-Example 3: Product Category - Domain Has It
-User Question: "Show revenue for PBM Network in Q3 2024"
-Metadata Check: product_category dimension EXISTS
-Domain: PBM Network
-
-Generated Follow-ups:
-1. "Break down PBM revenue by client for Q3 2024"
-2. "Show PBM revenue by product category for Q3 2024"
-3. "What is PBM revenue trend by month for Q3 2024"
-
-Example 4: Product Category - Dimension Doesn't Exist
-User Question: "Show billed amount by client for July 2025"
-Metadata Check: product_category dimension DOES NOT EXIST
-Domain: Optum Pharmacy
-
-Generated Follow-ups (NO product category suggestions):
-1. "Break down billed amount by fee type for July 2025"
-2. "Show billed amount by product code for July 2025"
-3. "What is billed amount trend by client for July 2025"
 """
+        
+        max_retries = 3
+        retry_count = 0
+        backoff_time = 1  # Start with 1 second backoff
+        while retry_count < max_retries:
+            try:
+                # print('follow up prompt',followup_prompt)
+                
+                llm_response = await self.db_client.call_claude_api_endpoint_async([
+                    {"role": "user", "content": followup_prompt}
+                ])
+                
+                response_json = json.loads(llm_response)
+                followup_questions = response_json.get('followup_questions', [])
+                
+                # Accept LLM response directly without validation
+                if isinstance(followup_questions, list) and followup_questions:
+                    print(f"✅ Generated {len(followup_questions)} follow-up questions")
+                    return {
+                        'followup_questions': followup_questions,
+                        'success': True
+                    }
+                
+                print(f"⚠️ No follow-up questions found in response, retrying...")
+                retry_count += 1
+                import asyncio
+                await asyncio.sleep(backoff_time)
+                backoff_time *= 2  # Exponential backoff
+
+            except Exception as e:
+                print(f"❌ Follow-up question generation attempt {retry_count} failed: {str(e)}")
+                retry_count += 1
+                import asyncio
+                await asyncio.sleep(backoff_time)
+                backoff_time *= 2  # Exponential backoff
+
+        # If all retries fail, return an error message
+        return {
+            'success': False,
+            'error_message': f"Model serving endpoint failed after {max_retries} attempts."
+        }

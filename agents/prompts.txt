@@ -1,36 +1,3 @@
-Navigation Input - Current: 'compare actuals vs forecast 8+4 for september for PBM'
-2025-10-28T15:28:16.5895298Z Navigation Input - Existing Domain: PBM Network
-2025-10-28T15:28:16.5895328Z coming here
-2025-10-28T15:28:16.5895359Z PROMPT 1 Response: {
-2025-10-28T15:28:16.5895389Z     "input_type": "business_question",
-2025-10-28T15:28:16.5895628Z     "is_valid_business_question": true,
-2025-10-28T15:28:16.5895684Z     "response_message": "",
-2025-10-28T15:28:16.5895716Z     "is_validation": false,
-2025-10-28T15:28:16.5895745Z     "context_decision": "FOLLOW_UP",
-2025-10-28T15:28:16.5895776Z     "components_current": {
-2025-10-28T15:28:16.5895822Z         "metric": "actuals vs forecast 8+4",
-2025-10-28T15:28:16.5895855Z         "scope": null,
-2025-10-28T15:28:16.5895886Z         "time": "september",
-2025-10-28T15:28:16.5895916Z         "time_is_partial": true,
-2025-10-28T15:28:16.5895946Z         "filters": ["PBM"],
-2025-10-28T15:28:16.5896074Z         "signals": {
-2025-10-28T15:28:16.5896105Z             "has_pronouns": false,
-2025-10-28T15:28:16.5896136Z             "has_continuation_verbs": true,
-2025-10-28T15:28:16.5896167Z             "has_aggregate_words": false,
-2025-10-28T15:28:16.5896224Z             "has_validation_words": false
-2025-10-28T15:28:16.5896254Z         }
-2025-10-28T15:28:16.5896283Z     },
-2025-10-28T15:28:16.5896312Z     "components_previous": {
-2025-10-28T15:28:16.5896343Z         "metric": "PBM revenue",
-2025-10-28T15:28:16.5896388Z         "scope": "line of business",
-2025-10-28T15:28:16.5896418Z         "time": "July 2025",
-2025-10-28T15:28:16.5896448Z         "filters": ["PBM"]
-2025-10-28T15:28:16.5896477Z     },
-2025-10-28T15:28:16.5896535Z     "reasoning": "Current question has continuation verb 'compare' and is missing scope (no line of business mentioned) and missing year (September without year). While PBM is mentioned, it appears to be the filter/entity being analyzed rather than the scope dimension. Previous question provides context for PBM analysis."
-2025-10-28T15:28:16.5896595Z }
-2025-10-28T15:28:16.5896624Z PROMPT 2 Response: {
-2025-10-28T15:28:16.5896657Z     "rewritten_question": "Compare actuals vs forecast 8+4 for PBM by line of business for September 2025",
-2025-10-28T15:28:16.5896689Z     "question_type": "what",
-2025-10-28T15:28:16.5896719Z     "filter_values": [],
-2025-10-28T15:28:16.5896771Z     "user_message": "I'm using line of business from your last question. Added 2025 as the year."
-2025-10-28T15:28:16.5896803Z }
+Research	$ 2,272,464	$ 2,010,801	$ 261,663	13.01%
+Revenues	7,500,886,102	7,500,765,908	$ 120,194	0.20%
+SG&A COGS Reclass	$ 0	$ 1,008,329	$ -1,008,329	-100.00%

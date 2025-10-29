@@ -226,12 +226,12 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     async def show_progressive_router_status():
         """Show progressive status updates for router_agent node"""
         try:
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             if current_status_node == 'router_agent':  # Still on router
                 status_display.info("⏳ Generating SQL query based on metadata...")
                 print(f"🔄 Router status update: Generating SQL (T+4s)")
-            
-            await asyncio.sleep(5)
+
+            await asyncio.sleep(10)
             if current_status_node == 'router_agent':  # Still on router
                 status_display.info("⏳ Executing SQL query...")
                 print(f"🔄 Router status update: Executing SQL (T+6s)")
@@ -680,7 +680,7 @@ def format_sql_data_for_streamlit(data):
         is_percentage_column = any(pct_pattern in column_name.lower() for pct_pattern in ['percent', 'pct', '_pct', 'ratio'])
         
         # Check if this is a monetary column
-        is_monetary_column = any(money_pattern in column_name.lower() for money_pattern in ['revenue', 'expense', 'amount', 'amt', 'cost', 'fee'])
+        is_monetary_column = any(money_pattern in column_name.lower() for money_pattern in ['revenue', 'expense', '_amount', 'amt', 'cost', 'fee'])
         
         # Handle scientific notation (e.g., 8.0000E433)
         if re.match(r'^-?\d+\.?\d*[eE][+-]?\d+$', val_str):
@@ -712,12 +712,20 @@ def format_sql_data_for_streamlit(data):
                     return f"{numeric_val:.2f}%"
             
             # Handle monetary columns - add $ symbol and remove decimals
+
             if is_monetary_column:
-                
-                if abs(numeric_val) >= 1000:
-                    return f"$ {int(round(numeric_val)):,}"
+                rounded_val = int(round(numeric_val))
+                if abs(rounded_val) >= 1000:
+                    return f"$ {rounded_val:,}"
                 else:
-                    return f"$ {int(round(numeric_val))}"
+                    return f"$ {rounded_val}"
+
+            # if is_monetary_column:
+                
+            #     if abs(numeric_val) >= 1000:
+            #         return f"$ {int(round(numeric_val)):,}"
+            #     else:
+            #         return f"$ {int(round(numeric_val))}"
             
             # Handle ID columns - never add commas regardless of size
             if is_id_column:

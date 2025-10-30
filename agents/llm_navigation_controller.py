@@ -1,17 +1,208 @@
-def _build_prompt_1_decision_maker(self, current_question: str, previous_question: str, 
-                                   history_context: List) -> str:
-    """
-    PROMPT 1: Decision Maker
-    Job: Classify input + Extract components + Decide NEW vs FOLLOW-UP
-    """
+import asyncio
+import json
+import time
+from typing import Dict, List, Optional, Any
+from core.state_schema import AgentState
+from core.databricks_client import DatabricksClient
+
+class LLMNavigationController:
+    """Two-prompt navigation controller with enhanced accuracy and transparency"""
     
-    prompt = f"""You are a healthcare finance analytics assistant.
+    def __init__(self, databricks_client: DatabricksClient):
+        self.db_client = databricks_client
+    
+    async def process_user_query(self, state: AgentState) -> Dict[str, any]:
+        """Main entry point: Two-step LLM processing"""
+        
+        current_question = state.get('current_question', state.get('original_question', ''))
+        existing_domain_selection = state.get('domain_selection', [])
+        total_retry_count = state.get('llm_retry_count', 0)
+        
+        print(f"Navigation Input - Current: '{current_question}'")
+        print(f"Navigation Input - Existing Domain: {existing_domain_selection}")
+        
+        # Two-step processing: Decision → Rewriting
+        return await self._two_step_processing(
+            current_question, existing_domain_selection, total_retry_count, state
+        )
+    
+    async def _two_step_processing(self, current_question: str, existing_domain_selection: List[str], 
+                                   total_retry_count: int, state: AgentState) -> Dict[str, any]:
+        """Two-step LLM processing: PROMPT 1 (Decision) → PROMPT 2 (Rewriting)"""
+        
+        print("coming here ")
+        questions_history = state.get('user_question_history', [])
+        previous_question = state.get('rewritten_question', '') 
+        history_context = questions_history[-2:] if questions_history else []
+        
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # ═══════════════════════════════════════════════════════════════
+                # STEP 1: CALL PROMPT 1 - DECISION MAKER
+                # ═══════════════════════════════════════════════════════════════
+                
+                prompt_1 = self._build_prompt_1_decision_maker(
+                    current_question, 
+                    previous_question, 
+                    history_context
+                )
+                
+                decision_response = await self.db_client.call_claude_api_endpoint_async([
+                    {"role": "user", "content": prompt_1}
+                ])
+                
+                print("PROMPT 1 Response:", decision_response)
+                
+                try:
+                    decision_json = json.loads(decision_response)
+                except json.JSONDecodeError as json_error:
+                    print(f"PROMPT 1 response is not valid JSON: {json_error}")
+                    # Treat as greeting
+                    decision_json = {
+                        'input_type': 'greeting',
+                        'is_valid_business_question': False,
+                        'response_message': decision_response.strip()
+                    }
+                
+                # Handle non-business questions (greeting, DML, invalid)
+                input_type = decision_json.get('input_type', 'business_question')
+                is_valid_business_question = decision_json.get('is_valid_business_question', False)
+                response_message = decision_json.get('response_message', '')
+                
+                if input_type in ['greeting', 'dml_ddl', 'invalid_business']:
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': f'{input_type.replace("_", " ").title()} response',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'greeting_response': response_message,
+                        'is_dml_ddl': input_type == 'dml_ddl',
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': [],
+                        'user_friendly_message': response_message
+                    }
+                
+                # ═══════════════════════════════════════════════════════════════
+                # STEP 2: CALL PROMPT 2 - REWRITER
+                # ═══════════════════════════════════════════════════════════════
+                
+                if input_type == 'business_question' and is_valid_business_question:
+                    
+                    prompt_2 = self._build_prompt_2_rewriter(
+                        current_question,
+                        previous_question,
+                        decision_json
+                    )
+                    
+                    
+                    rewrite_response = await self.db_client.call_claude_api_endpoint_async([
+                        {"role": "user", "content": prompt_2}
+                    ])
+                    
+                    print("PROMPT 2 Response:", rewrite_response)
+                    
+                    try:
+                        final_json = json.loads(rewrite_response)
+                    except json.JSONDecodeError as json_error:
+                        print(f"PROMPT 2 response is not valid JSON: {json_error}")
+                        # Fallback
+                        final_json = {
+                            'rewritten_question': current_question,
+                            'filter_values': [],
+                            'question_type': 'what',
+                            'user_message': ''
+                        }
+                    
+                    # Get user message directly from LLM
+                    user_message = final_json.get('user_message', '')
+                    
+                    # Determine next agent based on question type
+                    question_type = final_json.get('question_type', 'what')
+                    next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
+                    
+                    # Return complete result with transparency
+                    return {
+                        'rewritten_question': final_json.get('rewritten_question', current_question),
+                        'question_type': question_type,
+                        'context_type': decision_json.get('context_decision', 'new_independent'),
+                        'inherited_context': user_message,  # Simple string from LLM
+                        'next_agent': next_agent,
+                        'next_agent_disp': next_agent.replace('_', ' ').title(),
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': final_json.get('filter_values', []),
+                        'user_friendly_message': user_message,  # For UI display
+                        'decision_from_prompt1': decision_json.get('context_decision', '')  # For debugging
+                    }
+                
+                # Fallback - invalid business question
+                return {
+                    'rewritten_question': current_question,
+                    'question_type': 'what',
+                    'next_agent': 'END',
+                    'next_agent_disp': 'Invalid business question',
+                    'requires_domain_clarification': False,
+                    'domain_followup_question': None,
+                    'domain_selection': existing_domain_selection,
+                    'greeting_response': "I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data.",
+                    'llm_retry_count': total_retry_count + retry_count,
+                    'pending_business_question': '',
+                    'filter_values': [],
+                    'user_friendly_message': "I specialize in healthcare finance analytics."
+                }
+                        
+            except Exception as e:
+                retry_count += 1
+                print(f"Two-step processing attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"Retrying... ({retry_count}/{max_retries})")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"All retries failed: {str(e)}")
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': 'Model serving endpoint failed',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'greeting_response': "Model serving endpoint failed. Please try again after some time.",
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts",
+                        'filter_values': [],
+                        'user_friendly_message': "Service temporarily unavailable."
+                    }
+    
+    def _build_prompt_1_decision_maker(self, current_question: str, previous_question: str, 
+                                       history_context: List) -> str:
+        """
+        PROMPT 1: Decision Maker
+        Job: Classify input type and decide NEW vs FOLLOW-UP (no rewriting yet)
+        """
+        
+        prompt = f"""You are a healthcare finance analytics assistant.
 
 ════════════════════════════════════════════════════════════
-CURRENT INPUT
+NOW ANALYZE THIS USER INPUT:
 ════════════════════════════════════════════════════════════
-Current: "{current_question}"
-Previous: "{previous_question if previous_question else 'None'}"
+User Input: "{current_question}"
+Previous Question: "{previous_question if previous_question else 'None'}"
+Previous Questions History: {history_context}
 
 ════════════════════════════════════════════════════════════
 SECTION 1: INPUT CLASSIFICATION
@@ -153,10 +344,11 @@ Current: "NEW: revenue for Specialty"
 → Starts with "NEW:" → Decision: NEW (respect command)
 
 ════════════════════════════════════════════════════════════
-OUTPUT FORMAT (JSON ONLY)
+OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
 ════════════════════════════════════════════════════════════
 
-Return valid JSON without markdown:
+- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. 
+- The response MUST not start with ```json and end with ```.
 
 {{
     "input_type": "greeting|dml_ddl|business_question",
@@ -183,27 +375,28 @@ Return valid JSON without markdown:
     }},
     "reasoning": "brief explanation"
 }}
+
 """
-    return prompt
-
-
+        return prompt
+    
     def _build_prompt_2_rewriter(self, current_question: str, previous_question: str, 
-                             decision_json: dict) -> str:
-    """
-    PROMPT 2: Rewriter
-    Job: Execute rewriting based on PROMPT 1's decision
-    """
-    
-    from datetime import datetime
-    current_year = datetime.now().year
-    
-    prompt = f"""You are a question rewriter.
+                                 decision_json: dict) -> str:
+        """
+        PROMPT 2: Rewriter
+        Job: Execute rewriting based on Prompt 1's decision + Extract filters
+        """
+        
+        # Get current year dynamically
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        prompt = f"""You are a question rewriter and filter extractor.
 
 ════════════════════════════════════════════════════════════
-INPUT
+INPUT INFORMATION
 ════════════════════════════════════════════════════════════
-Current: "{current_question}"
-Previous: "{previous_question if previous_question else 'None'}"
+Current Question: "{current_question}"
+Previous Question: "{previous_question if previous_question else 'None'}"
 
 Decision from PROMPT 1:
 {json.dumps(decision_json, indent=2)}
@@ -421,16 +614,17 @@ Previous: "revenue for carrier MDOVA for Q3"
 → user_message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
 
 ════════════════════════════════════════════════════════════
-OUTPUT FORMAT (JSON ONLY)
+OUTPUT FORMAT
 ════════════════════════════════════════════════════════════
 
-Return valid JSON without markdown:
+- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. 
+- The response MUST not start with ```json and end with ```.
 
 {{
-    "rewritten_question": "complete rewritten question",
+    "rewritten_question": "complete rewritten question with full context",
     "question_type": "what|why",
-    "filter_values": ["extracted", "values"],
-    "user_message": "what was inherited/added - empty if nothing"
+    "filter_values": ["array", "of", "extracted", "filter", "values"],
+    "user_message": "simple statement about what was inherited or completed - empty string if nothing to say"
 }}
 """
-    return prompt
+        return prompt

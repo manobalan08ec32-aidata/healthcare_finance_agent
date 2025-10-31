@@ -579,8 +579,6 @@ def initialize_session_state():
         st.session_state.strategic_rendered = False
     if 'drillthrough_state' not in st.session_state:
         st.session_state.drillthrough_state = None
-    if 'question_type_selection' not in st.session_state:
-        st.session_state.question_type_selection = 'Follow-up'
     # Initialize domain_selection - inherit from main page selection or set to None
     if 'domain_selection' not in st.session_state:
         st.session_state.domain_selection = None
@@ -2492,8 +2490,6 @@ def main():
             run_streaming_workflow(workflow, st.session_state.current_query)
             st.session_state.processing = False
             st.session_state.workflow_started = False
-            # Reset radio button to "Follow-up" for next question
-            st.session_state.question_type_selection = "Follow-up"
             st.rerun()
         
         # Handle narrative generation after SQL results have been rendered
@@ -2649,19 +2645,18 @@ def main():
 
         # --- NEW CODE: Radio Button for Question Context ---
         # This will appear just above the chat input bar
-        st.markdown("<div style='margin-top: 5px; margin-bottom: -10px;'>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top: 15px; margin-bottom: -5px;'>", unsafe_allow_html=True)
         question_type = st.radio(
             "Select Question Context:",
             ("Follow-up", "New Question"),
-            index=0 if st.session_state.get('question_type_selection', 'Follow-up') == 'Follow-up' else 1,
+            index=0,  # Default to "Follow-up"
             horizontal=True,
             key="question_type_radio"
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Store the selection in session state ONLY if it changed (prevents infinite rerun loop)
-        if st.session_state.get('question_type_selection') != question_type:
-            st.session_state.question_type_selection = question_type
+        # Store the selection in session state so start_processing can access it
+        st.session_state.question_type_selection = question_type
         # --- END NEW CODE ---
         
         # Chat input at the bottom
@@ -2684,15 +2679,10 @@ def main():
 # Keep your existing render_persistent_followup_questions function
 def render_persistent_followup_questions():
     """Render followup questions as simple styled buttons - left aligned like before"""
-    
-    # Don't show follow-up questions if:
-    # 1. Processing is active
-    # 2. List is empty
-    # 3. User has selected "New Question" radio button
+    # Don't show follow-up questions if processing is active or if the list is empty
     if (hasattr(st.session_state, 'current_followup_questions') and 
         st.session_state.current_followup_questions and 
-        not st.session_state.get('processing', False) and
-        st.session_state.get('question_type_selection', 'Follow-up') != 'New Question'):
+        not st.session_state.get('processing', False)):
         
         # Display the follow-up questions with simple Streamlit buttons
         for idx, question in enumerate(st.session_state.current_followup_questions):
@@ -2804,11 +2794,11 @@ def render_chat_message_enhanced(message, message_idx):
             """, unsafe_allow_html=True)
             return
 
-        # NEW CODE: Suppress historical followup_questions message and hide during processing
+        # NEW CODE: Suppress historical followup_questions message
         elif message_type == "followup_questions":
-            if is_historical or st.session_state.get('processing', False):
-                # If the user started a new question (marked as historical) OR if currently processing,
-                # we skip rendering to prevent the greyed-out message from showing
+            if is_historical:
+                # If the user started a new question, the old follow-up message is marked historical. 
+                # We skip rendering it to prevent the empty, greyed-out space.
                 return 
 
         # Use consistent warm gold background for all system messages with icon

@@ -2,48 +2,52 @@ def start_processing(user_query: str):
     """Start processing user query - with proper message management"""
     print(f"🎯 Starting processing for: {user_query}")
     
-    # --- NEW CODE: Get question type and prepend to workflow query ---
-    # Get the selected question type from session state, default to "Follow-up"
+    # Get question type and prepend to workflow query
     question_type = st.session_state.get("question_type_selection", "Follow-up")
-    
-    # This is the original query we'll show in the chat history
     display_query = user_query
-    
-    # This is the modified query we'll send to the workflow
-    # Prepends the intent (e.g., "follow-up - " or "new question - ")
     workflow_query = f"{question_type.lower()} - {user_query}"
     print(f"🚀 Prepended workflow query: {workflow_query}")
-    # --- END NEW CODE ---
     
-    # Mark all existing SQL results as historical before adding new question
+    # 1. Mark all existing SQL results as historical/non-interactive
     for msg in st.session_state.messages:
         if msg.get('message_type') == 'sql_result':
-            msg['historical'] = True
+            # This ensures feedback buttons are hidden for old results
+            msg['historical'] = True 
             print(f"🕰️ Marked SQL result message as historical")
-    
-    # Clear follow-up questions when user types a new question
-    if hasattr(st.session_state, 'current_followup_questions') and st.session_state.current_followup_questions:
-        print("🗑️ Clearing follow-up questions due to new user input")
-        st.session_state.current_followup_questions = []
         
-        # Also remove the "Would you like to explore further?" message from chat history if it exists
-        if (st.session_state.messages and 
-            st.session_state.messages[-1].get('message_type') == 'followup_questions'):
-            st.session_state.messages.pop()
-            print("🗑️ Removed follow-up intro message from chat history")
+        # 2. MARK FOLLOW-UP INTRO MESSAGE AS HISTORICAL
+        # This prevents the follow-up message from re-rendering the buttons in a disabled state
+        if msg.get('message_type') == 'followup_questions':
+            msg['historical'] = True
+            print("🕰️ Marked old follow-up intro message as historical")
     
+    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS (MOST CRITICAL STEP)
+    # The buttons render based on this list, so clearing it hides the buttons on re-run.
+    if hasattr(st.session_state, 'current_followup_questions'):
+        if st.session_state.current_followup_questions:
+            print("🗑️ Clearing interactive follow-up questions list due to new user input")
+            st.session_state.current_followup_questions = []
+            
+    # Remove the visible "Would you like to explore further?" message from chat history
+    # This addresses the case where the user types a question instead of clicking a button.
+    # We re-check the messages list *after* marking them as historical/non-interactive,
+    # ensuring the last message is the one we want to remove.
+    if (st.session_state.messages and 
+        st.session_state.messages[-1].get('message_type') == 'followup_questions'):
+        st.session_state.messages.pop()
+        print("🗑️ Removed follow-up intro message from chat history")
+        
     # Add user message to history (use the clean, original query for display)
     st.session_state.messages.append({
         "role": "user",
-        "content": display_query  # <-- Uses the user's original query
+        "content": display_query
     })
     
     # IMPORTANT: Mark where this conversation starts so we can manage responses properly
     st.session_state.current_conversation_start = len(st.session_state.messages) - 1
     
     # Set processing state and reset narrative state
-    # IMPORTANT: Use the MODIFIED query for the workflow
-    st.session_state.current_query = workflow_query # <-- Uses the prepended query
+    st.session_state.current_query = workflow_query
     st.session_state.processing = True
     st.session_state.workflow_started = False
     st.session_state.narrative_rendered = False
@@ -370,3 +374,111 @@ def main():
         # Ensure cleanup on any app termination
         if st.session_state.get('db_client'):
             pass  # Cleanup will be handled by atexit
+
+
+def render_chat_message_enhanced(message, message_idx):
+    """Enhanced chat message rendering with message type awareness"""
+    
+    role = message.get('role', 'user')
+    content = message.get('content', '')
+    message_type = message.get('message_type', 'standard')
+    timestamp = message.get('timestamp', '')
+    is_historical = message.get('historical', False)  # Check if this is a historical message
+    
+    if role == 'user':
+        # Use custom sky blue background for user messages with icon
+        # Properly format the content to handle newlines and special characters
+        safe_content_html = convert_text_to_safe_html(content)
+        st.markdown(f"""
+        <div class="user-message">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #4f9cf9; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                    👤
+                </div>
+                <div class="user-message-content">
+                    {safe_content_html}
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    elif role == 'assistant':
+        # Handle SQL result messages specially
+        if message_type == "sql_result":
+            sql_result = message.get('sql_result')
+            rewritten_question = message.get('rewritten_question')
+            table_name = message.get('table_name')
+            if sql_result:
+                print(f"🔍 Rendering SQL result: type={type(sql_result)}")
+                if isinstance(sql_result, str):
+                    print(f"    ⚠️ SQL result is string, not dict: {sql_result[:100]}...")
+                    # Try to parse as JSON if it's a string
+                    try:
+                        sql_result = json.loads(sql_result)
+                        print(f"    ✅ Successfully parsed string to dict")
+                    except json.JSONDecodeError as e:
+                        print(f"    ❌ Failed to parse SQL result string as JSON: {e}")
+                        st.error("Error: Could not parse SQL result data")
+                        return
+                # Feedback is only shown if the message is NOT historical
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical,message_idx=message_idx, table_name=table_name)
+            return
+        
+        # Handle strategic analysis messages
+        elif message_type == "strategic_analysis":
+            strategic_results = message.get('strategic_results')
+            strategic_reasoning = message.get('strategic_reasoning')
+            if strategic_results:
+                render_strategic_analysis(strategic_results, strategic_reasoning, show_feedback=not is_historical)
+            return
+        
+        # Handle drillthrough analysis messages
+        elif message_type == "drillthrough_analysis":
+            drillthrough_results = message.get('drillthrough_results')
+            drillthrough_reasoning = message.get('drillthrough_reasoning')
+            if drillthrough_results:
+                render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning, show_feedback=not is_historical)
+            return
+        
+        # Handle selection reasoning messages - use sky blue background like last session story
+        elif message_type == "selection_reasoning":
+            # content is now a list of functional_names
+            if isinstance(content, list):
+                datasets_text = ", ".join(content)
+            else:
+                datasets_text = str(content)
+            
+            st.markdown(f"""
+            <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px; margin: 12px 0; max-width: 420px;">
+                <div style="display: flex; align-items: center;">
+                    <span style="font-size: 1rem; margin-right: 8px;">📊</span>
+                    <strong style="color: #1e3a8a; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+
+        # NEW CODE: Suppress historical followup_questions message
+        elif message_type == "followup_questions":
+            if is_historical:
+                # If the user started a new question, the old follow-up message is marked historical. 
+                # We skip rendering it to prevent the empty, greyed-out space.
+                return 
+
+        # Use consistent warm gold background for all system messages with icon
+        safe_content_html = convert_text_to_safe_html(content)
+        st.markdown(f"""
+        <div class="assistant-message">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                    🤖
+                </div>
+                <div class="assistant-message-content">
+                    {safe_content_html}
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+

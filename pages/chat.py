@@ -720,12 +720,6 @@ def format_sql_data_for_streamlit(data):
                 else:
                     return f"$ {rounded_val}"
 
-            # if is_monetary_column:
-                
-            #     if abs(numeric_val) >= 1000:
-            #         return f"$ {int(round(numeric_val)):,}"
-            #     else:
-            #         return f"$ {int(round(numeric_val))}"
             
             # Handle ID columns - never add commas regardless of size
             if is_id_column:

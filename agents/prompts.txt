@@ -1,16 +1,34 @@
-FIND THIS CODE:
-python            # Handle monetary columns - add $ symbol and remove decimals
-            if is_monetary_column:
-                
-                if abs(numeric_val) >= 1000:
-                    return f"$ {int(round(numeric_val)):,}"
-                else:
-                    return f"$ {int(round(numeric_val))}"
-REPLACE WITH THIS CODE:
-python            # Handle monetary columns - add $ symbol and remove decimals (ALL amounts get $)
-            if is_monetary_column:
-                rounded_val = int(round(numeric_val))
-                if abs(rounded_val) >= 1000:
-                    return f"$ {rounded_val:,}"
-                else:
-                    return f"$ {rounded_val}"
+Navigation Controller starting: 2025-10-31T18:44:33.012989
+Navigation Input - Current: 'follow-up - show me the expense'
+Navigation Input - Existing Domain: PBM Network
+coming here
+PROMPT 1 Response: {
+    "input_type": "business_question",
+    "is_valid_business_question": true,
+    "response_message": "",
+    "is_validation": false,
+    "context_decision": "FOLLOW_UP",
+    "components_current": {
+        "metric": "expense",
+        "filters": [],
+        "attributes": [],
+        "time": null,
+        "time_is_partial": false,
+        "signals": {
+            "has_pronouns": false,
+            "has_continuation_verbs": true
+        }
+    },
+    "components_previous": {
+        "metric": "revenue",
+        "filters": ["PBM"],
+        "time": "july 2025"
+    },
+    "reasoning": "Current question has continuation verb 'show me' and is missing filters and time period. Only has metric 'expense' but needs to inherit context from previous question about PBM for July 2025."
+}
+PROMPT 2 Response: {
+    "rewritten_question": "What is the expense for PBM for july 2025",
+    "question_type": "what",
+    "filter_values": [],
+    "user_message": "I'm using PBM and july 2025 from your last question."
+}

@@ -256,8 +256,8 @@ SECTION 3: DECISION LOGIC
 ════════════════════════════════════════════════════════════
 
 **User Command Override** (Check first!)
-IF current starts with "NEW:" → Decision: NEW (respect user)
-IF current starts with "FOLLOW-UP:" → Decision: FOLLOW-UP (respect user)
+IF current starts with "New Question:" → Decision: NEW (respect user)
+IF current starts with "Follow up question:" → Decision: FOLLOW-UP (respect user)
 
 **Otherwise, apply this logic IN ORDER:**
 

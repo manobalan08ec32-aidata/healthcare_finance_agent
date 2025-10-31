@@ -11,23 +11,30 @@ class LLMNavigationController:
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
     
-    async def process_user_query(self, state: AgentState) -> Dict[str, any]:
-        """Main entry point: Two-step LLM processing"""
+    async def process_user_query(self, state: AgentState, user_input_type: str = "follow-up") -> Dict[str, any]:
+        """
+        Main entry point: Two-step LLM processing
+        
+        Args:
+            state: Agent state containing question and history
+            user_input_type: User's explicit choice from UI - "follow-up" or "new-question"
+        """
         
         current_question = state.get('current_question', state.get('original_question', ''))
         existing_domain_selection = state.get('domain_selection', [])
         total_retry_count = state.get('llm_retry_count', 0)
         
         print(f"Navigation Input - Current: '{current_question}'")
+        print(f"Navigation Input - User Choice: {user_input_type}")
         print(f"Navigation Input - Existing Domain: {existing_domain_selection}")
         
         # Two-step processing: Decision → Rewriting
         return await self._two_step_processing(
-            current_question, existing_domain_selection, total_retry_count, state
+            current_question, existing_domain_selection, total_retry_count, state, user_input_type
         )
     
     async def _two_step_processing(self, current_question: str, existing_domain_selection: List[str], 
-                                   total_retry_count: int, state: AgentState) -> Dict[str, any]:
+                                   total_retry_count: int, state: AgentState, user_input_type: str) -> Dict[str, any]:
         """Two-step LLM processing: PROMPT 1 (Decision) → PROMPT 2 (Rewriting)"""
         
         print("coming here ")
@@ -47,7 +54,8 @@ class LLMNavigationController:
                 prompt_1 = self._build_prompt_1_decision_maker(
                     current_question, 
                     previous_question, 
-                    history_context
+                    history_context,
+                    user_input_type
                 )
                 
                 decision_response = await self.db_client.call_claude_api_endpoint_async([
@@ -189,7 +197,7 @@ class LLMNavigationController:
                     }
     
     def _build_prompt_1_decision_maker(self, current_question: str, previous_question: str, 
-                                       history_context: List) -> str:
+                                       history_context: List, user_input_type: str) -> str:
         """
         PROMPT 1: Decision Maker
         Job: Classify input type and decide NEW vs FOLLOW-UP (no rewriting yet)
@@ -203,6 +211,7 @@ NOW ANALYZE THIS USER INPUT:
 User Input: "{current_question}"
 Previous Question: "{previous_question if previous_question else 'None'}"
 Previous Questions History: {history_context}
+User's Explicit Choice: {user_input_type}
 
 ════════════════════════════════════════════════════════════
 SECTION 1: INPUT CLASSIFICATION
@@ -255,11 +264,16 @@ Examples:
 SECTION 3: DECISION LOGIC
 ════════════════════════════════════════════════════════════
 
-**User Command Override** (Check first!)
-IF current starts with "New Question:" → Decision: NEW (respect user)
-IF current starts with "Follow up question:" → Decision: FOLLOW-UP (respect user)
+**Priority 1: User's Explicit UI Choice (HIGHEST PRIORITY)**
+User selected: {user_input_type}
+IF user_input_type == "new-question" → Decision: NEW (respect user's explicit choice)
+IF user_input_type == "follow-up" → Decision: FOLLOW_UP (respect user's explicit choice)
 
-**Otherwise, apply this logic IN ORDER:**
+**Priority 2: User Command in Text** (Check second)
+IF current starts with "New Question:" → Decision: NEW
+IF current starts with "Follow up question:" → Decision: FOLLOW_UP
+
+**Priority 3: Automatic Detection** (Only if no explicit choice above)
 
 1. **Validation keywords** ("validate", "wrong", "fix") → VALIDATION
 
@@ -301,47 +315,82 @@ IF current starts with "Follow up question:" → Decision: FOLLOW-UP (respect us
 - Attributes alone don't make it complete
 - Missing filters = FOLLOW-UP (needs inheritance)
 
+**IMPORTANT for REASONING:**
+When writing the reasoning field, clearly state:
+- If user made an explicit choice, mention it first
+- What components are present in current question
+- What components are missing
+- What needs to be inherited from previous (be specific: "Should inherit PBM and July 2025")
+- Why this decision was made
+
 ════════════════════════════════════════════════════════════
 EXAMPLES
 ════════════════════════════════════════════════════════════
 
-Example 1: Complete New Question (Has Filters)
+Example 1: User Explicit Choice - Follow-up
+User's Choice: "follow-up"
+Current: "show me the expense"
+Previous: "revenue for PBM for July 2025"
+→ Decision: FOLLOW_UP (user explicitly selected follow-up)
+→ metric: "expense", filters: [], time: null
+→ Reasoning: "User explicitly selected follow-up. Current has metric 'expense' but missing filters and time. Should inherit PBM and July 2025 from previous question."
+
+Example 2: User Explicit Choice - New Question
+User's Choice: "new-question"
+Current: "revenue for Specialty"
+Previous: "revenue for PBM for Q3 2025"
+→ Decision: NEW (user explicitly selected new question)
+→ metric: "revenue", filters: ["Specialty"], time: null (partial)
+→ Reasoning: "User explicitly selected new question. Current has metric and filters but time is incomplete. Will be treated as new independent question."
+
+Example 3: Complete New Question (Has Filters)
+User's Choice: "follow-up" (default)
 Current: "revenue for PBM for Q3 2025"
 → metric: "revenue", filters: ["PBM"], time: "Q3 2025"
 → Has metric + filters + time (all present) → Decision: NEW
+→ Reasoning: "Complete question with metric, filters, and time. No inheritance needed."
 
-Example 2: Complete Question with Filters (Your Key Case)
-Previous: "revenue by line of business for PBM for Q3 2025"
+Example 4: Complete Question with Filters (Overrides User Choice if Complete)
+User's Choice: "follow-up"
 Current: "actuals for PBM for September 2025"
 → metric: "actuals", filters: ["PBM"], time: "September 2025"
 → Has metric + filters + time (all present) → Decision: NEW
+→ Reasoning: "User selected follow-up, but current question is complete with metric, filters, and time. Treating as NEW since it's self-contained."
 
-Example 3: Has Attributes but Missing Filters (FOLLOW-UP!)
+Example 5: Has Attributes but Missing Filters (FOLLOW-UP!)
+User's Choice: "follow-up"
 Current: "revenue by line of business for 2025"
 Previous: "revenue for PBM for Q3 2025"
 → metric: "revenue", filters: [], attributes: ["line of business"], time: "2025"
-→ Has metric + attributes + time, but MISSING filters → Decision: FOLLOW-UP
-→ Note: Will inherit "PBM" from previous
+→ Has metric + attributes + time, but MISSING filters → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has metric and attributes but missing filters. Should inherit PBM from previous question."
 
-Example 4: Missing Filters (No Attributes)
+Example 6: Missing Filters (No Attributes)
+User's Choice: "follow-up"
 Current: "compare actuals for September"
 Previous: "revenue for PBM for Q3 2025"
 → metric: "actuals", filters: [], time: "September" (partial)
-→ Has metric + time, but MISSING filters → Decision: FOLLOW-UP
+→ Has metric + time, but MISSING filters → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has metric and partial time but missing filters. Should inherit PBM from previous question."
 
-Example 5: Forecast Cycle Preserved
+Example 7: Forecast Cycle Preserved
+User's Choice: "follow-up"
 Current: "actuals vs forecast 8+4 for Specialty for Q3 2025"
 → metric: "actuals vs forecast 8+4", filters: ["Specialty"], time: "Q3 2025"
 → Has metric (with cycle) + filters + time → Decision: NEW
-→ Note: "8+4" is part of the metric
+→ Reasoning: "User selected follow-up, but question is complete with metric (including 8+4 cycle), filters, and time. Treating as NEW."
 
-Example 6: Pronoun Reference
+Example 8: Pronoun Reference
+User's Choice: "follow-up"
 Current: "why is that high"
-→ Has pronoun "that" → Decision: FOLLOW-UP
+→ Has pronoun "that" → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has pronoun 'that' which requires context. Should inherit all components (metric, filters, time) from previous question."
 
-Example 7: User Command
+Example 9: User Command in Text
+User's Choice: "follow-up"
 Current: "NEW: revenue for Specialty"
 → Starts with "NEW:" → Decision: NEW (respect command)
+→ Reasoning: "User text starts with 'NEW:' command, overriding UI choice. Current specifies revenue for Specialty but missing time."
 
 ════════════════════════════════════════════════════════════
 OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
@@ -373,7 +422,7 @@ OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
         "attributes": ["list"],
         "time": "value or null"
     }},
-    "reasoning": "brief explanation"
+    "reasoning": "Clear explanation mentioning: 1) User's choice if applicable, 2) What's present in current, 3) What's missing, 4) What to inherit (be specific), 5) Why this decision"
 }}
 
 """
@@ -383,7 +432,7 @@ OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
                                  decision_json: dict) -> str:
         """
         PROMPT 2: Rewriter
-        Job: Execute rewriting based on Prompt 1's decision + Extract filters
+        Job: Execute rewriting based on PROMPT 1's analysis + Extract filters
         """
         
         # Get current year dynamically
@@ -397,91 +446,220 @@ INPUT INFORMATION
 ════════════════════════════════════════════════════════════
 Current Question: "{current_question}"
 Previous Question: "{previous_question if previous_question else 'None'}"
-
-Decision from PROMPT 1:
-{json.dumps(decision_json, indent=2)}
-
 Current Year: {current_year}
 
+**ANALYSIS FROM PROMPT 1:**
+{json.dumps(decision_json, indent=2)}
+
+**REASONING FROM PROMPT 1:**
+{decision_json.get('reasoning', 'No reasoning provided')}
+
 ════════════════════════════════════════════════════════════
-SECTION 1: EXECUTION RULES
+SECTION 1: QUESTION REWRITING
 ════════════════════════════════════════════════════════════
 
-Based on context_decision: {decision_json.get('context_decision', 'NEW')}
+Your job is to rewrite the question based on the analysis and reasoning from PROMPT 1.
+
+**CRITICAL: USE THE REASONING ABOVE AS YOUR PRIMARY GUIDE**
+
+The reasoning tells you:
+1. What the user's intent was (explicit choice or auto-detected)
+2. Which components are present in the current question
+3. Which components are missing
+4. Exactly what to inherit from the previous question (with specific values)
+
+**STEP 1: Read and Parse the Reasoning**
+Example reasoning: "User explicitly selected follow-up. Current has metric 'expense' but missing filters and time. Should inherit PBM and July 2025 from previous."
+
+Parse this to understand:
+- Decision basis: "User explicitly selected follow-up"
+- What's in current: "metric 'expense'"
+- What's missing: "filters and time"
+- What to inherit: "PBM and July 2025"
+
+**STEP 2: Apply Rewriting Based on Context Decision**
+
+Context Decision: {decision_json.get('context_decision', 'NEW')}
 
 **IF NEW:**
-→ Use current question as-is
+→ Use the current question components as-is
 → Format professionally: "What is [metric] for [filters] for [time]"
-→ No inheritance
+→ NO inheritance from previous
+→ user_message: "" (empty string)
 
 **IF VALIDATION:**
 → Format: "[Previous Question] - VALIDATION REQUEST: [current input]"
+→ user_message: "This is a validation request."
 
-**IF FOLLOW-UP:**
-→ Apply inheritance rules below
+**IF FOLLOW_UP:**
+→ **PRIMARY INSTRUCTION: Follow the reasoning exactly**
+→ The reasoning tells you what to inherit - look for phrases like:
+  - "Should inherit [specific values]"
+  - "Missing [component]"
+  - "Needs context from previous"
+→ Build the rewritten question using:
+  1. **Reasoning as guide**: If reasoning says "inherit PBM", look at components_previous.filters for PBM
+  2. **Components as data source**: Use components_current for what's present, components_previous for what's missing
+  3. **Time handling**: If time_is_partial is true, add {current_year}
+  4. **Format**: "What is [metric] for [filters] [by attributes] for [time]"
+→ Create user_message by extracting what was inherited from the reasoning
 
-**IMPORTANT: Metric Preservation**
-When the metric includes forecast cycles or modifiers, preserve them exactly:
-- "actuals vs forecast 8+4" → Keep "8+4" as part of metric
-- "actuals vs forecast 5+7" → Keep "5+7" as part of metric
-- These cycles are part of the metric specification, not filters
+**STEP 3: Create User Message**
+- Extract the specific values mentioned in reasoning for inheritance
+- Format naturally: "I'm using [specific values] from your last question."
+- If time was added: Include "Added {current_year} as the year."
+- If nothing inherited: empty string ""
 
-════════════════════════════════════════════════════════════
-SECTION 2: INHERITANCE RULES (FOLLOW-UP only)
-════════════════════════════════════════════════════════════
-
-Apply these 5 core rules:
-
-**Rule 1: Fill What's Missing**
-If component is missing (null/empty) in current → inherit from previous
-- Missing metric → inherit previous metric
-- Missing filters → inherit previous filters
-- Missing attributes → inherit previous attributes
-- Missing time → inherit previous time
-
-**Rule 2: Complete Question → Don't Inherit Attributes (CRITICAL)**
-
-If current has ALL of these: metric + filters + time
-→ DON'T inherit attributes from previous
-→ User provided complete specification, don't add grouping dimensions
-
-If current has metric + attributes + time BUT NO filters:
-→ This is NOT complete
-→ DO inherit filters from previous
-→ Keep the attributes that are in current
-
-Examples:
-- Previous: "revenue by line of business for PBM for Q3"
-           ↑ has attribute "by line of business", filter "PBM"
-- Current: "actuals for PBM for September"
-           ↑ has metric + filters + time (complete!)
-- Result: "actuals for PBM for September"
-          ↑ NO "by line of business" inherited
-- Reason: Current is complete with filters, don't add attributes
-
-BUT if current has attributes but NO filters:
-- Previous: "revenue for PBM for Q3"
-- Current: "revenue by line of business for 2025"
-           ↑ has metric + attributes + time, but NO filters
-- Result: "revenue for PBM by line of business for 2025"
-          ↑ Inherited "PBM", kept "by line of business"
-- Reason: Current missing filters, so inherit them and keep attributes
-
-**Rule 3: Add Current Year for Partial Time**
-If time_is_partial = true → add {current_year}
-- "August" → "August {current_year}"
-- "Q3" → "Q3 {current_year}"
-
-**Rule 4: Pronouns Inherit Everything**
-If has_pronouns = true → inherit ALL components
-- "why is that high" → inherit metric + filters + attributes + time
-
-**Rule 5: Current Always Wins**
-If current has a component → use current's value (don't override)
-- Current says "for Specialty", previous had "for PBM" → use Specialty
+**IMPORTANT NOTES:**
+- **ALWAYS reference the reasoning first** - it contains the exact inheritance instructions
+- Preserve forecast cycles exactly: "actuals vs forecast 8+4" → keep "8+4" as part of metric
+- Use specific values from reasoning, not generic statements
+- Always use professional format: "What is..." for what questions, "Why is..." for why questions
 
 ════════════════════════════════════════════════════════════
-SECTION 3: FILTER VALUES EXTRACTION
+REWRITING EXAMPLES (Using Reasoning)
+════════════════════════════════════════════════════════════
+
+Example 1: NEW Decision
+Decision: NEW
+Current: "revenue for PBM for Q3 2025"
+Reasoning: "Complete question with all components"
+
+**Using Reasoning:**
+- Reasoning says "complete question" → no inheritance needed
+- Use current components as-is
+
+→ Rewritten: "What is revenue for PBM for Q3 2025"
+→ user_message: ""
+
+Example 2: FOLLOW_UP - Missing Filters and Time (YOUR KEY EXAMPLE)
+Decision: FOLLOW_UP
+Current: "show me the expense"
+Previous: "revenue for PBM for July 2025"
+Reasoning: "User explicitly selected follow-up. Current has metric 'expense' but missing filters and time. Should inherit PBM and July 2025 from previous."
+components_current: {{"metric": "expense", "filters": [], "time": null}}
+components_previous: {{"metric": "revenue", "filters": ["PBM"], "time": "July 2025"}}
+
+**Using Reasoning:**
+Step 1: Parse reasoning
+- User choice: "explicitly selected follow-up"
+- What's present: "metric 'expense'"
+- What's missing: "filters and time"
+- What to inherit: "PBM and July 2025"
+
+Step 2: Build rewritten question
+- Metric from current: "expense"
+- Filters to inherit: "PBM" (reasoning says so, confirmed in components_previous.filters)
+- Time to inherit: "July 2025" (reasoning says so, confirmed in components_previous.time)
+
+Step 3: Create user message
+- Extract inherited values from reasoning: "PBM and July 2025"
+
+→ Rewritten: "What is the expense for PBM for July 2025"
+→ user_message: "I'm using PBM and July 2025 from your last question."
+
+Example 3: FOLLOW_UP - Partial Time Only
+Decision: FOLLOW_UP
+Current: "actuals for PBM for September"
+Previous: "revenue for PBM for Q3 2025"
+Reasoning: "User selected follow-up. Current has metric, filters, but time is partial (missing year)."
+components_current: {{"metric": "actuals", "filters": ["PBM"], "time": "September", "time_is_partial": true}}
+
+**Using Reasoning:**
+Step 1: Parse reasoning
+- What's present: "metric, filters"
+- What's partial: "time (missing year)"
+
+Step 2: Build rewritten question
+- Metric from current: "actuals"
+- Filters from current: ["PBM"]
+- Time from current + year: "September {current_year}"
+
+Step 3: Create user message
+- Only year was added, no inheritance
+
+→ Rewritten: "What is actuals for PBM for September {current_year}"
+→ user_message: "Added {current_year} as the year."
+
+Example 4: FOLLOW_UP - Missing Filters, Keep Attributes
+Decision: FOLLOW_UP
+Current: "revenue by line of business for 2025"
+Previous: "revenue for PBM for Q3 2025"
+Reasoning: "User selected follow-up. Current has attributes but missing filters. Should inherit PBM from previous."
+components_current: {{"metric": "revenue", "filters": [], "attributes": ["line of business"], "time": "2025"}}
+components_previous: {{"filters": ["PBM"]}}
+
+**Using Reasoning:**
+Step 1: Parse reasoning
+- What's present: "attributes"
+- What's missing: "filters"
+- What to inherit: "PBM"
+
+Step 2: Build rewritten question
+- Metric from current: "revenue"
+- Filters to inherit: ["PBM"] (reasoning explicitly says "inherit PBM")
+- Attributes from current: ["line of business"]
+- Time from current: "2025"
+
+Step 3: Create user message
+- Extract inherited value: "PBM"
+
+→ Rewritten: "What is revenue for PBM by line of business for 2025"
+→ user_message: "I'm using PBM from your last question."
+
+Example 5: FOLLOW_UP - Pronoun (Inherit All)
+Decision: FOLLOW_UP
+Current: "why is that high"
+Previous: "revenue for carrier MDOVA for Q3"
+Reasoning: "User selected follow-up. Current has pronoun 'that' which requires context. Should inherit all components (metric, filters, time) from previous question."
+components_current: {{"metric": null, "filters": [], "time": null, "signals": {{"has_pronouns": true}}}}
+components_previous: {{"metric": "revenue", "filters": ["carrier MDOVA"], "time": "Q3"}}
+
+**Using Reasoning:**
+Step 1: Parse reasoning
+- What's missing: Everything (pronoun reference)
+- What to inherit: "all components (metric, filters, time)"
+
+Step 2: Build rewritten question
+- Metric to inherit: "revenue"
+- Filters to inherit: ["carrier MDOVA"]
+- Time to inherit: "Q3"
+
+Step 3: Create user message
+- Extract all inherited values
+
+→ Rewritten: "Why is the revenue for carrier MDOVA for Q3 high"
+→ user_message: "I'm using revenue, carrier MDOVA, and Q3 from your last question."
+
+Example 6: FOLLOW_UP - Forecast Cycle Preserved
+Decision: FOLLOW_UP
+Current: "compare actuals vs forecast 8+4 for September"
+Previous: "actuals vs forecast 8+4 for Specialty for Q3"
+Reasoning: "User selected follow-up. Current has metric with cycle but missing filters. Should inherit Specialty. Time is partial."
+components_current: {{"metric": "actuals vs forecast 8+4", "filters": [], "time": "September", "time_is_partial": true}}
+components_previous: {{"filters": ["Specialty"]}}
+
+**Using Reasoning:**
+Step 1: Parse reasoning
+- What's present: "metric with cycle"
+- What's missing: "filters"
+- What to inherit: "Specialty"
+- Time status: "partial"
+
+Step 2: Build rewritten question
+- Metric from current: "actuals vs forecast 8+4" (preserve cycle)
+- Filters to inherit: ["Specialty"] (reasoning says so)
+- Time from current + year: "September {current_year}"
+
+Step 3: Create user message
+- Inherited: "Specialty"
+- Added: year
+
+→ Rewritten: "Compare actuals vs forecast 8+4 for Specialty for September {current_year}"
+→ user_message: "I'm using Specialty from your last question. Added {current_year} as the year."
+
+════════════════════════════════════════════════════════════
+SECTION 2: FILTER VALUES EXTRACTION
 ════════════════════════════════════════════════════════════
 
 **CRITICAL: Extract filter values from the REWRITTEN question (after inheritance)**
@@ -545,73 +723,6 @@ Rewritten: "What is revenue for PBM by line of business for July {current_year}"
 → "by": in exclusion list (grouping keywords) → EXCLUDE
 → "line of business": in exclusion list (attribute names) → EXCLUDE
 → filter_values: []
-
-════════════════════════════════════════════════════════════
-EXAMPLES
-════════════════════════════════════════════════════════════
-
-Example 1: Year Defaulting
-Decision: FOLLOW-UP, time_is_partial: true
-Current: "actuals for PBM for August"
-→ Rewritten: "What is actuals for PBM for August {current_year}"
-→ user_message: "Added {current_year} as the year."
-
-Example 2: Missing Filters (Inherit Filters)
-Decision: FOLLOW-UP
-Current: "compare actuals for September"
-Previous: "revenue for PBM for Q3 {current_year}"
-→ Current MISSING filters
-→ Rewritten: "Compare actuals for PBM for September {current_year}"
-→ user_message: "I'm using PBM from your last question. Added {current_year} as the year."
-
-Example 3: Complete Question - Don't Inherit Attributes (YOUR KEY CASE)
-Decision: FOLLOW-UP (because partial time)
-Current: "actuals for PBM for September"
-         ↑ has metric + filters + time (complete structure!)
-Previous: "revenue by line of business for PBM for Q3"
-         ↑ had attribute "by line of business"
-
-Analysis:
-- Current has: metric ("actuals") + filters ("PBM") + time ("September")
-- Even though time is partial, current has COMPLETE structure with filters
-- Rule 2 applies: Don't inherit attributes from previous
-- Rule 3 applies: Add year for partial time
-
-→ Rewritten: "What is actuals for PBM for September {current_year}"
-             ↑ NO "by line of business" inherited!
-→ user_message: "Added {current_year} as the year."
-
-Example 4: Has Attributes but Missing Filters (Inherit Filters, Keep Attributes)
-Decision: FOLLOW-UP
-Current: "revenue by line of business for 2025"
-         ↑ has attributes but MISSING filters
-Previous: "revenue for PBM for Q3 {current_year}"
-         ↑ had filter "PBM"
-
-Analysis:
-- Current has: metric + attributes + time, but NO filters
-- Rule 1 applies: Inherit missing filters from previous
-- Keep attributes from current
-
-→ Rewritten: "What is revenue for PBM by line of business for 2025"
-             ↑ Inherited "PBM", kept "by line of business"
-→ user_message: "I'm using PBM from your last question."
-
-Example 5: Forecast Cycle Preserved
-Decision: FOLLOW-UP
-Current: "compare actuals vs forecast 8+4 for September"
-Previous: "actuals vs forecast 8+4 for Specialty for Q3"
-→ Metric includes "8+4" cycle (preserved)
-→ Missing filters, inherit "Specialty"
-→ Rewritten: "Compare actuals vs forecast 8+4 for Specialty for September {current_year}"
-→ user_message: "I'm using Specialty from your last question. Added {current_year} as the year."
-
-Example 6: Pronoun (Inherit All)
-Decision: FOLLOW-UP, has_pronouns: true
-Current: "why is that high"
-Previous: "revenue for carrier MDOVA for Q3"
-→ Rewritten: "Why is the revenue for carrier MDOVA for Q3 high"
-→ user_message: "I'm using revenue, carrier MDOVA, Q3 from your last question."
 
 ════════════════════════════════════════════════════════════
 OUTPUT FORMAT

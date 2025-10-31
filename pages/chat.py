@@ -579,6 +579,8 @@ def initialize_session_state():
         st.session_state.strategic_rendered = False
     if 'drillthrough_state' not in st.session_state:
         st.session_state.drillthrough_state = None
+    if 'question_type_selection' not in st.session_state:
+        st.session_state.question_type_selection = 'Follow-up'
     # Initialize domain_selection - inherit from main page selection or set to None
     if 'domain_selection' not in st.session_state:
         st.session_state.domain_selection = None
@@ -2493,8 +2495,11 @@ def main():
             run_streaming_workflow(workflow, st.session_state.current_query)
             st.session_state.processing = False
             st.session_state.workflow_started = False
-            # Reset radio button to "Follow-up" for next question
+            # Reset radio button to "Follow-up" for next question by updating session state
             st.session_state.question_type_selection = "Follow-up"
+            # Also delete the radio widget key to force Streamlit to reset it
+            if 'question_type_radio' in st.session_state:
+                del st.session_state.question_type_radio
             st.rerun()
         
         # Handle narrative generation after SQL results have been rendered
@@ -2729,6 +2734,12 @@ def render_chat_message_enhanced(message, message_idx):
     message_type = message.get('message_type', 'standard')
     timestamp = message.get('timestamp', '')
     is_historical = message.get('historical', False)  # Check if this is a historical message
+    
+    # CRITICAL: During processing, hide all interactive messages with feedback buttons
+    # This prevents them from showing as greyed out
+    if st.session_state.get('processing', False):
+        if message_type in ['sql_result', 'strategic_analysis', 'drillthrough_analysis', 'followup_questions']:
+            return  # Don't render these at all during processing
     
     if role == 'user':
         # Use custom sky blue background for user messages with icon

@@ -1925,22 +1925,9 @@ def start_processing(user_query: str):
             # This ensures feedback buttons are hidden for old results
             msg['historical'] = True 
             print(f"🕰️ Marked SQL result message as historical")
-        
-        # 2. MARK FOLLOW-UP INTRO MESSAGE AS HISTORICAL
-        # This prevents the follow-up message from re-rendering the buttons in a disabled state
-        if msg.get('message_type') == 'followup_questions':
-            msg['historical'] = True
-            print("🕰️ Marked old follow-up intro message as historical")
     
-    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS (MOST CRITICAL STEP)
-    # The buttons render based on this list, so clearing it hides the buttons on re-run.
-    if hasattr(st.session_state, 'current_followup_questions'):
-        if st.session_state.current_followup_questions:
-            print("🗑️ Clearing interactive follow-up questions list due to new user input")
-            st.session_state.current_followup_questions = []
-            
-    # Remove ALL "Would you like to explore further?" messages from chat history
-    # This addresses the case where the user types a question instead of clicking a button.
+    # 2. IMMEDIATELY REMOVE ALL FOLLOW-UP MESSAGES (don't just mark as historical)
+    # This prevents them from showing greyed out during processing
     messages_to_remove = []
     for i, msg in enumerate(st.session_state.messages):
         if msg.get('message_type') == 'followup_questions':
@@ -1950,6 +1937,13 @@ def start_processing(user_query: str):
     for i in reversed(messages_to_remove):
         st.session_state.messages.pop(i)
         print(f"🗑️ Removed follow-up intro message at index {i} from chat history")
+    
+    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS LIST
+    # The buttons render based on this list, so clearing it hides the buttons on re-run.
+    if hasattr(st.session_state, 'current_followup_questions'):
+        if st.session_state.current_followup_questions:
+            print("🗑️ Clearing interactive follow-up questions list due to new user input")
+            st.session_state.current_followup_questions = []
         
     # Add user message to history (use the clean, original query for display)
     st.session_state.messages.append({
@@ -2495,11 +2489,8 @@ def main():
             run_streaming_workflow(workflow, st.session_state.current_query)
             st.session_state.processing = False
             st.session_state.workflow_started = False
-            # Reset radio button to "Follow-up" for next question by updating session state
+            # Reset radio button to "Follow-up" for next question
             st.session_state.question_type_selection = "Follow-up"
-            # Also delete the radio widget key to force Streamlit to reset it
-            if 'question_type_radio' in st.session_state:
-                del st.session_state.question_type_radio
             st.rerun()
         
         # Handle narrative generation after SQL results have been rendered
@@ -2665,8 +2656,9 @@ def main():
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Store the selection in session state so start_processing can access it
-        st.session_state.question_type_selection = question_type
+        # Store the selection in session state ONLY if it changed (prevents infinite rerun loop)
+        if st.session_state.get('question_type_selection') != question_type:
+            st.session_state.question_type_selection = question_type
         # --- END NEW CODE ---
         
         # Chat input at the bottom
@@ -2689,6 +2681,7 @@ def main():
 # Keep your existing render_persistent_followup_questions function
 def render_persistent_followup_questions():
     """Render followup questions as simple styled buttons - left aligned like before"""
+    
     # Don't show follow-up questions if:
     # 1. Processing is active
     # 2. List is empty
@@ -2735,11 +2728,13 @@ def render_chat_message_enhanced(message, message_idx):
     timestamp = message.get('timestamp', '')
     is_historical = message.get('historical', False)  # Check if this is a historical message
     
-    # CRITICAL: During processing, hide all interactive messages with feedback buttons
-    # This prevents them from showing as greyed out
-    if st.session_state.get('processing', False):
-        if message_type in ['sql_result', 'strategic_analysis', 'drillthrough_analysis', 'followup_questions']:
-            return  # Don't render these at all during processing
+    # ONLY hide followup_questions messages during processing - keep SQL results visible!
+    if st.session_state.get('processing', False) and message_type == 'followup_questions':
+        return  # Don't render followup messages during processing
+    
+    # Don't render historical followup_questions messages at all
+    if is_historical and message_type == 'followup_questions':
+        return
     
     if role == 'user':
         # Use custom sky blue background for user messages with icon

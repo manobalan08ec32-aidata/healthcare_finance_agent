@@ -1925,25 +1925,28 @@ def start_processing(user_query: str):
             # This ensures feedback buttons are hidden for old results
             msg['historical'] = True 
             print(f"🕰️ Marked SQL result message as historical")
-    
-    # 2. IMMEDIATELY REMOVE ALL FOLLOW-UP MESSAGES (don't just mark as historical)
-    # This prevents them from showing greyed out during processing
-    messages_to_remove = []
-    for i, msg in enumerate(st.session_state.messages):
+        
+        # 2. MARK FOLLOW-UP INTRO MESSAGE AS HISTORICAL
+        # This prevents the follow-up message from re-rendering the buttons in a disabled state
         if msg.get('message_type') == 'followup_questions':
-            messages_to_remove.append(i)
+            msg['historical'] = True
+            print("🕰️ Marked old follow-up intro message as historical")
     
-    # Remove messages in reverse order to maintain correct indices
-    for i in reversed(messages_to_remove):
-        st.session_state.messages.pop(i)
-        print(f"🗑️ Removed follow-up intro message at index {i} from chat history")
-    
-    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS LIST
+    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS (MOST CRITICAL STEP)
     # The buttons render based on this list, so clearing it hides the buttons on re-run.
     if hasattr(st.session_state, 'current_followup_questions'):
         if st.session_state.current_followup_questions:
             print("🗑️ Clearing interactive follow-up questions list due to new user input")
             st.session_state.current_followup_questions = []
+            
+    # Remove the visible "Would you like to explore further?" message from chat history
+    # This addresses the case where the user types a question instead of clicking a button.
+    # We re-check the messages list *after* marking them as historical/non-interactive,
+    # ensuring the last message is the one we want to remove.
+    if (st.session_state.messages and 
+        st.session_state.messages[-1].get('message_type') == 'followup_questions'):
+        st.session_state.messages.pop()
+        print("🗑️ Removed follow-up intro message from chat history")
         
     # Add user message to history (use the clean, original query for display)
     st.session_state.messages.append({
@@ -2727,14 +2730,6 @@ def render_chat_message_enhanced(message, message_idx):
     message_type = message.get('message_type', 'standard')
     timestamp = message.get('timestamp', '')
     is_historical = message.get('historical', False)  # Check if this is a historical message
-    
-    # ONLY hide followup_questions messages during processing - keep SQL results visible!
-    if st.session_state.get('processing', False) and message_type == 'followup_questions':
-        return  # Don't render followup messages during processing
-    
-    # Don't render historical followup_questions messages at all
-    if is_historical and message_type == 'followup_questions':
-        return
     
     if role == 'user':
         # Use custom sky blue background for user messages with icon

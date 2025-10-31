@@ -1937,14 +1937,17 @@ def start_processing(user_query: str):
             print("🗑️ Clearing interactive follow-up questions list due to new user input")
             st.session_state.current_followup_questions = []
             
-    # Remove the visible "Would you like to explore further?" message from chat history
+    # Remove ALL "Would you like to explore further?" messages from chat history
     # This addresses the case where the user types a question instead of clicking a button.
-    # We re-check the messages list *after* marking them as historical/non-interactive,
-    # ensuring the last message is the one we want to remove.
-    if (st.session_state.messages and 
-        st.session_state.messages[-1].get('message_type') == 'followup_questions'):
-        st.session_state.messages.pop()
-        print("🗑️ Removed follow-up intro message from chat history")
+    messages_to_remove = []
+    for i, msg in enumerate(st.session_state.messages):
+        if msg.get('message_type') == 'followup_questions':
+            messages_to_remove.append(i)
+    
+    # Remove messages in reverse order to maintain correct indices
+    for i in reversed(messages_to_remove):
+        st.session_state.messages.pop(i)
+        print(f"🗑️ Removed follow-up intro message at index {i} from chat history")
         
     # Add user message to history (use the clean, original query for display)
     st.session_state.messages.append({
@@ -2800,11 +2803,11 @@ def render_chat_message_enhanced(message, message_idx):
             """, unsafe_allow_html=True)
             return
 
-        # NEW CODE: Suppress historical followup_questions message
+        # NEW CODE: Suppress historical followup_questions message and hide during processing
         elif message_type == "followup_questions":
-            if is_historical:
-                # If the user started a new question, the old follow-up message is marked historical. 
-                # We skip rendering it to prevent the empty, greyed-out space.
+            if is_historical or st.session_state.get('processing', False):
+                # If the user started a new question (marked as historical) OR if currently processing,
+                # we skip rendering to prevent the greyed-out message from showing
                 return 
 
         # Use consistent warm gold background for all system messages with icon

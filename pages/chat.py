@@ -1,313 +1,30 @@
-def main():
-    """Main Streamlit application with async workflow integration and real-time chat history"""
-    
-    # Safety check: Ensure user came from main.py with proper authentication
-    initialize_session_state()
-    authenticated_user = get_authenticated_user()
-    
-    if authenticated_user == 'unknown_user':
-        st.error("⚠️ Please start from the main page to ensure proper authentication.")
-        st.info("👉 Click the button below to go to the main page and select your team.")
-        if st.button("Go to Main Page"):
-            st.switch_page("main.py")
-        st.stop()
+# ... (previous elif st.session_state.get('strategic_rendered', False): block ends) ...
 
-    # Add enhanced CSS styling
-    add_message_type_css()
-
-    with st.sidebar:
-        st.markdown("### Navigation")
-        
-        # Custom styling for the back button
+        # --- FIX 2 (FINAL): Radio Button for Question Context with MINIMAL SPACING ---
+        # We now use CSS to specifically reduce the margin of the radio component itself.
         st.markdown("""
         <style>
-        .back-button {
-            background-color: white;
-            color: #1e3a8a;
-            border: 1px solid #1e3a8a;
-            padding: 8px 16px;
-            border-radius: 4px;
-            text-decoration: none;
-            font-weight: 500;
-            display: inline-block;
-            width: 100%;
-            text-align: center;
-            margin: 10px 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
-        }
-        .back-button:hover {
-            background-color: #f0f9ff;
-        }
-        
-        /* Sidebar session history buttons - compact and small */
-        [data-testid="stSidebar"] .stButton > button[key*="history_"] {
-            text-align: left !important;
-            background-color: #f8f9fa !important;
-            border: 1px solid #e0e0e0 !important;
-            padding: 4px 6px !important;
-            margin: 2px 0 !important;
-            border-radius: 4px !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
-            width: 100% !important;
-            height: auto !important;
-            min-height: 24px !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
-        }
-        
-        [data-testid="stSidebar"] .stButton > button[key*="history_"]:hover {
-            background-color: #e9ecef !important;
-            border-color: #1e3a8a !important;
-        }
+            /* Target the specific element containing the radio button options to reduce top margin */
+            div[data-testid="stForm"] > div > div > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) {
+                margin-top: 0px !important; 
+                padding-top: 0px !important;
+            }
+
+            /* This targets the container holding the radio options to pull it up */
+            div[data-testid="stForm"] > div > div > div:nth-child(2) > div:nth-child(2) {
+                margin-top: -15px !important;
+                padding-top: 0px !important;
+            }
+            
+            /* Target the entire radio button container and reduce padding/margin */
+            .stRadio {
+                margin-bottom: -15px !important; 
+            }
         </style>
         """, unsafe_allow_html=True)
-        
-        if st.button("Back to Main Page", key="back_to_main"):
-            st.switch_page("main.py")
-    
-    try:
-        workflow = get_session_workflow()
-        
-        if workflow is None:
-            st.error("Failed to initialize async workflow. Please refresh the page.")
-            return
 
-        # --- FIX 1: Reset radio button to default "Follow-up" after processing ---
-        # Check if processing just finished and the previous selection was 'New Question'
-        # The 'processing' flag is set to False right before rerun() below.
-        if (not st.session_state.get('processing', True) and 
-            st.session_state.get('question_type_selection') == 'New Question'):
-            
-            # This ensures the radio button visually defaults to "Follow-up" for the next turn.
-            st.session_state.question_type_radio = 'Follow-up'
-            st.session_state.question_type_selection = 'Follow-up'
-            print("🔄 Resetting question_type to 'Follow-up' for next turn.")
-        # --- END FIX 1 ---
-        
-        # Show spinner in main area while fetching session history
-        if 'cached_history' not in st.session_state:
-            # Show spinner in main chat area while fetching history
-            spinner_placeholder = st.empty()
-            with spinner_placeholder:
-                with st.spinner("🔄 Loading application and fetching session history..."):
-                    # Fetch history in background while showing spinner
-                    with st.sidebar:
-                        st.markdown("---")
-                        render_sidebar_history()
-            # Clear the spinner once history is loaded
-            spinner_placeholder.empty()
-        else:
-            # History already cached, just render sidebar
-            with st.sidebar:
-                st.markdown("---")
-                render_sidebar_history()
-        
-        st.markdown("""
-        <div style="margin-top: -20px; margin-bottom: 10px;">
-            <h2 style="color: #1e3a8a; font-weight: 600; font-size: 1.8rem; margin-bottom: 0;">Finance Analytics Assistant</h2>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display current domain selection if available
-        if st.session_state.get('domain_selection'):
-            domain_display = ", ".join(st.session_state.domain_selection)
-            st.markdown(f"""
-            <div style="background-color: #e3f2fd; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; color: #1e3a8a; font-size: 0.9rem;">
-                🏢 <strong>Selected Team:</strong> {domain_display}
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Show overview of last session if available (only for fresh sessions)
-        render_last_session_overview()
-        
-        st.markdown("---")
-        
-        # Chat container for messages
-        chat_container = st.container()
-        
-        with chat_container:
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-            
-            # Render all chat messages (including real-time updates)
-            for idx, message in enumerate(st.session_state.messages):
-                render_chat_message_enhanced(message, idx)
-            
-            # Render follow-up questions if they exist
-            render_persistent_followup_questions()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Processing indicator and streaming workflow execution
-        if st.session_state.processing:
-            # with st.spinner("Running SQL Generation..."):
-            run_streaming_workflow(workflow, st.session_state.current_query)
-            st.session_state.processing = False
-            st.session_state.workflow_started = False
-            st.rerun()
-        
-        # Handle narrative generation after SQL results have been rendered
-        elif st.session_state.get('sql_rendered', False) and not st.session_state.get('narrative_rendered', False):
-            narrative_state = st.session_state.get('narrative_state')
-            if narrative_state:
-                with st.spinner("Generating Insights..."):
-                    try:
-                        print("📝 Generating narrative after SQL display...")
-                        
-                        # Run narrative generation
-                        async def generate_narrative():
-                            session_id = st.session_state.session_id
-                            config = {"configurable": {"thread_id": session_id}}
-                            return await workflow.ainvoke_narrative(narrative_state, config)
-                        
-                        narrative_res = asyncio.run(generate_narrative())
-                        
-                        # Add diagnostic logging to understand the response structure
-                        print("🔍 Narrative response keys:", list(narrative_res.keys()) if isinstance(narrative_res, dict) else "Not a dict")
-                        print("🔍 narrative_complete in response:", narrative_res.get('narrative_complete', 'NOT_FOUND'))
-                        
-                        # The narrative_complete flag should be in the returned state, not the agent's return value
-                        narrative_complete_flag = narrative_res.get('narrative_complete', False)
-                        
-                        # Get the updated sql_result from the returned state (narrative agent modifies it in-place)
-                        updated_sql_result = narrative_res.get('sql_result', {})
-                        print("🔍 Updated sql_result has narrative:", bool(updated_sql_result.get('narrative')))
-                        
-                        if narrative_complete_flag:
-                            # Update the existing SQL result message with narrative
-                            if updated_sql_result:
-                                # Find and update the last SQL result message
-                                for i in range(len(st.session_state.messages) - 1, -1, -1):
-                                    msg = st.session_state.messages[i]
-                                    if msg.get('message_type') == 'sql_result':
-                                        msg['sql_result'] = updated_sql_result
-                                        break
-                            else:
-                                # Fallback: try to locate sql_result from narrative_state if not returned explicitly
-                                updated_sql_result = (st.session_state.get('narrative_state') or {}).get('sql_result', {})
-                            
-                            # Fire and forget insert of tracking row (after we have narrative)
-                            if updated_sql_result:
-                                try:
-                                    asyncio.run(_insert_session_tracking_row(updated_sql_result))
-                                except RuntimeError:
-                                    # If already in an event loop (unlikely here due to asyncio.run wrapping), schedule task
-                                    loop = asyncio.get_event_loop()
-                                    loop.create_task(_insert_session_tracking_row(updated_sql_result))
-                            
-                            print("✅ Narrative generation completed")
-                        else:
-                            print("⚠️ Narrative generation completed with issues - checking if narrative exists anyway...")
-                            # Even if flag is missing, check if narrative was actually added
-                            if updated_sql_result and updated_sql_result.get('narrative'):
-                                print("🔄 Found narrative content despite missing flag - updating message and inserting")
-                                # Update the message anyway
-                                for i in range(len(st.session_state.messages) - 1, -1, -1):
-                                    msg = st.session_state.messages[i]
-                                    if msg.get('message_type') == 'sql_result':
-                                        msg['sql_result'] = updated_sql_result
-                                        break
-                                
-                                # Insert tracking row
-                                try:
-                                    asyncio.run(_insert_session_tracking_row(updated_sql_result))
-                                except RuntimeError:
-                                    loop = asyncio.get_event_loop()
-                                    loop.create_task(_insert_session_tracking_row(updated_sql_result))
-                            else:
-                                print("❌ No narrative content found in sql_result")
-                            
-                    except Exception as ne:
-                        st.error(f"Narrative generation failed: {ne}")
-                        print(f"❌ Narrative generation error: {ne}")
-                    
-                    # Mark narrative as rendered and prepare for follow-up
-                    st.session_state.narrative_rendered = True
-                    st.session_state.narrative_state = None
-                    st.rerun()
-        
-        # Handle follow-up generation after narrative has been rendered
-        elif st.session_state.get('narrative_rendered', False):
-            followup_state = st.session_state.get('followup_state')
-            if followup_state:
-                with st.spinner("Generating follow-up questions..."):
-                    try:
-                        print("🔄 Generating follow-up questions after narrative completion...")
-                        
-                        # Run follow-up generation
-                        async def generate_followups():
-                            session_id = st.session_state.session_id
-                            config = {"configurable": {"thread_id": session_id}}
-                            return await workflow.ainvoke_followup(followup_state, config)
-                        
-                        follow_res = asyncio.run(generate_followups())
-                        fq = follow_res.get('followup_questions', [])
-                        
-                        if fq:
-                            st.session_state.current_followup_questions = fq
-                            add_assistant_message("💡 **Would you like to explore further? Here are some suggested follow-up questions:**", message_type="followup_questions")
-                            print(f"✅ Generated {len(fq)} follow-up questions")
-                        else:
-                            print("ℹ️ No follow-up questions generated")
-                            
-                    except Exception as fe:
-                        st.error(f"Follow-up generation failed: {fe}")
-                        print(f"❌ Follow-up generation error: {fe}")
-                    
-                    # Clean up session state
-                    st.session_state.sql_rendered = False
-                    st.session_state.narrative_rendered = False
-                    st.session_state.followup_state = None
-                    st.rerun()
-        
-        # Handle drillthrough execution after strategic analysis has been rendered
-        elif st.session_state.get('strategic_rendered', False):
-            drillthrough_state = st.session_state.get('drillthrough_state')
-            if drillthrough_state:
-                with st.spinner("Running Drillthrough Analysis..."):
-                    try:
-                        print("🔄 Running drillthrough analysis after strategic display...")
-                        
-                        # Run drillthrough analysis
-                        async def execute_drillthrough():
-                            session_id = st.session_state.session_id
-                            config = {"configurable": {"thread_id": session_id}}
-                            return await workflow.ainvoke_drillthrough(drillthrough_state, config)
-                        
-                        drillthrough_res = asyncio.run(execute_drillthrough())
-                        
-                        # Extract drillthrough results
-                        drillthrough_results = drillthrough_res.get('drillthrough_query_results', [])
-                        drillthrough_reasoning = drillthrough_res.get('drillthrough_reasoning', '')
-                        
-                        if drillthrough_results:
-                            add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoning)
-                            print(f"✅ Drillthrough analysis complete: {len(drillthrough_results)} analyses")
-                            print("🏁 Analysis workflow complete - no follow-up questions will be generated")
-                        else:
-                            print("ℹ️ No drillthrough results generated")
-                            add_assistant_message("No drillthrough analysis results available.", message_type="error")
-                        
-                    except Exception as e:
-                        print(f"❌ Drillthrough execution failed: {e}")
-                        add_assistant_message(f"Drillthrough analysis failed: {e}", message_type="error")
-                    
-                    # Clear the flag to prevent re-running
-                    st.session_state.strategic_rendered = False
-                    st.session_state.drillthrough_state = None
-                    st.rerun()
-
-        # --- FIX 2: Radio Button for Question Context with MINIMAL SPACING ---
-        # Removed the markdown wrapper and made the label empty for closer positioning.
-        st.markdown("""
-        <div style="margin-top: 10px; margin-bottom: -15px; font-weight: 500;">
-            Select Question Context:
-        </div>
-        """, unsafe_allow_html=True)
-        
         question_type = st.radio(
-            "", # Label removed for closer positioning
+            "Select Question Context:", # Use this as the main label for tight integration
             ("Follow-up", "New Question"),
             index=0,  # Default to "Follow-up"
             horizontal=True,
@@ -316,62 +33,8 @@ def main():
 
         # Store the selection in session state so start_processing can access it
         st.session_state.question_type_selection = question_type
-        # --- END FIX 2 ---
+        # --- END FIX 2 (FINAL) ---
         
         # Chat input at the bottom
         if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
-            # Immediately clear follow-up questions when new input is detected
-            # if hasattr(st.session_state, 'current_followup_questions'):
-            #     st.session_state.current_followup_questions = []
-            start_processing(prompt)
-            st.rerun()
-        
-    except Exception as e:
-        st.error(f"Application Error: {str(e)}")
-        st.session_state.processing = False
-        st.session_state.workflow_started = False
-    finally:
-        # Ensure cleanup on any app termination
-        if st.session_state.get('db_client'):
-            pass  # Cleanup will be handled by atexit
-
-def render_persistent_followup_questions():
-    """Render followup questions as simple styled buttons - left aligned like before"""
-    
-    # --- CRITICAL FIX: DO NOT RENDER BUTTONS WHILE PROCESSING ---
-    # The condition is now explicit: Only show buttons if the app is NOT processing 
-    # and the list of questions is NOT empty.
-    if (st.session_state.get('processing', False)):
-        return # Skip rendering entirely if processing is active
-
-    # Don't show follow-up questions if the list is empty
-    if (hasattr(st.session_state, 'current_followup_questions') and 
-        st.session_state.current_followup_questions):
-
-        # Display the follow-up questions with simple Streamlit buttons
-        for idx, question in enumerate(st.session_state.current_followup_questions):
-            # Create more unique key using session_id, timestamp, and question content
-            session_id = st.session_state.get('session_id', 'default')
-            message_count = len(st.session_state.get('messages', []))
-            question_hash = abs(hash(question))
-            button_key = f"followup_{session_id}_{message_count}_{idx}_{question_hash}"
-            
-            if st.button(
-                question, 
-                key=button_key,
-                help=f"Click to explore: {question}",
-                use_container_width=True
-            ):
-                print(f"🔄 Follow-up question clicked: {question}")
-                # Clear the follow-up questions to hide buttons
-                st.session_state.current_followup_questions = []
-                
-                # Remove the "Would you like to explore further?" message from chat history
-                if (st.session_state.messages and 
-                    st.session_state.messages[-1].get('message_type') == 'followup_questions'):
-                    st.session_state.messages.pop()
-                    print("🗑️ Removed follow-up intro message from chat history")
-                
-                # Start processing the selected question
-                start_processing(question)
-                st.rerun()
+        # ... (rest of main function follows)

@@ -1,8 +1,231 @@
-Navigation Controller starting: 2025-11-01T11:34:33.314024
-Navigation Input - Current: 'new question - show me the top 10 drugs for july based on revenue '
+Navigation Controller starting: 2025-11-01T11:48:14.196237
+Navigation Input - Current: 'new question - what is the revenue for PBM for july 2025'
 Navigation Input - User Choice: follow-up
 Navigation Input - Existing Domain: PBM Network
 coming here
+PROMPT 1  You are a healthcare finance analytics assistant.
+
+════════════════════════════════════════════════════════════
+NOW ANALYZE THIS USER INPUT:
+════════════════════════════════════════════════════════════
+User Input: "new question - what is the revenue for PBM for july 2025"
+Previous Question: "None"
+Previous Questions History: []
+User's Explicit Choice: follow-up
+
+════════════════════════════════════════════════════════════
+SECTION 1: INPUT CLASSIFICATION
+════════════════════════════════════════════════════════════
+
+Classify into ONE type:
+
+**GREETING** - Greetings, capability questions, general chat
+Examples: "Hi", "Hello", "What can you do?", "Help me"
+
+**DML/DDL** - Data modification (not supported)
+Examples: "INSERT", "UPDATE", "DELETE", "CREATE table"
+
+**BUSINESS_QUESTION** - Healthcare finance queries
+Valid topics: Claims, pharmacy, drugs, therapy classes, revenue, expenses, payments, utilization, actuals, forecasts
+Invalid: Weather, sports, retail, non-healthcare topics
+
+════════════════════════════════════════════════════════════
+SECTION 2: COMPONENT DETECTION (For business questions)
+════════════════════════════════════════════════════════════
+
+Identify components in CURRENT question using these patterns:
+
+**Metric** - What's being measured
+Examples: revenue, claims, expenses, volume, actuals, forecast, cost
+
+**Filters** - "for X" pattern → Specific entities/values
+Examples:
+- "for PBM" → filters: ["PBM"]
+- "for Specialty" → filters: ["Specialty"]
+- "for diabetes" → filters: ["diabetes"]
+- "for carrier MDOVA" → filters: ["carrier MDOVA"]
+
+**Attributes** - "by Y" pattern → Grouping dimensions
+Examples:
+- "by line of business" → attributes: ["line of business"]
+- "by carrier" → attributes: ["carrier"]
+- "by therapy class" → attributes: ["therapy class"]
+
+**Time Period**
+- Full: "August 2025", "Q3 2025" → time_is_partial: false
+- Partial: "August", "Q3" → time_is_partial: true
+
+**Signals**
+- Pronouns: "that", "it", "this", "those"
+- Continuation: "compare", "show me", "breakdown"
+- Explicit commands: "NEW:", "FOLLOW-UP:" at start
+
+════════════════════════════════════════════════════════════
+SECTION 3: DECISION LOGIC
+════════════════════════════════════════════════════════════
+
+**Priority 1: User's Explicit UI Choice (HIGHEST PRIORITY)**
+User selected: follow-up
+IF user_input_type == "new-question" → Decision: NEW (respect user's explicit choice)
+IF user_input_type == "follow-up" → Decision: FOLLOW_UP (respect user's explicit choice)
+
+**Priority 2: User Command in Text** (Check second)
+IF current starts with "New Question:" → Decision: NEW
+IF current starts with "Follow up question:" → Decision: FOLLOW_UP
+
+**Priority 3: Automatic Detection** (Only if no explicit choice above)
+
+1. **Validation keywords** ("validate", "wrong", "fix") → VALIDATION
+
+2. **No previous question** → NEW
+
+3. **Has pronouns** ("that", "it", "this", "those") → FOLLOW-UP
+
+4. **Complete question check:**
+   IF current has ALL of: metric + filters + time with year → NEW
+
+   **CRITICAL:** Having attributes alone does NOT make a question complete.
+   Filters must be present for a question to be considered complete.
+
+   Examples of COMPLETE (has filters):
+   - "revenue for PBM for Q3 2025" → has metric + filters + time → NEW
+   - "actuals for PBM for September 2025" → has metric + filters + time → NEW
+   - "actuals vs forecast 8+4 for Specialty for Q3 2025" → has metric + filters + time → NEW
+
+   Examples of INCOMPLETE (no filters):
+   - "revenue by line of business for 2025" → has metric + attributes + time, but NO filters → FOLLOW-UP
+   - "claims by carrier for Q3 2025" → has metric + attributes + time, but NO filters → FOLLOW-UP
+
+   Why FOLLOW-UP? Without filters, the question needs context from previous (which entity/channel to analyze).
+
+5. **Incomplete question check:**
+   IF current is MISSING any of: metric, filters, or time → FOLLOW-UP
+
+   Examples of INCOMPLETE:
+   - "compare actuals for September" → has metric + time, but MISSING filters → FOLLOW-UP
+   - "for covid vaccines" → MISSING metric, MISSING time → FOLLOW-UP
+   - "show me by line of business" → has attributes, but MISSING metric + filters + time → FOLLOW-UP
+
+   Why FOLLOW-UP? Missing components need to be inherited from previous.
+
+6. **Otherwise** → NEW
+
+**Key principle:**
+- Complete questions require: metric + filters + time (with year)
+- Attributes alone don't make it complete
+- Missing filters = FOLLOW-UP (needs inheritance)
+
+**IMPORTANT for REASONING:**
+When writing the reasoning field, clearly state:
+- If user made an explicit choice, mention it first
+- What components are present in current question
+- What components are missing
+- What needs to be inherited from previous (be specific: "Should inherit PBM and July 2025")
+- Why this decision was made
+
+════════════════════════════════════════════════════════════
+EXAMPLES
+════════════════════════════════════════════════════════════
+
+Example 1: User Explicit Choice - Follow-up
+User's Choice: "follow-up"
+Current: "show me the expense"
+Previous: "revenue for PBM for July 2025"
+→ Decision: FOLLOW_UP (user explicitly selected follow-up)
+→ metric: "expense", filters: [], time: null
+→ Reasoning: "User explicitly selected follow-up. Current has metric 'expense' but missing filters and time. Should inherit PBM and July 2025 from previous question."    
+
+Example 2: User Explicit Choice - New Question
+User's Choice: "new-question"
+Current: "revenue for Specialty"
+Previous: "revenue for PBM for Q3 2025"
+→ Decision: NEW (user explicitly selected new question)
+→ metric: "revenue", filters: ["Specialty"], time: null (partial)
+→ Reasoning: "User explicitly selected new question. Current has metric and filters but time is incomplete. Will be treated as new independent question."
+
+Example 3: Complete New Question (Has Filters)
+User's Choice: "follow-up" (default)
+Current: "revenue for PBM for Q3 2025"
+→ metric: "revenue", filters: ["PBM"], time: "Q3 2025"
+→ Has metric + filters + time (all present) → Decision: NEW
+→ Reasoning: "Complete question with metric, filters, and time. No inheritance needed."
+
+Example 4: Complete Question with Filters (Overrides User Choice if Complete)
+User's Choice: "follow-up"
+Current: "actuals for PBM for September 2025"
+→ metric: "actuals", filters: ["PBM"], time: "September 2025"
+→ Has metric + filters + time (all present) → Decision: NEW
+→ Reasoning: "User selected follow-up, but current question is complete with metric, filters, and time. Treating as NEW since it's self-contained."
+
+Example 5: Has Attributes but Missing Filters (FOLLOW-UP!)
+User's Choice: "follow-up"
+Current: "revenue by line of business for 2025"
+Previous: "revenue for PBM for Q3 2025"
+→ metric: "revenue", filters: [], attributes: ["line of business"], time: "2025"
+→ Has metric + attributes + time, but MISSING filters → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has metric and attributes but missing filters. Should inherit PBM from previous question."
+
+Example 6: Missing Filters (No Attributes)
+User's Choice: "follow-up"
+Current: "compare actuals for September"
+Previous: "revenue for PBM for Q3 2025"
+→ metric: "actuals", filters: [], time: "September" (partial)
+→ Has metric + time, but MISSING filters → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has metric and partial time but missing filters. Should inherit PBM from previous question."
+
+Example 7: Forecast Cycle Preserved
+User's Choice: "follow-up"
+Current: "actuals vs forecast 8+4 for Specialty for Q3 2025"
+→ metric: "actuals vs forecast 8+4", filters: ["Specialty"], time: "Q3 2025"
+→ Has metric (with cycle) + filters + time → Decision: NEW
+→ Reasoning: "User selected follow-up, but question is complete with metric (including 8+4 cycle), filters, and time. Treating as NEW."
+
+Example 8: Pronoun Reference
+User's Choice: "follow-up"
+Current: "why is that high"
+→ Has pronoun "that" → Decision: FOLLOW_UP
+→ Reasoning: "User selected follow-up. Current has pronoun 'that' which requires context. Should inherit all components (metric, filters, time) from previous question."  
+
+Example 9: User Command in Text
+User's Choice: "follow-up"
+Current: "NEW: revenue for Specialty"
+→ Starts with "NEW:" → Decision: NEW (respect command)
+→ Reasoning: "User text starts with 'NEW:' command, overriding UI choice. Current specifies revenue for Specialty but missing time."
+
+════════════════════════════════════════════════════════════
+OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
+════════════════════════════════════════════════════════════
+
+- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting.
+- The response MUST not start with ```json and end with ```.
+
+{
+    "input_type": "greeting|dml_ddl|business_question",
+    "is_valid_business_question": true|false,
+    "response_message": "message if greeting/dml, empty otherwise",
+    "is_validation": true|false,
+    "context_decision": "NEW|FOLLOW_UP|VALIDATION",
+    "components_current": {
+        "metric": "value or null",
+        "filters": ["list"],
+        "attributes": ["list"],
+        "time": "value or null",
+        "time_is_partial": true|false,
+        "signals": {
+            "has_pronouns": true|false,
+            "has_continuation_verbs": true|false
+        }
+    },
+    "components_previous": {
+        "metric": "value or null",
+        "filters": ["list"],
+        "attributes": ["list"],
+        "time": "value or null"
+    },
+    "reasoning": "Clear explanation mentioning: 1) User's choice if applicable, 2) What's present in current, 3) What's missing, 4) What to inherit (be specific), 5) Why this decision"
+}
+
+
 PROMPT 1 Response: {
     "input_type": "business_question",
     "is_valid_business_question": true,
@@ -11,79 +234,27 @@ PROMPT 1 Response: {
     "context_decision": "NEW",
     "components_current": {
         "metric": "revenue",
-        "filters": [],
-        "attributes": ["drugs"],
-        "time": "july",
-        "time_is_partial": true,
-        "signals": {
-            "has_pronouns": false,
-            "has_continuation_verbs": true
-        }
-    },
-    "components_previous": {
-        "metric": "expense",
-        "filters": ["carrier MPDova"],
-        "attributes": [],
-        "time": "July 2025"
-    },
-    "reasoning": "User explicitly selected follow-up, but the current question starts with 'new question -' which is a text command that overrides the UI choice. Current question asks for top 10 drugs by revenue for July, which is a complete shift in focus from the previous carrier expense question. The question has metric (revenue), attributes (drugs for grouping), and partial time (july), but is missing specific filters. However, the explicit 'new question' command indicates this should be treated as an independent NEW question rather than inheriting context from the previous carrier-focused question."
-}
-PROMPT 2 Response: {
-    "rewritten_question": "What are the top 10 drugs for July 2025 based on revenue",
-    "question_type": "what",
-    "filter_values": [],
-    "user_message": "Added 2025 as the year."
-}
-
-
-✅ Node completed: entry_router
-🎨 STATUS UPDATE: Showing status for navigation_controller
-Navigation Controller starting: 2025-11-01T11:18:38.732270
-Navigation Input - Current: 'new question - show me the top 10 drugs for july 2025'
-Navigation Input - User Choice: follow-up
-Navigation Input - Existing Domain: PBM Network
-coming here
-PROMPT 1 Response: {
-    "input_type": "business_question",
-    "is_valid_business_question": true,
-    "response_message": "",
-    "is_validation": false,
-    "context_decision": "NEW",
-    "components_current": {
-        "metric": "top 10 drugs",
-        "filters": [],
+        "filters": ["PBM"],
         "attributes": [],
         "time": "july 2025",
         "time_is_partial": false,
         "signals": {
             "has_pronouns": false,
-            "has_continuation_verbs": true
+            "has_continuation_verbs": false
         }
     },
     "components_previous": {
-        "metric": "expense",
-        "filters": ["MPDOVA"],
-        "time": "July 2025"
+        "metric": null,
+        "filters": [],
+        "attributes": [],
+        "time": null
     },
-    "reasoning": "User explicitly selected follow-up but the text starts with 'new question' which indicates user intent for a new question. Current question asks for 'top 10 drugs for july 2025' which has a metric and complete time period, but is missing filters to specify which entity/channel to analyze. However, the explicit 'new question' command in the text overrides the UI selection, so treating this as NEW despite missing filters."
+    "reasoning": "User explicitly selected follow-up, but current question is complete with all required components: metric (revenue), filters (PBM), and time (july 2025). Since the question has metric + filters + time and is self-contained, treating as NEW despite user's follow-up selection."
 }
 PROMPT 2 Response: {
-    "rewritten_question": "What are the top 10 drugs for July 2025",
+    "rewritten_question": "What is the revenue for PBM for July 2025",
     "question_type": "what",
     "filter_values": [],
     "user_message": ""
 }
-nav_result {'rewritten_question': 'What are the top 10 drugs for July 2025', 'question_type': 'what', 'context_type': 'NEW', 'inherited_context': '', 'next_agent': 'router_agent', 'next_agent_disp': 'Router Agent', 'requires_domain_clarification': False, 'domain_followup_question': None, 'domain_selection': 'PBM Network', 'llm_retry_count': 0, 'pending_business_question': '', 'filter_values': [], 'user_friendly_message': '', 'decision_from_prompt1': 'NEW'}
-Added business question to history: 'What are the top 10 drugs for July 2025'
-Navigation Controller ending: 2025-11-01T11:18:50.541357
-🔀 Navigation routing debug:
-  - requires_domain_clarification: False
-  - next_agent: 'router_agent'
-  - domain_followup_question exists: False
-  - greeting_response exists: False
-  - is_dml_ddl: False
-  - pending_business_question: ''
-  - nav_error_msg: None
-  ✅ Routing to: router_agent
-📦 Astream step: ['navigation_controller']
-✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'requires_dataset_clarification', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'filter_metadata_results', 'selected_filter_context', 'user_friendly_message', 'selected_dataset', 'dataset_metadata', 'functional_names', 'dataset_followup_question', 'selection_reasoning', 'followup_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'phi_found', 'needs_followup', 'sql_result', 'narrative_history', 'narrative_complete', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'followup_questions', 'followup_generation_success', 'follow_up_questions_history', 'strategy_planner_err_msg']
+nav_result {'rewritten_question': 'What is the revenue for PBM for July 2025', 'question_type': 'what', 'context_type': 'NEW', 'inherited_context': '', 'next_agent': 'router_agent', 'next_agent_disp': 'Router Agent', 'requires_domain_clarification': False, 'domain_followup_question': None, 'domain_selection': 'PBM Network', 'llm_retry_count': 0, 'pending_business_question': '', 'filter_values': [], 'user_friendly_message': '', 'decision_from_prompt1': 'NEW'}

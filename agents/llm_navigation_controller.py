@@ -11,7 +11,7 @@ class LLMNavigationController:
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
     
-    async def process_user_query(self, state: AgentState, user_input_type: str = "follow-up") -> Dict[str, any]:
+    async def process_user_query(self, state: AgentState) -> Dict[str, any]:
         """
         Main entry point: Two-step LLM processing
         
@@ -25,16 +25,15 @@ class LLMNavigationController:
         total_retry_count = state.get('llm_retry_count', 0)
         
         print(f"Navigation Input - Current: '{current_question}'")
-        print(f"Navigation Input - User Choice: {user_input_type}")
         print(f"Navigation Input - Existing Domain: {existing_domain_selection}")
         
         # Two-step processing: Decision → Rewriting
         return await self._two_step_processing(
-            current_question, existing_domain_selection, total_retry_count, state, user_input_type
+            current_question, existing_domain_selection, total_retry_count, state
         )
     
     async def _two_step_processing(self, current_question: str, existing_domain_selection: List[str], 
-                                   total_retry_count: int, state: AgentState, user_input_type: str) -> Dict[str, any]:
+                                   total_retry_count: int, state: AgentState) -> Dict[str, any]:
         """Two-step LLM processing: PROMPT 1 (Decision) → PROMPT 2 (Rewriting)"""
         
         print("coming here ")
@@ -54,10 +53,9 @@ class LLMNavigationController:
                 prompt_1 = self._build_prompt_1_decision_maker(
                     current_question, 
                     previous_question, 
-                    history_context,
-                    user_input_type
+                    history_context
                 )
-                
+                # print("PROMPT 1 ", prompt_1)
                 decision_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": prompt_1}
                 ])
@@ -109,7 +107,7 @@ class LLMNavigationController:
                         decision_json
                     )
                     
-                    
+                    # print('decision prompt:', prompt_2)
                     rewrite_response = await self.db_client.call_claude_api_endpoint_async([
                         {"role": "user", "content": prompt_2}
                     ])
@@ -197,7 +195,7 @@ class LLMNavigationController:
                     }
     
     def _build_prompt_1_decision_maker(self, current_question: str, previous_question: str, 
-                                       history_context: List, user_input_type: str) -> str:
+                                       history_context: List[str]) -> str:
         """
         PROMPT 1: Decision Maker
         Job: Classify input type and decide NEW vs FOLLOW-UP (no rewriting yet)
@@ -211,7 +209,6 @@ NOW ANALYZE THIS USER INPUT:
 User Input: "{current_question}"
 Previous Question: "{previous_question if previous_question else 'None'}"
 Previous Questions History: {history_context}
-User's Explicit Choice: {user_input_type}
 
 ════════════════════════════════════════════════════════════
 SECTION 1: INPUT CLASSIFICATION
@@ -265,9 +262,9 @@ SECTION 3: DECISION LOGIC
 ════════════════════════════════════════════════════════════
 
 **Priority 1: User's Explicit UI Choice (HIGHEST PRIORITY)**
-User selected: {user_input_type}
-IF user_input_type == "new-question" → Decision: NEW (respect user's explicit choice)
-IF user_input_type == "follow-up" → Decision: FOLLOW_UP (respect user's explicit choice)
+
+IF User Input contains "new question" → Decision: NEW (respect user's explicit choice)
+IF User Input contains "follow-up" → Decision: FOLLOW_UP (respect user's explicit choice)
 
 **Priority 2: User Command in Text** (Check second)
 IF current starts with "New Question:" → Decision: NEW

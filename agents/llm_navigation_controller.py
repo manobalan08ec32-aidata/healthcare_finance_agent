@@ -223,7 +223,7 @@ Examples: "Hi", "Hello", "What can you do?", "Help me"
 Examples: "INSERT", "UPDATE", "DELETE", "CREATE table"
 
 **BUSINESS_QUESTION** - Healthcare finance queries
-Valid topics: Claims, pharmacy, drugs, therapy classes, revenue, expenses, payments, utilization, actuals, forecasts
+Valid topics: Claims, pharmacy, drugs, therapy classes, revenue, expenses, payments, utilization, actuals, forecasts,finance questions
 Invalid: Weather, sports, retail, non-healthcare topics
 
 ════════════════════════════════════════════════════════════

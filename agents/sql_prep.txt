@@ -1,3 +1,6 @@
+28f6f8e3-5889-4e5b-aba9-58da52ad4791
+sivakumm@optum.com
+
 CREATE TABLE prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (
   session_id STRING,
   user_id STRING,

@@ -1,3 +1,41 @@
+Navigation Controller starting: 2025-11-01T11:34:33.314024
+Navigation Input - Current: 'new question - show me the top 10 drugs for july based on revenue '
+Navigation Input - User Choice: follow-up
+Navigation Input - Existing Domain: PBM Network
+coming here
+PROMPT 1 Response: {
+    "input_type": "business_question",
+    "is_valid_business_question": true,
+    "response_message": "",
+    "is_validation": false,
+    "context_decision": "NEW",
+    "components_current": {
+        "metric": "revenue",
+        "filters": [],
+        "attributes": ["drugs"],
+        "time": "july",
+        "time_is_partial": true,
+        "signals": {
+            "has_pronouns": false,
+            "has_continuation_verbs": true
+        }
+    },
+    "components_previous": {
+        "metric": "expense",
+        "filters": ["carrier MPDova"],
+        "attributes": [],
+        "time": "July 2025"
+    },
+    "reasoning": "User explicitly selected follow-up, but the current question starts with 'new question -' which is a text command that overrides the UI choice. Current question asks for top 10 drugs by revenue for July, which is a complete shift in focus from the previous carrier expense question. The question has metric (revenue), attributes (drugs for grouping), and partial time (july), but is missing specific filters. However, the explicit 'new question' command indicates this should be treated as an independent NEW question rather than inheriting context from the previous carrier-focused question."
+}
+PROMPT 2 Response: {
+    "rewritten_question": "What are the top 10 drugs for July 2025 based on revenue",
+    "question_type": "what",
+    "filter_values": [],
+    "user_message": "Added 2025 as the year."
+}
+
+
 ✅ Node completed: entry_router
 🎨 STATUS UPDATE: Showing status for navigation_controller
 Navigation Controller starting: 2025-11-01T11:18:38.732270

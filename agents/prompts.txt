@@ -1,5 +1,7 @@
-Navigation Controller starting: 2025-11-01T11:09:40.852721
-Navigation Input - Current: 'new question - what is the revenue for carrier MPDOVA for july 2025'
+✅ Node completed: entry_router
+🎨 STATUS UPDATE: Showing status for navigation_controller
+Navigation Controller starting: 2025-11-01T11:18:38.732270
+Navigation Input - Current: 'new question - show me the top 10 drugs for july 2025'
 Navigation Input - User Choice: follow-up
 Navigation Input - Existing Domain: PBM Network
 coming here
@@ -10,22 +12,40 @@ PROMPT 1 Response: {
     "is_validation": false,
     "context_decision": "NEW",
     "components_current": {
-        "metric": "revenue",
-        "filters": ["carrier MPDOVA"],
+        "metric": "top 10 drugs",
+        "filters": [],
         "attributes": [],
         "time": "july 2025",
         "time_is_partial": false,
         "signals": {
             "has_pronouns": false,
-            "has_continuation_verbs": false
+            "has_continuation_verbs": true
         }
     },
     "components_previous": {
         "metric": "expense",
-        "filters": [],
-        "attributes": [],
+        "filters": ["MPDOVA"],
         "time": "July 2025"
     },
-    "reasoning": "User explicitly selected follow-up, but the current question is complete with all required components: metric (revenue), filters (carrier MPDOVA), and time (july 2025). Since the question has metric + filters + time and is self-contained, treating as NEW despite user's follow-up selection. No inheritance needed from previous question."
+    "reasoning": "User explicitly selected follow-up but the text starts with 'new question' which indicates user intent for a new question. Current question asks for 'top 10 drugs for july 2025' which has a metric and complete time period, but is missing filters to specify which entity/channel to analyze. However, the explicit 'new question' command in the text overrides the UI selection, so treating this as NEW despite missing filters."
 }
-
+PROMPT 2 Response: {
+    "rewritten_question": "What are the top 10 drugs for July 2025",
+    "question_type": "what",
+    "filter_values": [],
+    "user_message": ""
+}
+nav_result {'rewritten_question': 'What are the top 10 drugs for July 2025', 'question_type': 'what', 'context_type': 'NEW', 'inherited_context': '', 'next_agent': 'router_agent', 'next_agent_disp': 'Router Agent', 'requires_domain_clarification': False, 'domain_followup_question': None, 'domain_selection': 'PBM Network', 'llm_retry_count': 0, 'pending_business_question': '', 'filter_values': [], 'user_friendly_message': '', 'decision_from_prompt1': 'NEW'}
+Added business question to history: 'What are the top 10 drugs for July 2025'
+Navigation Controller ending: 2025-11-01T11:18:50.541357
+🔀 Navigation routing debug:
+  - requires_domain_clarification: False
+  - next_agent: 'router_agent'
+  - domain_followup_question exists: False
+  - greeting_response exists: False
+  - is_dml_ddl: False
+  - pending_business_question: ''
+  - nav_error_msg: None
+  ✅ Routing to: router_agent
+📦 Astream step: ['navigation_controller']
+✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'requires_dataset_clarification', 'is_sql_followup', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'filter_metadata_results', 'selected_filter_context', 'user_friendly_message', 'selected_dataset', 'dataset_metadata', 'functional_names', 'dataset_followup_question', 'selection_reasoning', 'followup_reasoning', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'phi_found', 'needs_followup', 'sql_result', 'narrative_history', 'narrative_complete', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'followup_questions', 'followup_generation_success', 'follow_up_questions_history', 'strategy_planner_err_msg']

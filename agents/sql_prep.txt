@@ -1,3 +1,95 @@
+user_question
+What is volume and revenue for GLP-1s by drug name between Q3 2025 and Q3 2024
+Compare PBM revenue for Q3 2025 vs Q3 2024
+What is PBM revenue by month Jan - Sep, 2025
+What is volume and revenue for GLP-1s for PBM split between obesity versus diabetes for Q3 2025 vs Q3 2024
+What is volume and revenue for GLP-1s by drug name for PBM for Q3 2025 vs Q3 2024
+What is the volume and revenue for GLP-1s by drug name for PBM for Q3 2025 vs Q3 2024
+What is the volume and revenue for GLP-1s by drug name for PBM for Q3 2025
+Compare volume and rate for GLP-1s for Q3 2025 vs Q3 2024
+What is rate/script for GLP-1s by drug name for Jan-Sept 2025
+What is volume and revenue for GLP-1 by drug name for April to June 2025
+What is the volume and revenue for Thrombolytic Enzymes for PBM by drug name for April to June 2025
+What therapies contributed to rate increase for PBM from April to June 2025?
+What is revenue per adjusted scripts for PBM by month from Jan through Sept 2025
+What is the revenue per script for PBM by month from Jan through Sept 2025
+What is PBM revenue from Jan thru Sept 2025
+What is claim fee for PBM revenue for September 2025
+What is actuals to forecast for PBM revenue for September 2025
+What is revenue for MPDOVA carrier for PBM revenue
+What is network product revenue for Jan-Sept 2025
+What is monthly revenue from Jan through Sep 2025 for network revenue
+Compare September 2025 PBM network revenue versus Jan through August 2025
+What therapies are causing higher network revenue rate per script when comparing August 2025 vs September 2025
+What is the revenue per script for Jan through Sept 2025
+Compare September 2025 vs August 2025 revenue per script
+Filter for volumes greater than 10,000 for revenue per script trends for October 2025 vs September 2025 by product category
+What therapies are causing higher network revenue rate per script when comparing October 2025 vs September 2025
+Show the revenue per script trends for October 2025 vs September 2025 by product category to understand the rate component of the revenue decline
+Compare October 2025 PBM results to September 2025 PBM results
+Compare October PBM results to September PBM results
+What is the 8+4 forecast data availability issue for October PBM results - are all forecast values showing as zero across all metrics
+How is October PBM results looking as of today versus 8+4 forecast?
+What was state membership for CA for September 2025
+Compare PBM services revenue to 5+7 forecast for September 2025
+Compare PBM services revenue to forecast for September 2025
+What was the PBM services revenue for September 2025
+What was membership for California for September 2025
+What was membership for September 2025
+What was the approved amount paid for MDOVA
+Show the top 20 clients by client due amount for September 2025
+What was the client due amount for September 2025?
+What was client due amount for October 2025?
+How much was postage fees for Invoice 1637630
+How much was postage fees for activity code postage
+How much was postage fees for invoice 1637630
+What was the total activity fees for invoice 1637630
+When product code description contains EOB, summarize total charges for invoice # 1553027
+When product code description contains EOB, summarize total charges for invoice # 1553027
+Break down activity fee charges by activity code for invoice # 1553027
+What was activity fee charges for invoice # 1553027
+For ORCL_PROD_DESC RX CLAIM FEE, show top 25 clients for total billed amount in 2025 and show each month
+What is the PROD565 trend for Jan-Sept 2025
+Break down the 2025 total billing by product code
+What was total billing for 2025 by month
+What is the billed amount for activity code with EOB for 2025
+How much billed for EOB fees in 2025
+What are the activity fee charges by client for invoice # 1553027
+What was activity fee charges for invoice # 1553027
+Break down the monthly claim billing trends by line of business from January through September 2025
+What trends in claim billing from January 2025 through September 2025?
+What is the breakdown of PBM billed amounts by revenue source type to see the mix of claim fees, claim costs, and activity fees for the top 20 clients by billed amounts within the PBM line of business
+Show the top 20 clients by billed amounts within the PBM line of business
+What was billed in September 2025 for External Line of Business
+What was invoiced for carrier AZM in 2025, show invoice number and billed amounts
+Compare the claim cost per product code for invoice 1639535's retail vs specialty prescription claims
+Show the breakdown of invoice 1639535's $338.3M claim cost by product code
+What is the breakdown of the $343.4M billed amount for invoice 1639535 by revenue source type?
+What was the billed amount for invoice 1639535
+What was the activity fee for September 2025 by line of business
+What were the claim fees for vaccine only claims
+What was the claim fee for carrier MPDOVA for Sept 2025
+What was the breakdown of claim cost vs activity fee vs claim fee for MPDOVA in Sept 2025?
+What was claim cost vs activity fee for MPDOVA for Sept 2025
+What was claim billed amount for carrier MPDOVA for Sept 2025
+Are there new script activity in Oct 2025 for clients that previously had no activity Aug 2025 and prior?
+What is the PBM membership by month in 2025
+What is the membership by month in 2025
+What was membership for September 2025 vs January 2025
+What is the network margin for Sept 2025 in total
+What are the top 20 clients by vaccine volume change for Jan-Sept 2025 vs 2024
+Compare the vaccine volume decline by LOB for Jan-Sept 2025 vs 2024
+Break down the vaccine volume decline by client type for Jan-Sept 2025 vs 2024
+What are the top 20 specific vaccine drugs by volume decline comparing Jan-Sept 2025 vs 2024?
+What is the monthly PBM vaccine volume trend compared to the same period in 2024
+What is vaccine volume for 2025 for Jan through Sept?
+What is the network product revenue for September 2025 vs September 2024
+Show the revenue per script trend by therapy class for September 2025 vs September 2024 to identify which drug categories drove the rate increases
+Show the revenue per script trend comparing Sept 2025 vs Sept 2024 to understand if growth was driven by volume or rate increases
+Compare Sept 2025 revenue vs Sept 2024 revenue for year-over-year growth
+What was Sept 2025 revenue?
+
+
 28f6f8e3-5889-4e5b-aba9-58da52ad4791
 sivakumm@optum.com
 

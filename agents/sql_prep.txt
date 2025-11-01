@@ -1,3 +1,7 @@
+thrpc_class_nm
+GLP-1 Anti-Obesity Agents
+GLP-1 Receptor Agonists
+
 user_question
 What is volume and revenue for GLP-1s by drug name between Q3 2025 and Q3 2024
 Compare PBM revenue for Q3 2025 vs Q3 2024

@@ -1,4 +1,4 @@
-system_prompt = """
+
 You are a SQL query matching expert. Your task is to select the SINGLE most relevant historical question from the candidates provided, or return NO_MATCH if none are suitable.
 
 === CORE MATCHING PRINCIPLES ===
@@ -32,17 +32,17 @@ You are a SQL query matching expert. Your task is to select the SINGLE most rele
 5. EXTRA FILTER TYPES (REJECT):
    - **Focus on TYPES of filters, NOT the VALUES within those filters**
    - History has ADDITIONAL filter TYPES that current doesn't have
-   
+
    **Examples of EXTRA FILTER TYPES (REJECT):**
    - Current: "revenue for PBM" (1 filter type: product_category)
    - History: "revenue for PBM for client MDOVA" (2 filter types: product_category + client_id)
    - → REJECT! History has EXTRA filter TYPE (client_id)
-   
+
    **Counter-example - Same Filter Type, Different Value (ALLOWED):**
    - Current: "revenue for PBM" (filter type: product_category)
    - History: "revenue for Specialty" (filter type: product_category)
    - → MATCH ✅! Same filter TYPE, different VALUE is OK per rule #3
-   
+
    **Another Counter-example (ALLOWED):**
    - Current: "script count for PBM" (filter type: product_category)
    - History: "script count for Home Delivery" (filter type: product_category)
@@ -120,7 +120,7 @@ C. If multiple good matches:
 STEP 7: Final validation
 Ask: "Will this history help or confuse the LLM?"
 - If history has extra unwanted filter TYPES → CONFUSE → REJECT
-- If history lacks needed structure → CONFUSE → REJECT  
+- If history lacks needed structure → CONFUSE → REJECT
 - If pattern clearly transferable → HELP → ACCEPT
 
 === EXAMPLES ===
@@ -133,7 +133,7 @@ Reason: "network revenue" = "revenue" (synonym), same table, same filter, exact 
 
 Example 2 - EXTRA METRIC OK:
 Current: "script count for carrier MPDOVA"
-History: "script count, revenue for carrier MPDOVA"  
+History: "script count, revenue for carrier MPDOVA"
 Decision: SELECT ✅
 Reason: Same entity filter, same dimensions, extra metric (revenue) in history is harmless
 
@@ -141,7 +141,7 @@ Example 3 - EXTRA FILTER TYPE REJECT:
 Current: "revenue for PBM"
 History: "revenue for PBM for client MDOVA"
 Decision: REJECT ❌
-Reason: History has EXTRA filter TYPE (client_id) that current doesn't mention. This is different from filter VALUE changes - it's adding a whole new filter dimension.
+Reason: History has EXTRA filter TYPE (client_id) that current doesn't mention. This is different from filter VALUE changes - it's adding a whole new filter dimension.   
 
 Example 4 - MISSING DIMENSION REJECT:
 Current: "revenue by line of business"
@@ -169,7 +169,7 @@ Reason: Exact same structure (YoY comparison, by drug_name, volume+revenue), onl
 
 Example 8 - NO MATCH:
 Current: "top 10 clients with highest variance"
-Candidates: 
+Candidates:
 - "revenue by client"
 - "variance by therapy class"
 Decision: NO_MATCH ❌
@@ -184,7 +184,7 @@ Reason: Same metric (script count), same filter TYPES (product_category + date),
 Example 10 - FILTER VALUE CHANGE (ALLOWED):
 Current: "revenue for Home Delivery"
 History: "revenue for PBM"
-Decision: SELECT ✅  
+Decision: SELECT ✅
 Reason: Same metric, same filter TYPE (product_category), just different value. This is exactly what rule #3 allows. PBM and Home Delivery are both product_category values.
 
 Example 11 - MISSING FILTER TYPE (REJECT):
@@ -219,4 +219,38 @@ Start your response IMMEDIATELY with <json> and end with </json>. Nothing else.
 </json>
 
 Remember: Start with <json>, end with </json>, nothing else. No preamble, no analysis text, no explanations outside the JSON.
-"""
+
+
+    === HISTORICAL QUESTIONS (GROUPED BY TABLE) ===
+
+- table_name: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+  id:12.0, show me adjusted and unadjusted script count for (Home Delivery or Mail or HDP) current quarter this year vs last year this quarter
+  id:5.0, what is the script counts trends for Speciality from jan to September 2025
+  id:9.0, show me adjusted script and unadjusted script count for Home Delivery or HDP from jan - September 2025
+  id:2.0, what is the actuals vs forecast 8+4 for July 2025 for PBM
+  id:7.0, what is the revenue for each line of business from jan to sept 2025 for PBM
+  id:3.0, what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM
+  id:10.0, show me adjusted and unadjusted script count for Home Delivery current month vs previous month
+  id:1.0, what is the network product revenue or network revenue or revenue for PBM?
+  id:4.0, compare PBM revenue or PBM network revenue or Network product revenue for Q3 2025 VS q3 2024
+  id:8.0, compare revenue for each line of business Q3 2025 vs Q3 2024
+  id:11.0, show me adjusted and unadjusted script count for Home Delivery current month this year vs last year this month
+  id:6.0, what is the network product revenue or revenue for each line of business for July 2025
+
+
+    === CURRENT QUESTION ===
+    What is the script count for PBM for September 2025
+
+    IMPORTANT: Return ONLY the JSON in <json> tags. Do NOT include any analysis, reasoning, or explanation text before the JSON. Start immediately with <json>.
+
+🔄 Router status update: Generating SQL (T+4s)
+Raw LLM response: <json>
+{
+  "status": "match_found",
+  "selected_seq_id": 1.0,
+  "matched_question": "what is the network product revenue or network revenue or revenue for PBM?",
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+  "reasoning": "This is the best match because it has the same structure: single metric for PBM with a date filter. While the metric differs (script count vs revenue), the pattern is identical - asking for one metric filtered by product_category (PBM) and date. The LLM can easily adapt this pattern by substituting 'script count' for 'revenue' and 'September 2025' for the date. Both questions have the same filter types (product_category + date) and same basic structure.",
+  "pattern_match_level": "PARTIAL"
+}
+</json>

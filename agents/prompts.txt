@@ -1,260 +1,374 @@
-Navigation Controller starting: 2025-11-01T11:48:14.196237
-Navigation Input - Current: 'new question - what is the revenue for PBM for july 2025'
-Navigation Input - User Choice: follow-up
-Navigation Input - Existing Domain: PBM Network
-coming here
-PROMPT 1  You are a healthcare finance analytics assistant.
+sql llm prompt
+    You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
 
-════════════════════════════════════════════════════════════
-NOW ANALYZE THIS USER INPUT:
-════════════════════════════════════════════════════════════
-User Input: "new question - what is the revenue for PBM for july 2025"
-Previous Question: "None"
-Previous Questions History: []
-User's Explicit Choice: follow-up
+    CURRENT QUESTION: What is the revenue for PBM for September 2025
+    MULTIPLE TABLES AVAILABLE: False
+    JOIN INFORMATION: No join clause provided
+    MANDATORY FILTER COLUMNS: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
 
-════════════════════════════════════════════════════════════
-SECTION 1: INPUT CLASSIFICATION
-════════════════════════════════════════════════════════════
-
-Classify into ONE type:
-
-**GREETING** - Greetings, capability questions, general chat
-Examples: "Hi", "Hello", "What can you do?", "Help me"
-
-**DML/DDL** - Data modification (not supported)
-Examples: "INSERT", "UPDATE", "DELETE", "CREATE table"
-
-**BUSINESS_QUESTION** - Healthcare finance queries
-Valid topics: Claims, pharmacy, drugs, therapy classes, revenue, expenses, payments, utilization, actuals, forecasts
-Invalid: Weather, sports, retail, non-healthcare topics
-
-════════════════════════════════════════════════════════════
-SECTION 2: COMPONENT DETECTION (For business questions)
-════════════════════════════════════════════════════════════
-
-Identify components in CURRENT question using these patterns:
-
-**Metric** - What's being measured
-Examples: revenue, claims, expenses, volume, actuals, forecast, cost
-
-**Filters** - "for X" pattern → Specific entities/values
-Examples:
-- "for PBM" → filters: ["PBM"]
-- "for Specialty" → filters: ["Specialty"]
-- "for diabetes" → filters: ["diabetes"]
-- "for carrier MDOVA" → filters: ["carrier MDOVA"]
-
-**Attributes** - "by Y" pattern → Grouping dimensions
-Examples:
-- "by line of business" → attributes: ["line of business"]
-- "by carrier" → attributes: ["carrier"]
-- "by therapy class" → attributes: ["therapy class"]
-
-**Time Period**
-- Full: "August 2025", "Q3 2025" → time_is_partial: false
-- Partial: "August", "Q3" → time_is_partial: true
-
-**Signals**
-- Pronouns: "that", "it", "this", "those"
-- Continuation: "compare", "show me", "breakdown"
-- Explicit commands: "NEW:", "FOLLOW-UP:" at start
-
-════════════════════════════════════════════════════════════
-SECTION 3: DECISION LOGIC
-════════════════════════════════════════════════════════════
-
-**Priority 1: User's Explicit UI Choice (HIGHEST PRIORITY)**
-User selected: follow-up
-IF user_input_type == "new-question" → Decision: NEW (respect user's explicit choice)
-IF user_input_type == "follow-up" → Decision: FOLLOW_UP (respect user's explicit choice)
-
-**Priority 2: User Command in Text** (Check second)
-IF current starts with "New Question:" → Decision: NEW
-IF current starts with "Follow up question:" → Decision: FOLLOW_UP
-
-**Priority 3: Automatic Detection** (Only if no explicit choice above)
-
-1. **Validation keywords** ("validate", "wrong", "fix") → VALIDATION
-
-2. **No previous question** → NEW
-
-3. **Has pronouns** ("that", "it", "this", "those") → FOLLOW-UP
-
-4. **Complete question check:**
-   IF current has ALL of: metric + filters + time with year → NEW
-
-   **CRITICAL:** Having attributes alone does NOT make a question complete.
-   Filters must be present for a question to be considered complete.
-
-   Examples of COMPLETE (has filters):
-   - "revenue for PBM for Q3 2025" → has metric + filters + time → NEW
-   - "actuals for PBM for September 2025" → has metric + filters + time → NEW
-   - "actuals vs forecast 8+4 for Specialty for Q3 2025" → has metric + filters + time → NEW
-
-   Examples of INCOMPLETE (no filters):
-   - "revenue by line of business for 2025" → has metric + attributes + time, but NO filters → FOLLOW-UP
-   - "claims by carrier for Q3 2025" → has metric + attributes + time, but NO filters → FOLLOW-UP
-
-   Why FOLLOW-UP? Without filters, the question needs context from previous (which entity/channel to analyze).
-
-5. **Incomplete question check:**
-   IF current is MISSING any of: metric, filters, or time → FOLLOW-UP
-
-   Examples of INCOMPLETE:
-   - "compare actuals for September" → has metric + time, but MISSING filters → FOLLOW-UP
-   - "for covid vaccines" → MISSING metric, MISSING time → FOLLOW-UP
-   - "show me by line of business" → has attributes, but MISSING metric + filters + time → FOLLOW-UP
-
-   Why FOLLOW-UP? Missing components need to be inherited from previous.
-
-6. **Otherwise** → NEW
-
-**Key principle:**
-- Complete questions require: metric + filters + time (with year)
-- Attributes alone don't make it complete
-- Missing filters = FOLLOW-UP (needs inheritance)
-
-**IMPORTANT for REASONING:**
-When writing the reasoning field, clearly state:
-- If user made an explicit choice, mention it first
-- What components are present in current question
-- What components are missing
-- What needs to be inherited from previous (be specific: "Should inherit PBM and July 2025")
-- Why this decision was made
-
-════════════════════════════════════════════════════════════
-EXAMPLES
-════════════════════════════════════════════════════════════
-
-Example 1: User Explicit Choice - Follow-up
-User's Choice: "follow-up"
-Current: "show me the expense"
-Previous: "revenue for PBM for July 2025"
-→ Decision: FOLLOW_UP (user explicitly selected follow-up)
-→ metric: "expense", filters: [], time: null
-→ Reasoning: "User explicitly selected follow-up. Current has metric 'expense' but missing filters and time. Should inherit PBM and July 2025 from previous question."    
-
-Example 2: User Explicit Choice - New Question
-User's Choice: "new-question"
-Current: "revenue for Specialty"
-Previous: "revenue for PBM for Q3 2025"
-→ Decision: NEW (user explicitly selected new question)
-→ metric: "revenue", filters: ["Specialty"], time: null (partial)
-→ Reasoning: "User explicitly selected new question. Current has metric and filters but time is incomplete. Will be treated as new independent question."
-
-Example 3: Complete New Question (Has Filters)
-User's Choice: "follow-up" (default)
-Current: "revenue for PBM for Q3 2025"
-→ metric: "revenue", filters: ["PBM"], time: "Q3 2025"
-→ Has metric + filters + time (all present) → Decision: NEW
-→ Reasoning: "Complete question with metric, filters, and time. No inheritance needed."
-
-Example 4: Complete Question with Filters (Overrides User Choice if Complete)
-User's Choice: "follow-up"
-Current: "actuals for PBM for September 2025"
-→ metric: "actuals", filters: ["PBM"], time: "September 2025"
-→ Has metric + filters + time (all present) → Decision: NEW
-→ Reasoning: "User selected follow-up, but current question is complete with metric, filters, and time. Treating as NEW since it's self-contained."
-
-Example 5: Has Attributes but Missing Filters (FOLLOW-UP!)
-User's Choice: "follow-up"
-Current: "revenue by line of business for 2025"
-Previous: "revenue for PBM for Q3 2025"
-→ metric: "revenue", filters: [], attributes: ["line of business"], time: "2025"
-→ Has metric + attributes + time, but MISSING filters → Decision: FOLLOW_UP
-→ Reasoning: "User selected follow-up. Current has metric and attributes but missing filters. Should inherit PBM from previous question."
-
-Example 6: Missing Filters (No Attributes)
-User's Choice: "follow-up"
-Current: "compare actuals for September"
-Previous: "revenue for PBM for Q3 2025"
-→ metric: "actuals", filters: [], time: "September" (partial)
-→ Has metric + time, but MISSING filters → Decision: FOLLOW_UP
-→ Reasoning: "User selected follow-up. Current has metric and partial time but missing filters. Should inherit PBM from previous question."
-
-Example 7: Forecast Cycle Preserved
-User's Choice: "follow-up"
-Current: "actuals vs forecast 8+4 for Specialty for Q3 2025"
-→ metric: "actuals vs forecast 8+4", filters: ["Specialty"], time: "Q3 2025"
-→ Has metric (with cycle) + filters + time → Decision: NEW
-→ Reasoning: "User selected follow-up, but question is complete with metric (including 8+4 cycle), filters, and time. Treating as NEW."
-
-Example 8: Pronoun Reference
-User's Choice: "follow-up"
-Current: "why is that high"
-→ Has pronoun "that" → Decision: FOLLOW_UP
-→ Reasoning: "User selected follow-up. Current has pronoun 'that' which requires context. Should inherit all components (metric, filters, time) from previous question."  
-
-Example 9: User Command in Text
-User's Choice: "follow-up"
-Current: "NEW: revenue for Specialty"
-→ Starts with "NEW:" → Decision: NEW (respect command)
-→ Reasoning: "User text starts with 'NEW:' command, overriding UI choice. Current specifies revenue for Specialty but missing time."
-
-════════════════════════════════════════════════════════════
-OUTPUT FORMAT (JSON ONLY - NO MARKDOWN)
-════════════════════════════════════════════════════════════
-
-- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting.
-- The response MUST not start with ```json and end with ```.
-
-{
-    "input_type": "greeting|dml_ddl|business_question",
-    "is_valid_business_question": true|false,
-    "response_message": "message if greeting/dml, empty otherwise",
-    "is_validation": true|false,
-    "context_decision": "NEW|FOLLOW_UP|VALIDATION",
-    "components_current": {
-        "metric": "value or null",
-        "filters": ["list"],
-        "attributes": ["list"],
-        "time": "value or null",
-        "time_is_partial": true|false,
-        "signals": {
-            "has_pronouns": true|false,
-            "has_continuation_verbs": true|false
-        }
-    },
-    "components_previous": {
-        "metric": "value or null",
-        "filters": ["list"],
-        "attributes": ["list"],
-        "time": "value or null"
-    },
-    "reasoning": "Clear explanation mentioning: 1) User's choice if applicable, 2) What's present in current, 3) What's missing, 4) What to inherit (be specific), 5) Why this decision"
-}
+    FILTER VALUES EXTRACTED:
 
 
-PROMPT 1 Response: {
-    "input_type": "business_question",
-    "is_valid_business_question": true,
-    "response_message": "",
-    "is_validation": false,
-    "context_decision": "NEW",
-    "components_current": {
-        "metric": "revenue",
-        "filters": ["PBM"],
-        "attributes": [],
-        "time": "july 2025",
-        "time_is_partial": false,
-        "signals": {
-            "has_pronouns": false,
-            "has_continuation_verbs": false
-        }
-    },
-    "components_previous": {
-        "metric": null,
-        "filters": [],
-        "attributes": [],
-        "time": null
-    },
-    "reasoning": "User explicitly selected follow-up, but current question is complete with all required components: metric (revenue), filters (PBM), and time (july 2025). Since the question has metric + filters + time and is self-contained, treating as NEW despite user's follow-up selection."
-}
-PROMPT 2 Response: {
-    "rewritten_question": "What is the revenue for PBM for July 2025",
-    "question_type": "what",
-    "filter_values": [],
-    "user_message": ""
-}
-nav_result {'rewritten_question': 'What is the revenue for PBM for July 2025', 'question_type': 'what', 'context_type': 'NEW', 'inherited_context': '', 'next_agent': 'router_agent', 'next_agent_disp': 'Router Agent', 'requires_domain_clarification': False, 'domain_followup_question': None, 'domain_selection': 'PBM Network', 'llm_retry_count': 0, 'pending_business_question': '', 'filter_values': [], 'user_friendly_message': '', 'decision_from_prompt1': 'NEW'}
+    AVAILABLE METADATA: ## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+**clarification_rules**:This rule applicable only when the user mentions forecast in the question.If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose
+**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
+**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Research,Generic Scripts,Total Membership,Reported Revenues];Please refer the Mapping synonym Volume or total scripts ->Unadjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
+**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
+**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].
+**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
+**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
+**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
+**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
+**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
+**month**: Calendar month of submission; it has numerical value (1-12).
+**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
+**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]     
+**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
+**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
+**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
+**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
+**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
+**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
+**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
+**Revenue per Script or rate**:column not exists. calculated as Revenues / Unadjusted Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
+**rate variance**: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume.
+**volume variance**: (prior Month volume - Current Month Volume) x Current Rate.Rate is reveneue_amt divided by unadjusted_script_count. Volume is unajusted_script_count. current month and previous month should be extracted from user question.
+**mix variance**: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas
+**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
+**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
+**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
+**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
+**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
+**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
+**Cost per Script (Adj)**:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
+**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
+**Op Exp per Script (Adj)**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
+**Op Cost per Script (Adj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
+**IOI per Script (Adj)**:column not exists. calculated as IOI / Adjusted Scripts.
+**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
+**Utilization PMPM (Adjusted)**:column not exists. calculated as Adjusted Scripts / Total Membership.
+**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
+**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
+
+
+
+
+    === HISTORICAL SUCCESSFUL SQL (LEARNING REFERENCE) ===
+
+    A similar question was successfully answered with this SQL:
+    - Previous Question: "what is the network product revenue or network revenue or revenue for PBM?"
+    - Table Used: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+    <historical_sql>
+    SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month ORDER BY year DESC, month DESC
+    </historical_sql>
+
+    **CRITICAL - HOW TO USE THIS REFERENCE:**
+
+    ✅ LEARN FROM (Structure & Logic):
+    1. **Query Structure**:
+    - Observe GROUP BY strategy (dimensions used)
+    - Study CASE WHEN patterns (side-by-side columns)
+    - Note aggregation logic (SUM, COUNT, AVG placement)
+    - Review calculation methods (ROUND, NULLIF usage)
+
+    2. **Column Selection**:
+    - See which business dimensions are included
+    - Understand metric aggregations used
+    - Notice naming conventions (e.g., august_revenue_amount)
+
+    3. **Best Practices**:
+    - UPPER() for case-insensitive filters
+    - ROUND(x, 0) for amounts, ROUND(x, 3) for percentages
+    - NULLIF for division safety
+    - Clean, descriptive column aliases
+
+    ❌ DO NOT COPY DIRECTLY (Adapt These):
+    1. **Filter Values**:
+    - Historical may have <parameter> placeholders or specific values
+    - ALWAYS extract filters from CURRENT question
+    - Example: Historical has carrier_id = 'MPDOVA' → Use carrier_id from current question
+
+    2. **Date/Time Values**:
+    - Historical may have specific dates/periods
+    - ALWAYS use dates from CURRENT question
+    - Example: Historical has "year = 2024" → Use year from current question
+
+    3. **Entity Names**:
+    - Client names, carrier IDs, product categories, etc.
+    - ALWAYS use entities from CURRENT question
+
+    ⚠️ MANDATORY VALIDATIONS:
+    1. **Add Mandatory Filters**:
+    - Check MANDATORY FILTER COLUMNS section above
+    - Historical SQL may not have these (different requirements)
+    - YOU MUST ADD any mandatory filters listed
+
+    2. **Verify Column Availability**:
+    - Confirm all columns exist in AVAILABLE METADATA
+    - If historical column missing, use equivalent from metadata
+
+    3. **Apply Current Filters**:
+    - Use FILTER VALUES EXTRACTED section (marked ✓Valid)
+    - Apply filters from CURRENT question, not historical
+
+    4. **Update Time Logic**:
+    - Match time structure to CURRENT question
+    - Monthly trend? YoY comparison? Date range? Use current requirement
+
+    **ADAPTATION PRIORITY:**
+    Content from CURRENT question > Historical structure > Metadata defaults
+
+    This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question.
+
+    **IMPORTANT**: If you successfully use this historical SQL as a template, set history_sql_used = true in your response. If you generate SQL from scratch without using historical patterns, set history_sql_used = false.
+
+    ====================================================
+
+
+
+    ==============================
+    PRE-ASSESSMENT VALIDATION
+    ==============================
+
+    Before starting Task 1, perform these mandatory checks:
+
+    **CHECK 1: Extract ALL user-mentioned terms**
+    Identify every attribute, metric, filter, and dimension term in the question.
+    List: [term1, term2, term3...]
+
+    **CHECK 2: Validate against metadata**
+    For EACH term, check if it maps to columns in AVAILABLE METADATA:
+    - Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
+    - Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name). Note carrier is not client_id
+    - No match: "xyz" with no similar column → ❌ Not Found
+    - Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
+
+    Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
+
+    **CHECK 3: Filter context validation**
+    Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
+    If yes, check FILTER VALUES EXTRACTED:
+    a) Does the filter value EXACTLY match (not partial) what's in the user's question?
+    b) Does the column name exist in AVAILABLE METADATA?
+    - If BOTH pass → ✓Valid (use this column for filtering)
+    - If ONLY partial match → ❌Mark for follow-up
+    - If exact match but column not in metadata → ❌Mark for follow-up
+    - If filter value not mentioned in question → Skip (don't use this filter)
+
+    **CHECK 4: Clarification rules validation**
+    Check if selected dataset has "clarification_rules" field in metadata.
+    If present, evaluate user's question against each rule:
+    - Does question trigger any rule? → ❌ Rule triggered (needs clarification)
+    - No rules triggered? → ✓ No rules apply
+
+    Output: ✓ No rules | ❌ Rule: [brief rule description]
+
+    **CHECK 5: Historical SQL availability**: ✓ Available (using as learning template)
+
+    **Output Format:**
+    Terms: [list]
+    Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
+    Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
+    Clarification Rules: [status from CHECK 4]
+    Historical SQL: [status from CHECK 5]
+
+    ==============================
+    TASK 1: STRICT ASSESSMENT
+    ==============================
+
+    Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
+
+    **A. TEMPORAL SCOPE**
+    If question mentions specific dates/periods:
+    - Past dates (before Oct 2025) → ✓ Valid
+    - Current/recent dates (2025 year-to-date) → ✓ Valid
+    - Near-future dates (within 12 months) → ✓ Valid (forecast context)
+    - Far-future dates (beyond Nov 2026) → ❌ Clarify intent
+
+    **B. METRIC DEFINITIONS** - Calculation Method Clarity
+    Scope: Only numeric metrics requiring aggregation/calculation
+    ✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
+    ❌ = Any metric requires custom formula not specified OR calculation method ambiguous
+    ⚠️ = Metric exists but needs confirmation
+    N/A = No metrics/calculations needed
+
+    **C. BUSINESS CONTEXT**
+    ✓ = Filtering criteria clear AND grouping dimensions explicit
+    ❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
+    ⚠️ = Partially clear but confirmation recommended
+
+    **D. FORMULA & CALCULATION REQUIREMENTS**
+    ✓ = Standard SQL aggregations sufficient
+    ❌ = Requires custom formulas without clear definition
+    N/A = No calculations needed
+
+    **E. METADATA MAPPING** - Column Existence Validation
+    ✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
+    ❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
+
+    Use CHECK 2 validation results directly. No additional examples needed.
+
+    **F. QUERY STRATEGY**
+    ✓ = Clear if single/multi query or join needed
+    ❌ = Multi-table approach unclear
+
+    **G. DATASET CLARIFICATION RULES**
+    ✓ = No clarification rules triggered OR rules don't apply to question
+    ❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
+
+    Use CHECK 4 validation result directly.
+
+    ==============================
+    ASSESSMENT OUTPUT FORMAT
+    ==============================
+
+    **PRE-VALIDATION:**
+    Terms: [list]
+    Validation: [statuses]
+    Filter Context: [status]
+    Clarification Rules: [status]
+    Historical SQL: [status]
+
+    **ASSESSMENT**:
+    A: ✓/❌/N/A (max 5 words)
+    B: ✓/❌/⚠️/N/A (max 5 words)
+    C: ✓/❌/⚠️ (max 5 words)
+    D: ✓/❌/N/A (max 5 words)
+    E: ✓/❌ (list failed mappings if any)
+    F: ✓/❌ (max 5 words)
+    G: ✓/❌ (rule description if triggered)
+
+    **DECISION**: PROCEED | FOLLOW-UP
+
+    ==============================
+    STRICT DECISION CRITERIA
+    ==============================
+
+    **MUST PROCEED only if:**
+    ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
+
+    **MUST FOLLOW-UP if:**
+    ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
+
+    **Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
+
+    ==============================
+    FOLLOW-UP GENERATION
+    ==============================
+    Address ALL missing/unclear items from the assessment.
+
+    <followup>
+    I need clarification to generate accurate SQL:
+
+    **[What's Missing/Unclear]**: [Describe the issue - e.g., "Dataset requires forecast cycle" or "Cannot find column 'state_code'"]
+    - **Please specify**: [What you need from user]
+    - **Available options** (if applicable): [List from metadata]
+
+    [Additional issues as needed - cover all failures from A-G]
+
+    *You can also ask a different question if you prefer.*
+    </followup>
+
+    ==============================================
+    TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
+    ==============================================
+
+    (Only execute if Task 1 DECISION says "PROCEED")
+
+    **CORE SQL GENERATION RULES:**
+
+    [YOU WILL PASTE YOUR SQL GENERATION RULES HERE]
+
+    ==============================
+    OUTPUT FORMATS
+    ==============================
+
+    Return ONLY the result in XML tags with no additional text.
+
+    **SINGLE SQL QUERY:**
+    <sql>
+    [Your complete SQL query]
+    </sql>
+    <history_sql_used>[true or false]</history_sql_used>
+
+    **MULTIPLE SQL QUERIES:**
+    <multiple_sql>
+    <query1_title>[Title - max 8 words]</query1_title>
+    <query1>[SQL query]</query1>
+    <query2_title>[Title - max 8 words]</query2_title>
+    <query2>[SQL query]</query2>
+    </multiple_sql>
+    <history_sql_used>[true or false]</history_sql_used>
+
+    FOR ANY FOLLOW-UP SITUATION:
+    <followup>
+    I need clarification to generate accurate SQL:
+
+    **[Specific issue from unclear area]**: [Direct question in one sentence]
+    - Available data: [specific column names from metadata]
+    - Suggested approach: [concrete calculation option]
+
+    **[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
+    - Available data: [relevant columns]
+    - Alternative: [another option]
+
+    Please clarify these points.
+    </followup>
+
+    **HISTORY_SQL_USED FLAG RULES:**
+    - If historical SQL was available AND you used its structure/patterns → true
+    - If historical SQL was available BUT you generated from scratch → false
+    - If historical SQL was not available → false
+
+
+    ==============================
+    EXECUTION INSTRUCTION
+    ==============================
+
+    1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules + check historical SQL)
+    2. Complete TASK 1 strict assessment (A-G with clear marks)
+    3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
+    4. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
+    5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize G → E → B → C)
+    6. Always include history_sql_used flag in output (true/false)
+
+    **Show your work**: Display pre-validation, assessment, then SQL or follow-up.
+    **Remember**: ONE failure = STOP.
+
+🔄 Router status update: Executing SQL (T+6s)
+sql llm response **PRE-VALIDATION:**
+Terms: [revenue, PBM, September, 2025]
+Validation: revenue(✓Revenues) | PBM(✓product_category) | September(✓month) | 2025(✓year)
+Filter Context: N/A
+Clarification Rules: ✓ No rules (no forecast mentioned)
+Historical SQL: ✓ Available (using as learning template)
+
+**ASSESSMENT**:
+A: ✓ Valid (September 2025)
+B: ✓ Standard SUM aggregation
+C: ✓ Clear filtering and grouping
+D: ✓ Standard aggregations sufficient
+E: ✓ All terms mapped
+F: ✓ Single table query
+G: ✓ No rules triggered
+
+**DECISION**: PROCEED
+
+<sql>
+SELECT
+    product_category,
+    year,
+    month,
+    ROUND(SUM(amount_or_count), 0) AS revenue_amount
+FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+WHERE UPPER(ledger) = UPPER('GAAP')
+    AND UPPER(metric_type) = UPPER('Revenues')
+    AND UPPER(product_category) = UPPER('PBM')
+    AND year = 2025
+    AND month = 9
+GROUP BY product_category, year, month
+ORDER BY year DESC, month DESC
+</sql>
+<history_sql_used>true</history_sql_used>

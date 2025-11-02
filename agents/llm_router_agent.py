@@ -86,6 +86,21 @@ A similar question was successfully answered with this SQL:
    - NULLIF for division safety
    - Clean, descriptive column aliases
 
+4. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
+   - Observe ALL dimension columns in SELECT and GROUP BY clauses
+   - These represent the level of detail that was SUCCESSFUL and USEFUL to users
+   - **DEFAULT BEHAVIOR: PRESERVE all dimensions from historical SQL**
+   - Example: Historical has [product_category, product_sub_category_lvl_2, year, month]
+     → Keep ALL of these in your SELECT and GROUP BY
+   - This is USER FEEDBACK in action - they found this granularity valuable
+   
+   **Only REMOVE a dimension if:**
+   * Current question EXPLICITLY asks for higher-level aggregation (e.g., "total PBM revenue" without any breakdown)
+   * Dimension column doesn't exist in current AVAILABLE METADATA
+   * Current question specifies DIFFERENT grouping dimensions (e.g., "by line_of_business" when historical was "by product_sub_category")
+   
+   **When in doubt: KEEP the historical dimensions**
+
 ❌ DO NOT COPY DIRECTLY (Adapt These):
 1. **Filter Values**: 
    - Historical may have <parameter> placeholders or specific values
@@ -119,12 +134,24 @@ A similar question was successfully answered with this SQL:
    - Match time structure to CURRENT question
    - Monthly trend? YoY comparison? Date range? Use current requirement
 
+5. **PRESERVE Historical Dimensions**:
+   - Keep ALL GROUP BY columns from historical SQL in your SELECT and GROUP BY
+   - These dimensions represent proven user value from feedback
+   - Only remove if current question explicitly asks for higher aggregation
+   - Example: Historical has "product_sub_category_lvl_2" → Keep it unless user says "total" or "overall"
+
 **ADAPTATION PRIORITY:**
 Content from CURRENT question > Historical structure > Metadata defaults
 
-This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question.
+**DIMENSION PRESERVATION PRIORITY:**
+Keep historical GROUP BY dimensions > Only remove if explicitly contradicted
 
-**IMPORTANT**: If you successfully use this historical SQL as a template, set history_sql_used = true in your response. If you generate SQL from scratch without using historical patterns, set history_sql_used = false.
+This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question while PRESERVING the dimensional granularity that made the historical query successful.
+
+**IMPORTANT**: 
+- If you use historical SQL's structure AND preserve its dimensions → set history_sql_used = true
+- If you generate from scratch without using historical patterns → set history_sql_used = false
+- Preserving dimensions is CRITICAL - it represents user feedback on useful granularity
 
 ====================================================
 

@@ -40,7 +40,6 @@ VALUES (
     current_timestamp(),
     'prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'
 );
-
 %sql
 INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (
     session_id,
@@ -56,12 +55,12 @@ VALUES (
     '28f6f8e3-5889-4e5b-aba9-58da52ad4791',
     'sivakumm@optum.com',
     'what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM',
-    'SELECT product_category, product_sub_category_lvl_2, ROUND(SUM(CASE WHEN month = 1 THEN amount_or_count ELSE 0 END), 0) AS january_revenue_amount, ROUND(SUM(CASE WHEN month = 2 THEN amount_or_count ELSE 0 END), 0) AS february_revenue_amount, ROUND(SUM(CASE WHEN month = 3 THEN amount_or_count ELSE 0 END), 0) AS march_revenue_amount, ROUND(SUM(CASE WHEN month = 4 THEN amount_or_count ELSE 0 END), 0) AS april_revenue_amount, ROUND(SUM(CASE WHEN month = 5 THEN amount_or_count ELSE 0 END), 0) AS may_revenue_amount, ROUND(SUM(CASE WHEN month = 6 THEN amount_or_count ELSE 0 END), 0) AS june_revenue_amount, ROUND(SUM(CASE WHEN month = 7 THEN amount_or_count ELSE 0 END), 0) AS july_revenue_amount, ROUND(SUM(CASE WHEN month = 8 THEN amount_or_count ELSE 0 END), 0) AS august_revenue_amount, ROUND(SUM(CASE WHEN month = 9 THEN amount_or_count ELSE 0 END), 0) AS september_revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE year = 2025 AND month BETWEEN 1 AND 9 AND UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2',
+    'SELECT * FROM (SELECT product_category, product_sub_category_lvl_2, ROUND(SUM(CASE WHEN month = 1 THEN amount_or_count ELSE 0 END), 0) AS january_revenue_amount, ROUND(SUM(CASE WHEN month = 2 THEN amount_or_count ELSE 0 END), 0) AS february_revenue_amount, ...[months 3-9: march, april, may, june, july, august, september]... FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE year = 2025 AND month BETWEEN 1 AND 9 AND UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2 UNION ALL SELECT product_category, "OVERALL_TOTAL" AS product_sub_category_lvl_2, ROUND(SUM(CASE WHEN month = 1 THEN amount_or_count ELSE 0 END), 0) AS january_revenue_amount, ROUND(SUM(CASE WHEN month = 2 THEN amount_or_count ELSE 0 END), 0) AS february_revenue_amount, ...[months 3-9: march, april, may, june, july, august, september]... FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE year = 2025 AND month BETWEEN 1 AND 9 AND UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category) ORDER BY CASE WHEN product_sub_category_lvl_2 = ''OVERALL_TOTAL'' THEN 0 ELSE 1 END, product_sub_category_lvl_2',
     true,
     NULL,
     current_timestamp(),
     'prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'
-)
+);
 %sql
 INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (
     session_id,

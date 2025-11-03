@@ -1,4 +1,4 @@
-        if has_history:
+if has_history:
             check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (using as learning template)"
             history_section = f"""
 === HISTORICAL SUCCESSFUL SQL (LEARNING REFERENCE) ===
@@ -31,7 +31,14 @@ A similar question was successfully answered with this SQL:
 - NULLIF for division safety
 - Clean, descriptive column aliases
 
-4. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
+4. **STRUCTURAL PATTERNS - MUST PRESERVE**:
+- **UNION/UNION ALL**: If historical uses UNION → replicate this exact pattern (e.g., detail rows + OVERALL_TOTAL)
+- **CTEs/Subqueries**: Preserve WITH clauses, nested queries, and subquery structure
+- **Window Functions**: Keep PARTITION BY and ORDER BY logic intact
+- **Dimension Columns**: Use EXACT column names (e.g., product_sub_category_lvl_2, not lvl_1) unless current question explicitly specifies different level
+- **COPY the complete structure; ONLY change WHERE clause filter values to match current question**
+
+5. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
 - Observe ALL dimension columns in SELECT and GROUP BY clauses
 - These represent the level of detail that was SUCCESSFUL and USEFUL to users
 - **DEFAULT BEHAVIOR: PRESERVE all dimensions from historical SQL**
@@ -325,4 +332,4 @@ EXECUTION INSTRUCTION
 6. Always include history_sql_used flag in output (true/false)
 
 **Show your work**: Display pre-validation, assessment, then SQL or follow-up.
-**Remember**: ONE failure = STOP. 
+**Remember**: ONE failure = STOP.

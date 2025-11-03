@@ -1,24 +1,23 @@
-%sql
 INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (
     session_id,
-41    user_id,
-42    user_question,
-43    state_info,
-44    positive_feedback,
-45    feedback,
-46    insert_ts,
-47    table_name
-48)
-49VALUES (
-50    '28f6f8e3-5889-4e5b-aba9-58da52ad4791',
-51    'sivakumm@optum.com',
-52    'what is the network product revenue or network revenue or revenue for PBM?',
-53    'SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month UNION ALL SELECT product_category, ''OVERALL_TOTAL'' AS product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, year, month ORDER BY year DESC, month DESC, CASE WHEN product_sub_category_lvl_2 = ''OVERALL_TOTAL'' THEN 0 ELSE 1 END, product_sub_category_lvl_2',
-54    true,
-55    NULL,
-56    current_timestamp(),
-57    'prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'
-58);
+    user_id,
+    user_question,
+    state_info,
+    positive_feedback,
+    feedback,
+    insert_ts,
+    table_name
+)
+VALUES (
+    '28f6f8e3-5889-4e5b-aba9-58da52ad4791',
+    'sivakumm@optum.com',
+    'what is the network product revenue or network revenue or revenue for PBM?',
+    'SELECT * FROM (SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month UNION ALL SELECT product_category, "OVERALL_TOTAL" AS product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, year, month) ORDER BY year DESC, month DESC, CASE WHEN product_sub_category_lvl_2 = ''OVERALL_TOTAL'' THEN 0 ELSE 1 END, product_sub_category_lvl_2',
+    true,
+    NULL,
+    current_timestamp(),
+    'prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast'
+);
 
 %sql
 INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (

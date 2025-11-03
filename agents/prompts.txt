@@ -1,4 +1,8 @@
-SELECT * FROM (  SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month
-  UNION ALL
-  SELECT product_category, "OVERALL_TOTAL" AS product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, year, month
-) ORDER BY year DESC, month DESC, CASE WHEN product_sub_category_lvl_2 = 'OVERALL_TOTAL' THEN 0 ELSE 1 END, product_sub_category_lvl_2
+Home Delivery	divvyDOSE
+Specialty	CPS Solutions
+Specialty	Infusion
+Community Pharmacies	Community Core
+Community Pharmacies	PharmScript
+Specialty	Specialty Core
+Specialty	Frontier
+Home Delivery	HDP Core

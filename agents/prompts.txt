@@ -1,19 +1,19 @@
-Home Delivery	divvyDOSE
-Specialty	CPS Solutions
-Specialty	Infusion
-Community Pharmacies	Community Core
-Community Pharmacies	PharmScript
-Specialty	Specialty Core
-Specialty	Frontier
-Home Delivery	HDP Core
-Admin Fees
-Admin Fees
-Admin Fees
-Emisar GPO
-Retail Other
-Retail
-Mfr Discount
-Workers Comp
-Prior Auth
-Retail Other
-Retail Other
+Cost Per Script_adjusted
+Cost Per Script_Unadjusted
+Cost%
+Gross Margin%
+HDP Adoption%
+IOI Per Scrip Adjusted
+IOI Per Script_Unadjusted
+IOI%
+OP Cost Per Script Adjusted
+OP Cost Per Script Unadjusted
+OP Exp Per Script Adjusted
+OP Exp Per Script Unadjusted
+Operating Expense%
+Revenue Per script_adjusted
+Revenue Per script_Unadjusted
+Rx Utilization Adjusted
+SP Capture%
+Utilization_PMPM_adjusted
+Utilization_PMPM_Unadjusted

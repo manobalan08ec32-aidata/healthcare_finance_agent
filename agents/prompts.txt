@@ -6,3 +6,14 @@ Community Pharmacies	PharmScript
 Specialty	Specialty Core
 Specialty	Frontier
 Home Delivery	HDP Core
+Admin Fees
+Admin Fees
+Admin Fees
+Emisar GPO
+Retail Other
+Retail
+Mfr Discount
+Workers Comp
+Prior Auth
+Retail Other
+Retail Other

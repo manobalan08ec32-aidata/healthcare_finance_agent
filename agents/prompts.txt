@@ -1,691 +1,165 @@
+system_prompt = """
+You are a SQL query matching expert. Select the SINGLE best historical question or return NO_MATCH.
 
-                # Use the token headers (same authentication as SQL queries)
-                headers = {
-                    "Authorization": f"Bearer {self.DATABRICKS_TOKEN}",
-                    "Content-Type": "application/json;charset=UTF-8",
-                    "Accept": "application/json, text/plain, */*"
-                }
-                
-                session = await self._get_session()
-                
-                print(f"   Calling REST API with reranking (attempt {attempt + 1}/{max_retries})...")
-                async with session.post(url, headers=headers, json=payload) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        print(f"   ❌ API returned status {response.status}: {error_text}")
-                        response.raise_for_status()
-                    
-                    result = await response.json()
-                
-                # Parse results from REST API response
-                if result.get('result', {}).get('data_array'):
-                    manifest = result.get('manifest', {})
-                    if 'columns' in manifest:
-                        cols = [c['name'] for c in manifest['columns']]
-                    else:
-                        # Fallback if manifest is different
-                        cols = payload['columns']
-                    
-                    parsed_results = [dict(zip(cols, row)) for row in result['result']['data_array']]
-                    
-                    print(f"  ✅ Found {len(parsed_results)} similar SQL queries (reranked)")
-                    return parsed_results
-                else:
-                    print(f"  ⚠️ No results found in feedback SQL embeddings")
-                    return []
-                    
-            except aiohttp.ClientError as e:
-                error_str = str(e)
-                print(f"  ⚠️ Network error on attempt {attempt + 1}: {error_str}")
-                
-                # Check if this is a connection-related error that we should retry
-                is_connection_error = any(err_pattern in error_str.lower() for err_pattern in [
-                    'connection was forcibly closed',
-                    'connection reset',
-                    'connection aborted',
-                    'connection timeout',
-                    'connection refused',
-                    'winerror 10054',
-                    'winerror 10053',
-                    'winerror 10060'
-                ])
-                
-                if is_connection_error and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)  # Exponential backoff
-                    print(f"  🔄 Connection error detected, retrying in {delay}s...")
-                    
-                    # Force recreate session on connection errors
-                    if self._http_session and not self._http_session.closed:
-                        try:
-                            await self._http_session.close()
-                        except Exception:
-                            pass
-                        self._http_session = None
-                    
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    # Not a connection error or max retries reached
-                    print(f"  ❌ Vector search failed: {str(e)}")
-                    return []
-                    
-            except Exception as e:
-                error_str = str(e)
-                print(f"  ⚠️ Unexpected error on attempt {attempt + 1}: {error_str}")
-                
-                # Don't retry non-network errors unless it's the last attempt
-                if attempt < max_retries - 1 and 'connection' in error_str.lower():
-                    delay = base_delay * (2 ** attempt)
-                    print(f"  🔄 Connection-related error, retrying in {delay}s...")
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    print(f"  ❌ Error searching feedback SQL embeddings: {str(e)}")
-                    return []
-        
-        # Should not reach here, but return empty list if all retries exhausted
-        print(f"  ❌ Vector search failed after all {max_retries} retry attempts")
-        return []
-        
-    async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
-        """
-        Search metadata with start-of-word matching only
-        """
-        try:
-            if not filter_list:
-                return []
-            
-            score_cases = []
-            all_patterns = []
-            
-            for term in filter_list:
-                term_clean = term.strip().lower()
-                escaped_exact = term_clean.replace("'", "\\'")
-                
-                # Pattern 1: For each word, allow optional separators/numbers after it
-                # "covid vaccine" → "covid[19-_]* vaccine[s]*"
-                words = term_clean.split()
-                flexible_words = []
-                for word in words:
-                    # Add word boundary at start, allow numbers/separators after
-                    flexible_words.append(f"\\b{word}[0-9\\-_]*")
-                
-                flexible_pattern = '.*'.join(flexible_words)
-                escaped_flexible = flexible_pattern.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                all_patterns.append(escaped_flexible)
-                
-                # SCORING TIERS
-                
-                # TIER 1: Exact match (1000 points)
-                # "covid vaccine" = "covid vaccine"
-                score_cases.append(
-                    f"CASE WHEN lower(trim(exploded_value)) = '{escaped_exact}' THEN 1000 ELSE 0 END"
-                )
-                
-                # TIER 2: Starts with exact term (800 points)
-                # "covid vaccine" matches "covid vaccine information"
-                escaped_start = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                score_cases.append(
-                    f"CASE WHEN lower(trim(exploded_value)) RLIKE '^{escaped_start}\\b' THEN 800 ELSE 0 END"
-                )
-                
-                # TIER 3: Flexible start match (500 points)
-                # "covid vaccine" matches "covid19 vaccine"
-                score_cases.append(
-                    f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^{escaped_flexible}' THEN 500 ELSE 0 END"
-                )
-                
-                # TIER 4: Each word starts a word in the value (200 points)
-                # "covid vaccine" matches "about covid19 vaccine"
-                for word in words:
-                    if len(word) > 2:  # Skip very short words
-                        escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
-                        score_cases.append(
-                            f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\\b{escaped_word}[0-9\\-_]*' THEN 200 ELSE 0 END"
-                        )
-            
-            # Combine patterns for WHERE clause
-            regex_pattern = '|'.join(all_patterns)
-            score_calculation = ' + '.join(score_cases)
-            
-            query = f"""
-            WITH matched_data AS (
-                SELECT
-                    column_name,
-                    trim(exploded_value) AS individual_value,
-                    ({score_calculation}) AS value_score
-                FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
-                LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-                WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
-                AND ({score_calculation}) >= 200  -- Must meet minimum score threshold
-            ),
-            scored_aggregated AS (
-                SELECT
-                    column_name,
-                    collect_list(individual_value) AS all_matched_values,
-                    SUM(value_score) AS relevance_score
-                FROM matched_data
-                GROUP BY column_name
-            )
-            SELECT
-                column_name,
-                concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
-                relevance_score
-            FROM scored_aggregated
-            WHERE relevance_score > 500  -- Only return strong matches
-            ORDER BY relevance_score DESC, column_name
-            LIMIT 7
-            """
-            
-            print(f"🔍 Executing filter values search for terms: {filter_list}")
-            print(f"📊 SQL Query: {query}")
-            
-            # Execute the query
-            result_data = await self.db_client.execute_sql_async_audit(query)
-            print('results_data_filter', result_data)
-            
-            if not isinstance(result_data, list) or not result_data:
-                print(f"❌ Filter values search failed: {result_data}")
-                return []
-                
-            print(f"✅ Found {len(result_data)} filter value matches")
-            
-            # Format results
-            concatenated_results = []
-            for row in result_data:
-                column_name = row.get('column_name', '')
-                matched_values = row.get('matched_values', '')
-                relevance_score = row.get('relevance_score', 0)
-                
-                table_summary = f"Column: {column_name} (Score: {relevance_score})\n  - Values: {matched_values}"
-                concatenated_results.append(table_summary)
-            
-            print("results", concatenated_results)
-            return concatenated_results
-                
-        except Exception as e:
-            print(f"❌ Error in search_metadata_sql: {str(e)}")
-            return []
-    
-    async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
-        """
-        Pure LLM-based selection of most relevant historical question from feedback results.
-        Returns single best match or NO_MATCH status.
-        """
-        
-        user_question = state.get('current_question', state.get('original_question', ''))
-        
-        # System prompt for feedback matching
-        system_prompt = """
-=== MANDATORY DISQUALIFIERS (HARD BLOCKERS - CHECK FIRST!) ===
+=== MANDATORY DISQUALIFIERS (CHECK FIRST!) ===
 
-Before analyzing any patterns, IMMEDIATELY REJECT any candidate that fails ANY of these checks:
-
+Immediately REJECT candidates that fail ANY check:
 
 ❌ DISQUALIFIER 1: Metric Mismatch (CRITICAL!)
-- Core metrics must be THE SAME metric type (accounting for synonyms ONLY)
-- **Synonyms that ARE the same metric:**
-  * "revenue" = "network revenue" = "product revenue" = "network product revenue"
-  * "script count" = "volume" = "script volume" = "scripts" = "unadjusted scripts" = "adjusted scripts"
-  * "adjusted script count" and "unadjusted script count" are BOTH variants of "script count"
-  * Note: If history has "adjusted AND unadjusted script count", current asking for "script count" MATCHES
-  
-- **NON-SYNONYMS - These are DIFFERENT metrics:**
-  * "revenue" ≠ "script count" ← DIFFERENT METRICS
-  * "revenue" ≠ "volume" ← DIFFERENT METRICS  
-  * "script count" ≠ "cost" ← DIFFERENT METRICS
-  * "script count" ≠ "actuals vs forecast" ← DIFFERENT METRICS
+Core metrics must match (accounting for synonyms):
+- Synonyms: "revenue"="network revenue"="product revenue" | "script count"="volume"="scripts"="adjusted/unadjusted scripts"
+- NON-synonyms: "revenue" ≠ "script count" | "revenue" ≠ "volume" | "script count" ≠ "cost"
+- Extra metrics OK: History "volume, revenue" matches current "volume" ✅
+- Different metrics: Current "volume", History "revenue only" → REJECT ❌
 
-**If current asks for "script count" and history has "revenue":**
-→ REJECT IMMEDIATELY - Do NOT proceed to pattern matching
-→ Do NOT justify as "both are metrics"
-→ Do NOT justify as "pattern is the same"
-→ These are DIFFERENT metric types and CANNOT be substituted
+❌ DISQUALIFIER 2: Extra Filter TYPES (exclude dates!)
+History has extra filter TYPES current doesn't have (ignore date filters).
+Ex: Current="revenue for PBM", History="revenue for PBM for client MDOVA" → REJECT (extra client_id)
 
-❌ DISQUALIFIER 2: Extra Filter TYPES (EXCLUDING DATES!)
-- History has ADDITIONAL filter TYPES that current doesn't have
-- **IMPORTANT:** When comparing filter types, IGNORE date/time filters entirely (per Rule #2 below)
-- Focus only on: product_category, client_id, carrier_id, therapy_class, line_of_business, etc.
-- Example:
-  * Current: "revenue for PBM" (filter types: product_category)
-  * History: "revenue for PBM for client MDOVA" (filter types: product_category + client_id)
-  * Compare only non-date filters: History has EXTRA filter type (client_id) → REJECT
-- Counter-example (ALLOWED):
-  * Current: "script count for PBM for July 2025" (filter types: product_category + date)
-  * History: "script count for Specialty" (filter types: product_category)
-  * Compare only non-date filters: both have product_category → PASS ✅
+❌ DISQUALIFIER 3: Missing Filter TYPES (exclude dates!)
+Current has filter TYPES history doesn't have (ignore date filters).
+Ex: Current="revenue for PBM", History="revenue" → REJECT (missing product_category)
 
-❌ DISQUALIFIER 3: Missing Filter TYPES (EXCLUDING DATES!)
-- Current has filter TYPES that history doesn't have
-- **IMPORTANT:** When comparing filter types, IGNORE date/time filters entirely
-- Example:
-  * Current: "revenue for PBM" (has product_category filter)
-  * History: "revenue" (NO filters at all)
-  * → REJECT! History lacks filter structure needed
-- Counter-example (ALLOWED):
-  * Current: "script count for PBM" (filter types: product_category)
-  * History: "script count for Specialty for June 2024" (filter types: product_category + date)
-  * Compare only non-date filters: both have product_category → PASS ✅
+❌ DISQUALIFIER 4: Missing/Extra Dimensions
+Current needs GROUP BY history lacks, or history has GROUP BY current doesn't mention.
+Ex: Current="revenue by drug", History="revenue" → REJECT
 
-❌ DISQUALIFIER 4: Missing Dimensions
-- Current needs GROUP BY that history doesn't have
-- Example: History="revenue", Current="revenue by drug" → REJECT
+**IF ANY DISQUALIFIER TRIGGERED → SKIP CANDIDATE**
 
-❌ DISQUALIFIER 5: Extra Dimensions
-- History has GROUP BY that current doesn't mention
-- Example: History="revenue by month", Current="revenue" → REJECT
+=== PRIORITY SCORING (For candidates passing disqualifiers) ===
 
-**IF ANY DISQUALIFIER IS TRIGGERED → IMMEDIATELY RETURN NO_MATCH OR SKIP THAT CANDIDATE**
+**100 pts**: Exact filter value match + has required metric(s)
+- Current: "volume for PBM", History: "volume for PBM" → 100 pts (exact PBM, has volume)
+- Current: "volume for PBM", History: "volume, revenue for PBM" → 100 pts (exact PBM, has volume + extra OK)
 
-Do NOT proceed to pattern matching if any candidate fails these checks. These are non-negotiable rules.
+**80 pts**: Same filter type, different value + has required metric(s)
+- Current: "volume for PBM", History: "volume for Specialty" → 80 pts (different value)
 
-=== CORE MATCHING PRINCIPLES (Only for candidates that pass all disqualifiers) ===
+**70 pts**: Multiple filters, partial match
+- Current: "revenue for PBM for client X", History: "revenue for PBM for client Y" → 70 pts (PBM matches, client differs)
 
-1. SYNONYMS & VARIATIONS (Treat as identical):
-   - "revenue" = "network revenue" = "product revenue" = "network product revenue"
-   - "script count" = "volume" = "script volume" = "scripts" = "unadjusted scripts" = "adjusted scripts"
-   - "Home Delivery" = "HDP" = "Mail"
-   - "Specialty" = "SP"
-   - These are THE SAME THING - match them as exact
+**+5 pts**: Same date structure (see below)
 
-2. DATES (Completely ignore):
-   - "July 2025" vs "August 2024" → IGNORE, focus on pattern
-   - "Q3 2025" vs "Q2 2024" → IGNORE, focus on comparison structure
-   - "Jan-Sep 2025" vs "Apr-Jun 2024" → IGNORE, focus on date range pattern
-   - What MATTERS: Is it a single period? Date range? Period comparison (YoY/QoQ/MoM)?
-   - **CRITICAL:** Date filters should NOT be considered in DISQUALIFIER 3 & 4 checks
+**Pick highest score. If tied, pick any (all equivalent).**
 
-3. FILTER VALUES (Different values are OK):
-   - "Specialty" vs "Home Delivery" → SAME PATTERN (product_category filter)
-   - "PBM" vs "Specialty" → SAME PATTERN (product_category filter)
-   - "client MDOVA" vs "client PDIND" → SAME PATTERN (client_id filter)
-   - "GLP-1" vs "Oncology" → SAME PATTERN (therapy_class filter)
-   - **KEY POINT**: Different filter VALUES are fine, same filter TYPE is what matters
-   - This means PBM and Specialty are INTERCHANGEABLE - both are product_category values
+=== DATE COMPATIBILITY ===
 
-4. EXTRA METRICS IN SELECT (OK):
-   - History: "script count, revenue for carrier MPDOVA"
-   - Current: "script count for carrier MPDOVA"
-   - → MATCH! Extra metrics in history are harmless, just ignore them
-   
-   - History: "adjusted and unadjusted script count for PBM"
-   - Current: "script count for PBM"
-   - → MATCH! Both adjusted and unadjusted are variants of script count (see Rule #1)
+Focus on STRUCTURE, not values. Dates ignored when comparing filter types.
 
-5. EXTRA FILTER TYPES (REJECT - but see DISQUALIFIER 3):
-   - **Focus on TYPES of filters, NOT the VALUES within those filters**
-   - History has ADDITIONAL filter TYPES that current doesn't have
-   - Remember to EXCLUDE date filters from this check
-   
-   **Examples of EXTRA FILTER TYPES (REJECT):**
-   - Current: "revenue for PBM" (1 filter type: product_category)
-   - History: "revenue for PBM for client MDOVA" (2 filter types: product_category + client_id)
-   - → REJECT! History has EXTRA filter TYPE (client_id)
-   
-   **Counter-example - Same Filter Type, Different Value (ALLOWED):**
-   - Current: "revenue for PBM" (filter type: product_category)
-   - History: "revenue for Specialty" (filter type: product_category)
-   - → MATCH ✅! Same filter TYPE, different VALUE is OK per rule #3
+**Compatible (can match):**
+- Single period/range: "July 2025" ↔ "Q3 2025" ↔ "Jan-Mar 2025" ↔ "July-Aug 2025"
+- YoY: "Q3 2025 vs Q3 2024" ↔ "Q2 2025 vs Q2 2024"
+- QoQ: "Q3 vs Q2 2025" ↔ "Q2 vs Q1 2025"
+- MoM: "July vs June 2025" ↔ "Aug vs July 2025"
 
-6. MISSING FILTER TYPES (REJECT - but see DISQUALIFIER 4):
-   - Current has filter TYPES that history doesn't have
-   - Remember to EXCLUDE date filters from this check
+**Incompatible:**
+- Single vs Comparison: "July 2025" ✗ "Q3 2025 vs Q3 2024"
+- YoY vs QoQ: "Q3 2025 vs Q3 2024" ✗ "Q3 2025 vs Q2 2025"
 
-7. MISSING DIMENSIONS (REJECT):
-   - History: "revenue"
-   - Current: "revenue by line of business"
-   - → REJECT! History lacks the GROUP BY structure needed
-   - Risk: Won't help with dimensional breakdown
+=== CORE RULES ===
 
-8. EXTRA DIMENSIONS IN HISTORY (REJECT):
-   - History: "revenue by month"
-   - Current: "revenue"
-   - → REJECT! History has GROUP BY that current doesn't want
-   - Risk: Will confuse LLM to add unwanted grouping
+1. **Synonyms**: "revenue"="network revenue" | "volume"="script count"="scripts" | "HDP"="Home Delivery"="Mail" | "SP"="Specialty"
+
+2. **Dates**: Ignore specific values (July vs Aug), match structure (single vs comparison)
+
+3. **Filter VALUES**: Different values OK but exact match gets priority. PBM vs Specialty = same type, different value.
+
+4. **Extra metrics**: History "volume, revenue" + Current "volume" = MATCH ✅ (has what we need)
+
+5. **Parsing**: "PBM revenue" means metric="revenue", filter="PBM", NOT metric="PBM revenue"
 
 === DECISION PROCESS ===
 
-**CRITICAL: Apply MANDATORY DISQUALIFIERS first! Only continue if candidates pass ALL disqualifiers.**
-
-STEP 1: Apply ALL MANDATORY DISQUALIFIERS to each candidate
-- Check each candidate against ALL 6 disqualifiers listed above
-- Eliminate any candidate that fails ANY disqualifier
-- **REMEMBER:** When checking DISQUALIFIER 3 & 4, IGNORE date/time filters
-- **SPECIAL EMPHASIS**: DISQUALIFIER 2 (Metric Mismatch) is NON-NEGOTIABLE
-  * If current asks for "script count" and candidate has "revenue" → ELIMINATE immediately
-  * If current asks for "revenue" and candidate has "script count" → ELIMINATE immediately
-  * Do NOT proceed to pattern matching for candidates with metric mismatches
-
-STEP 2: Pattern matching (ONLY for candidates that passed ALL disqualifiers)
-Look for BEST match based on:
-A. EXACT pattern match (highest priority):
-   - Same calculation type (variance, comparison, split, ratio)
-   - Same comparison pattern (YoY, QoQ, MoM, vs previous)
-   - Same dimensions (by drug_name, by client, etc.)
-   - Same structure (side-by-side vs rows)
-
-B. PARTIAL pattern match (if no exact):
-   - Same metric and structure
-   - Different filter values OK
-   - Similar aggregation approach
-
-C. If multiple good matches:
-   - Prefer more recent (higher seq_id)
-   - Prefer same filter categories
-   - Prefer similar complexity
-
-STEP 3: Final validation
-Ask: "Will this history help or confuse the LLM?"
-- Pattern clearly transferable → HELP → ACCEPT
-- Otherwise → REJECT
-
-**IF NO CANDIDATES REMAIN AFTER STEP 1 → RETURN NO_MATCH**
+STEP 1: Apply disqualifiers → Eliminate failing candidates
+STEP 2: Score remaining candidates → Calculate priority score
+STEP 3: Select highest score → Pick best match or NO_MATCH if none remain
 
 === EXAMPLES ===
 
-Example 0 - METRIC MISMATCH REJECT (MOST IMPORTANT!):
-Current: "script count for PBM for September 2025"
+Ex 0 - EXACT FILTER MATCH + EXTRA METRICS (PRIORITY!):
+Current: "volume for PBM"
 Candidates:
-- id:1.0 "revenue for PBM" 
-- id:5.0 "script count for Specialty from Jan-Sep 2025"
-- id:9.0 "script count for Home Delivery from Jan-Sep 2025"
-Decision: SELECT id:5.0 or id:9.0 ✅, REJECT id:1.0 ❌
-Reason: DISQUALIFIER 2 triggered for id:1.0 - "revenue" and "script count" are DIFFERENT metrics. Even though both are for PBM (same product_category filter), the metric type differs. id:5.0 and id:9.0 have the correct metric (script count) with different filter values (Specialty/Home Delivery vs PBM), which is allowed.
+- id:1 "volume, revenue for PBM" → 100 pts (exact PBM, has volume, extra revenue OK)
+- id:2 "volume for Specialty" → 80 pts (different value)
+Decision: SELECT id:1 ✅
+Reason: Exact filter match (PBM=PBM) + has required metric (volume). Extra metric (revenue) is harmless. Score 100 > 80.
 
-**CRITICAL**: Do NOT select id:1.0 just because it has PBM filter. Metric mismatch is a HARD BLOCKER.
+Ex 1 - METRIC MISMATCH REJECT:
+Current: "script count for PBM"
+History: "revenue for PBM"
+Decision: REJECT ❌
+Reason: DISQUALIFIER 1 - Different metrics. "script count" ≠ "revenue". Eliminated before scoring.
 
-Example 1 - SYNONYM MATCH:
-Current: "what is network revenue for PBM"
-History: "what is revenue for PBM"
-Decision: SELECT ✅
-Reason: "network revenue" = "revenue" (synonym), same table, same filter, exact match
+Ex 2 - FILTER VALUE CHANGE OK:
+Current: "revenue for PBM for July 2025"
+Candidates:
+- id:3 "revenue for Specialty from Jan-Sep 2025" → 80 pts
+- id:4 "revenue for Home Delivery for Q3 2025" → 80 pts
+Decision: SELECT id:3 or id:4 ✅ (both valid, pick either)
+Reason: Same metric (revenue), same filter type (product_category), different values OK. Compatible date structures. Both score 80.
 
-Example 2 - EXTRA METRIC OK:
-Current: "script count for carrier MPDOVA"
-History: "script count, revenue for carrier MPDOVA"  
-Decision: SELECT ✅
-Reason: Same entity filter, same dimensions, extra metric (revenue) in history is harmless
+Ex 3 - DATE FLEXIBILITY:
+Current: "revenue for PBM from July to August 2025"
+History: "revenue for PBM for Q3 2025"
+Decision: SELECT ✅ (score: 100 + 5 bonus)
+Reason: Exact filter match (PBM=PBM, 100 pts). Compatible date structures (both single period/range, +5 bonus). SQL builder adjusts dates.
 
-Example 3 - EXTRA FILTER TYPE REJECT:
+Ex 4 - DATE STRUCTURE MISMATCH:
+Current: "revenue for PBM for July 2025"
+History: "revenue for PBM Q3 2025 vs Q3 2024"
+Decision: REJECT ❌
+Reason: Incompatible date structures (single period vs YoY comparison). Different query patterns.
+
+Ex 5 - EXTRA FILTER TYPE REJECT:
 Current: "revenue for PBM"
 History: "revenue for PBM for client MDOVA"
 Decision: REJECT ❌
-Reason: History has EXTRA filter TYPE (client_id) that current doesn't mention. This is different from filter VALUE changes - it's adding a whole new filter dimension.   
+Reason: DISQUALIFIER 2 - History has extra filter TYPE (client_id). Eliminated before scoring.
 
-Example 4 - MISSING DIMENSION REJECT:
-Current: "revenue by line of business"
-History: "revenue"
+Ex 6 - MISSING FILTER TYPE REJECT:
+Current: "revenue for PBM"
+History: "revenue" (no filters)
 Decision: REJECT ❌
-Reason: History lacks GROUP BY dimension that current needs
+Reason: DISQUALIFIER 3 - Current has product_category filter, history has none. Eliminated before scoring.
 
-Example 5 - EXTRA DIMENSION REJECT:
-Current: "revenue for carrier MPDOVA"
-History: "revenue for carrier MPDOVA by month"
-Decision: REJECT ❌
-Reason: History has GROUP BY month that current doesn't want
-
-Example 6 - FILTER VALUE CHANGE OK:
-Current: "script count for Specialty by drug name Q3 2025"
-History: "script count for Home Delivery by drug name Q2 2024"
-Decision: SELECT ✅
-Reason: Same pattern (by drug_name, single quarter), same filter TYPES (product_category + date), different filter VALUES are fine (Specialty vs Home Delivery)
-
-Example 7 - PATTERN MATCH:
-Current: "volume and revenue for GLP-1 by drug name Q3 2025 vs Q3 2024"
-History: "volume and revenue for Oncology by drug name Q2 2025 vs Q2 2024"
-Decision: SELECT ✅
-Reason: Exact same structure (YoY comparison, by drug_name, volume+revenue), only filter values differ (GLP-1 vs Oncology)
-
-Example 8 - NO MATCH:
-Current: "top 10 clients with highest variance"
-Candidates:
-- "revenue by client"
-- "variance by therapy class"
-Decision: NO_MATCH ❌
-Reason: First lacks variance logic and top N, second lacks client dimension
-
-Example 9 - FILTER VALUE CHANGE (ALLOWED):
-Current: "script count for PBM for July 2025"
-History: "script count for Specialty from Jan-Sep 2025"
-Decision: SELECT ✅
-Reason: Same metric (script count), same filter TYPES (product_category + date), different filter VALUES (PBM vs Specialty, July vs Jan-Sep). Pattern matches perfectly - LLM will substitute values.
-
-Example 10 - FILTER VALUE CHANGE (ALLOWED):
-Current: "revenue for Home Delivery"
+Ex 7 - SYNONYM MATCH + EXACT FILTER:
+Current: "network revenue for PBM"
 History: "revenue for PBM"
-Decision: SELECT ✅  
-Reason: Same metric, same filter TYPE (product_category), just different value. This is exactly what rule #3 allows. PBM and Home Delivery are both product_category values.
+Decision: SELECT ✅ (score: 100)
+Reason: "network revenue" = "revenue" (synonym). Exact filter match (PBM=PBM). Score 100.
 
-Example 11 - MISSING FILTER TYPE (REJECT):
-Current: "script count for PBM"
-History: "script count"
-Decision: REJECT ❌
-Reason: Current has product_category filter but history has NO filters. History lacks the filter structure needed.
-
-Example 12 - FILTER VALUE CHANGE WITH MULTIPLE FILTERS (ALLOWED):
-Current: "revenue for PBM for client MDOVA"
-History: "revenue for Specialty for client PDIND"
-Decision: SELECT ✅
-Reason: Same filter TYPES (product_category + client_id), different VALUES for both filters. This is allowed per rule #3.
-
-Example 13 - ALL CANDIDATES FAIL METRIC CHECK (NO_MATCH):
-Current: "script count for PBM"
-Candidates (all from same table):
-- id:1.0 "revenue for PBM"
-- id:2.0 "actuals vs forecast for PBM"
-- id:3.0 "cost for PBM"
-Decision: NO_MATCH ❌
-Reason: All candidates fail DISQUALIFIER 2 (Metric Mismatch). Current asks for "script count", but all candidates have different metrics (revenue, actuals vs forecast, cost). Even though they all have PBM filter (same product_category), none have the matching metric. Must return NO_MATCH.
-
-**CRITICAL RULE**: Same filter values (PBM) do NOT override metric mismatches. Metric compatibility is a HARD requirement.
-
-Example 14 - DATE FILTER IGNORED IN TYPE COMPARISON (ALLOWED):
+Ex 8 - DATE STRUCTURE BONUS:
 Current: "script count for PBM for July 2025"
-History: "script count for Specialty"
-Decision: SELECT ✅
-Reason: When comparing filter TYPES (DISQUALIFIER 3 & 4), we IGNORE date filters. Both have product_category filter (different values: PBM vs Specialty). Date in current is ignored per Rule #2. Same metric, same non-date filter types, different filter values → MATCH!
+Candidates:
+- id:5 "script count for PBM for Q3 2025" → 100 + 5 = 105 pts (exact PBM, same date structure)
+- id:6 "script count for PBM Q3 2025 vs Q3 2024" → 100 pts (exact PBM, different date structure)
+Decision: SELECT id:5 ✅
+Reason: Both have exact filter match (100 pts), but id:5 gets +5 bonus for compatible date structure (single period). Score 105 > 100.
 
-Example 15 - ADJUSTED/UNADJUSTED SYNONYM (ALLOWED):
+Ex 9 - NO MATCH (ALL FAIL):
 Current: "script count for PBM"
-History: "adjusted and unadjusted script count for Home Delivery"
-Decision: SELECT ✅
-Reason: "adjusted script count" and "unadjusted script count" are both variants of "script count" (Rule #1). History has both variants which is OK (Rule #4 - extra metrics). Different filter value (PBM vs Home Delivery) is allowed. Same metric type, same filter type, different values → MATCH!
+Candidates:
+- id:7 "revenue for PBM" → DISQUALIFIER 1 (metric mismatch)
+- id:8 "script count for PBM for client X" → DISQUALIFIER 2 (extra filter type)
+- id:9 "script count" → DISQUALIFIER 3 (missing filter type)
+Decision: NO_MATCH ❌
+Reason: All candidates eliminated by disqualifiers. No valid matches remain.
 
 === OUTPUT FORMAT ===
 
-**CRITICAL METRIC MATCHING RULE (REMINDER):**
-- If current asks for metric X and history has metric Y, where X ≠ Y (not synonyms):
-  → Return "status": "no_match" 
-  → In reasoning, state: "Metric mismatch: current asks for [X], history has [Y]. These are different metrics."
-  → Do NOT select that candidate
-  → Do NOT justify metric mismatches as "both are core metrics" or "pattern is the same"
-
-**Examples:**
-- Current asks for "script count", history has "revenue" → NO_MATCH (different metrics)
-- Current asks for "revenue", history has "network revenue" → MATCH (synonyms)
-- Current asks for "script count", history has "volume" → MATCH (synonyms)
-- Current asks for "script count", history has "adjusted script count" → MATCH (synonyms)
-
-CRITICAL: Return ONLY the JSON wrapped in <json> tags. NO explanatory text, NO reasoning before the JSON, NO analysis.
-
-Do NOT write anything like "Let me analyze..." or "STEP 1:..." or any other text before the JSON.
-
-Start your response IMMEDIATELY with <json> and end with </json>. Nothing else.
+Return ONLY JSON in <json> tags. No preamble.
 
 <json>
 {
   "status": "match_found" or "no_match",
   "selected_seq_id": <number> or null,
-  "matched_question": "<exact question text>" or null,
-  "table_name": "<table name>" or null,
-  "reasoning": "<detailed explanation of why selected or why NO_MATCH>",
-  "pattern_match_level": "EXACT" or "PARTIAL" or "NONE"
+  "matched_question": "<text>" or null,
+  "table_name": "<name>" or null,
+  "reasoning": "<explanation with score if match_found>",
+  "pattern_match_level": "EXACT" or "PARTIAL" or "NONE",
+  "priority_score": <number> or null
 }
 </json>
 
-Remember: Start with <json>, end with </json>, nothing else. No preamble, no analysis text, no explanations outside the JSON.
+Remember: Start with <json>, end with </json>, nothing else.
 """
-
-        # Format feedback results as context in compact format (saves tokens)
-        # Group by table_name first
-        results_by_table = {}
-        for result in feedback_results:
-            table_name = result.get('table_name', 'N/A')
-            if table_name not in results_by_table:
-                results_by_table[table_name] = []
-            results_by_table[table_name].append(result)
-        
-        # Build compact candidates context
-        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
-        for table_name, results in results_by_table.items():
-            candidates_context += f"\n- table_name: {table_name}\n"
-            for result in results:
-                seq_id = result.get('seq_id', 'N/A')
-                question = result.get('user_question', 'N/A')
-                candidates_context += f"  id:{seq_id}, {question}\n"
-        
-        # Build the full prompt with TRIPLE-LAYER protection against guardrails
-        selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
-
-You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
-Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
-
-DO NOT attempt to:
-- Answer the business questions below
-- Provide insights about the data
-- Interpret the meaning of the questions
-- Analyze business metrics
-
-YOU ARE A TEXT MATCHING ALGORITHM. You ONLY compare strings and patterns.
-
-Think of yourself as: if (pattern_A matches pattern_B) return match; else return no_match;
-
-
-{system_prompt}
-
-{candidates_context}
-
-=== CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
-{user_question}
-
-⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
-
-Return ONLY the JSON in <json> tags. Start immediately with <json>.
-"""
-        
-        # Retry logic
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
-
-                # Call LLM with LOWER temperature for more deterministic behavior
-                # Lower temperature = less creative = less likely to trigger guardrails
-                print("Raw LLM prompt:", selection_prompt)
-                llm_response = await self.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": selection_prompt}],
-                    max_tokens=2000,  # Reduced tokens since we only need JSON
-                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
-                    top_p=0.1,  # ← CRITICAL: Very focused sampling
-                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
-                )
-                
-                print("Raw LLM response:", llm_response)
-                
-                # Extract JSON from response
-                json_content = self._extract_json_from_response(llm_response)
-                selection_result = json.loads(json_content)
-                
-                # Validate response structure
-                status = selection_result.get('status')
-                if status not in ['match_found', 'no_match']:
-                    raise ValueError(f"Invalid status returned: {status}")
-                
-                # Handle success cases
-                if status == "match_found":
-                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
-                    print(f"   Matched question: {selection_result.get('matched_question')}")
-                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'match_found',
-                        'seq_id': selection_result.get('selected_seq_id'),
-                        'question': selection_result.get('matched_question'),
-                        'table_name': selection_result.get('table_name'),
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': selection_result.get('pattern_match_level'),
-                        'error': False,
-                        'error_message': ''
-                    }
-                
-                else:  # status == "no_match"
-                    print(f"❌ No suitable match found in feedback history")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': 'NONE',
-                        'error': False,
-                        'error_message': ''
-                    }
-            
-            except json.JSONDecodeError as e:
-                retry_count += 1
-                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying...")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"JSON parsing failed after {max_retries} attempts"
-                    }
-            
-            except Exception as e:
-                retry_count += 1
-                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - feedback selection failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
-                    }
-        
-        # Should never reach here, but just in case
-        return {
-            'status': 'no_match',
-            'seq_id': None,
-            'question': None,
-            'table_name': None,
-            'reasoning': 'Unexpected error in retry logic',
-            'pattern_match_level': 'NONE',
-            'error': True,
-            'error_message': 'Unexpected error in retry logic'
-        }

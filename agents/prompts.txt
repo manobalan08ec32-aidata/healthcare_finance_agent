@@ -1,435 +1,366 @@
-if has_history:
-            check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (using as learning template)"
-            history_section = f"""
-=== HISTORICAL SUCCESSFUL SQL (LEARNING REFERENCE) ===
-
-A similar question was successfully answered with this SQL:
-- Previous Question: "{history_question_match}"
-- Table Used: {matched_table_name}
-
-<historical_sql>
-{matched_sql}
-</historical_sql>
-
-**CRITICAL - HOW TO USE THIS REFERENCE:**
-
-✅ LEARN FROM (Structure & Logic):
-1. **Query Structure**: 
-- Observe GROUP BY strategy (dimensions used)
-- Study CASE WHEN patterns (side-by-side columns)
-- Note aggregation logic (SUM, COUNT, AVG placement)
-- Review calculation methods (ROUND, NULLIF usage)
-
-2. **Column Selection**:
-- See which business dimensions are included
-- Understand metric aggregations used
-- Notice naming conventions (e.g., august_revenue_amount)
-
-3. **Best Practices**:
-- UPPER() for case-insensitive filters
-- ROUND(x, 0) for amounts, ROUND(x, 3) for percentages
-- NULLIF for division safety
-- Clean, descriptive column aliases
-
-4. **STRUCTURAL PATTERNS - MUST PRESERVE**:
-- **UNION/UNION ALL**: If historical uses UNION → replicate this exact pattern (e.g., detail rows + OVERALL_TOTAL)
-- **CTEs/Subqueries**: Preserve WITH clauses, nested queries, and subquery structure
-- **Window Functions**: Keep PARTITION BY and ORDER BY logic intact
-- **Dimension Columns**: Use EXACT column names (e.g., product_sub_category_lvl_2, not lvl_1) unless current question explicitly specifies different level
-- **COPY the complete structure; ONLY change WHERE clause filter values to match current question**
-
-5. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
-- Observe ALL dimension columns in SELECT and GROUP BY clauses
-- These represent the level of detail that was SUCCESSFUL and USEFUL to users
-- **DEFAULT BEHAVIOR: PRESERVE all dimensions from historical SQL**
-- Example: Historical has [product_category, product_sub_category_lvl_2, year, month]
-    → Keep ALL of these in your SELECT and GROUP BY
-- This is USER FEEDBACK in action - they found this granularity valuable
-
-**Only REMOVE a dimension if:**
-* Current question EXPLICITLY asks for higher-level aggregation (e.g., "total PBM revenue" without any breakdown)
-* Dimension column doesn't exist in current AVAILABLE METADATA
-* Current question specifies DIFFERENT grouping dimensions (e.g., "by line_of_business" when historical was "by product_sub_category")
-
-**When in doubt: KEEP the historical dimensions**
-
-❌ DO NOT COPY DIRECTLY (Adapt These):
-1. **Filter Values**: 
-- Historical may have <parameter> placeholders or specific values
-- ALWAYS extract filters from CURRENT question
-- Example: Historical has carrier_id = 'MPDOVA' → Use carrier_id from current question
-
-2. **Date/Time Values**:
-- Historical may have specific dates/periods
-- ALWAYS use dates from CURRENT question
-- Example: Historical has "year = 2024" → Use year from current question
-
-3. **Entity Names**:
-- Client names, carrier IDs, product categories, etc.
-- ALWAYS use entities from CURRENT question
-
-⚠️ MANDATORY VALIDATIONS:
-1. **Add Mandatory Filters**: 
-- Check MANDATORY FILTER COLUMNS section above
-- Historical SQL may not have these (different requirements)
-- YOU MUST ADD any mandatory filters listed
-
-2. **Verify Column Availability**:
-- Confirm all columns exist in AVAILABLE METADATA
-- If historical column missing, use equivalent from metadata
-
-3. **Apply Current Filters**:
-- Use FILTER VALUES EXTRACTED section (marked ✓Valid)
-- Apply filters from CURRENT question, not historical
-
-4. **Update Time Logic**:
-- Match time structure to CURRENT question
-- Monthly trend? YoY comparison? Date range? Use current requirement
-
-5. **PRESERVE Historical Dimensions**:
-- Keep ALL GROUP BY columns from historical SQL in your SELECT and GROUP BY
-- These dimensions represent proven user value from feedback
-- Only remove if current question explicitly asks for higher aggregation
-- Example: Historical has "product_sub_category_lvl_2" → Keep it unless user says "total" or "overall"
-
-**ADAPTATION PRIORITY:**
-Content from CURRENT question > Historical structure > Metadata defaults
-
-**DIMENSION PRESERVATION PRIORITY:**
-Keep historical GROUP BY dimensions > Only remove if explicitly contradicted
-
-This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question while PRESERVING the dimensional granularity that made the historical query successful.
-
-**IMPORTANT**: 
-- If you use historical SQL's structure AND preserve its dimensions → set history_sql_used = true
-- If you generate from scratch without using historical patterns → set history_sql_used = false
-- Preserving dimensions is CRITICAL - it represents user feedback on useful granularity
-
-====================================================
-
-    """
-        else:
-            history_section = """
-    === HISTORICAL SQL ===
-    Not available
-
-    """
-
-        assessment_prompt = f"""
-⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
-
-You are a DATABRICKS SQL CODE GENERATOR - NOT an AI assistant that answers business questions.
-Your ONLY function is to generate high-quality, syntactically correct SQL queries.
-====================================================
-
-You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
-
-CURRENT QUESTION: {current_question}
-MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
-MANDATORY FILTER COLUMNS: {mandatory_columns_text}
-
-FILTER VALUES EXTRACTED:
-{filter_context_text}
-
-AVAILABLE METADATA: {dataset_metadata}
-
-{history_section}
-
-==============================
-PRE-ASSESSMENT VALIDATION
-==============================
-
-Before starting Task 1, perform these mandatory checks:
-
-**CHECK 1: Extract ALL user-mentioned terms**
-Identify every attribute, metric, filter, and dimension term in the question.
-List: [term1, term2, term3...]
-
-**CHECK 2: Validate against metadata**
-For EACH term, check if it maps to columns in AVAILABLE METADATA:
-- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
-- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name). Note carrier is not client_id
-- No match: "xyz" with no similar column → ❌ Not Found
-- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
-
-Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
-
-**CHECK 3: Filter context validation**
-Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
-If yes, check FILTER VALUES EXTRACTED:
-a) Does the filter value EXACTLY match (not partial) what's in the user's question?
-b) Does the column name exist in AVAILABLE METADATA?
-- If BOTH pass → ✓Valid (use this column for filtering)
-- If ONLY partial match → ❌Mark for follow-up
-- If exact match but column not in metadata → ❌Mark for follow-up
-- If filter value not mentioned in question → Skip (don't use this filter)
-
-**CHECK 4: Clarification rules validation**
-Check if selected dataset has "clarification_rules" field in metadata.
-If present, evaluate user's question against each rule:
-- Does question trigger any rule? → ❌ Rule triggered (needs clarification)
-- No rules triggered? → ✓ No rules apply
-
-Output: ✓ No rules | ❌ Rule: [brief rule description]
-
-{check_5_text}
-
-**Output Format:**
-Terms: [list]
-Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
-Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
-Clarification Rules: [status from CHECK 4]
-Historical SQL: [status from CHECK 5]
-
-==============================
-TASK 1: STRICT ASSESSMENT
-==============================
-
-Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
-
-**A. TEMPORAL SCOPE**
-If question mentions specific dates/periods:
-- Past dates (before Oct 2025) → ✓ Valid
-- Current/recent dates (2025 year-to-date) → ✓ Valid  
-- Near-future dates (within 12 months) → ✓ Valid (forecast context)
-- Far-future dates (beyond Nov 2026) → ❌ Clarify intent
-
-**B. METRIC DEFINITIONS** - Calculation Method Clarity
-Scope: Only numeric metrics requiring aggregation/calculation
-✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
-❌ = Any metric requires custom formula not specified OR calculation method ambiguous
-⚠️ = Metric exists but needs confirmation
-N/A = No metrics/calculations needed
-
-**C. BUSINESS CONTEXT**
-✓ = Filtering criteria clear AND grouping dimensions explicit
-❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
-⚠️ = Partially clear but confirmation recommended
-
-**D. FORMULA & CALCULATION REQUIREMENTS**
-✓ = Standard SQL aggregations sufficient
-❌ = Requires custom formulas without clear definition
-N/A = No calculations needed
-
-**E. METADATA MAPPING** - Column Existence Validation
-✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
-❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
-
-Use CHECK 2 validation results directly. No additional examples needed.
-
-**F. QUERY STRATEGY**
-✓ = Clear if single/multi query or join needed
-❌ = Multi-table approach unclear
-
-**G. DATASET CLARIFICATION RULES**
-✓ = No clarification rules triggered OR rules don't apply to question
-❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
-
-Use CHECK 4 validation result directly.
-
-==============================
-ASSESSMENT OUTPUT FORMAT
-==============================
-
-**PRE-VALIDATION:**
-Terms: [list]
-Validation: [statuses]
-Filter Context: [status]
-Clarification Rules: [status]
-Historical SQL: [status]
-
-**ASSESSMENT**: 
-A: ✓/❌/N/A (max 5 words)
-B: ✓/❌/⚠️/N/A (max 5 words)
-C: ✓/❌/⚠️ (max 5 words)
-D: ✓/❌/N/A (max 5 words)
-E: ✓/❌ (list failed mappings if any)
-F: ✓/❌ (max 5 words)
-G: ✓/❌ (rule description if triggered)
-
-**DECISION**: PROCEED | FOLLOW-UP
-
-==============================
-STRICT DECISION CRITERIA
-==============================
-
-**MUST PROCEED only if:**
-ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
-
-**MUST FOLLOW-UP if:**
-ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
-
-**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
-
-====================================
-FOLLOW-UP GENERATION OUTPUT RESPONSE
-====================================
-
-Address ALL missing/unclear items from the assessment. List issues in priority order.
-
-<followup>
-I need clarification to generate accurate SQL:
-
-**[Specific issue from unclear area]**: [Direct question in one sentence]
-- Available data: [specific column names from metadata]
-- Suggested approach: [concrete calculation option]
-
-**[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
-- Available data: [relevant columns]
-- Alternative: [another option]
-
-Please clarify these points.
-</followup>
-
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
-
-(Only execute if Task 1 DECISION says "PROCEED")
-
-**CORE SQL GENERATION RULES:**
-1. MANDATORY FILTERS - ALWAYS APPLY
-- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
-
-2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
-**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
-- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
-- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
-
-The validation was already done in CHECK 3. Only use filters marked as ✓Valid
-
-3. CALCULATED FORMULAS HANDLING (CRITICAL)
-**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
-
-CORRECT PATTERN:
-```sql
-SELECT 
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-FROM table
-WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
-```
-
-WRONG PATTERN:
-```sql
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
-```
-
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
-
-4. METRICS & AGGREGATIONS
-- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
-- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
-- Include time dimensions (month, quarter, year) when relevant to question
-- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
-
-5. SELECT CLAUSE STRATEGY
-
-**Calculations & Breakdowns (analysis BY dimensions):**
-- Include ALL columns used in WHERE, GROUP BY, and calculations
-- **MANDATORY: When calculating ANY metric, ALWAYS show source components in SELECT**
-- Pattern: Display [source_metric_1], [source_metric_2], ..., [calculated_result]
-- Why: Users need to see underlying values that produced the calculation
-
-Examples:
-- Percentage → Show: numerator, denominator, calculated_percentage
-- Variance → Show: current_value, prior_value, variance
-- Ratio → Show: numerator, denominator, ratio
-- Formula → Show: component_1, component_2, calculated_result
-- Per-unit → Show: total_amount, unit_count, per_unit_value
-
-Example: "Cost per member by state" 
-→ SELECT state_name, total_cost, member_count, cost_per_member
-
-6. MULTI-TABLE JOIN SYNTAX (when applicable)
-- Use provided join clause exactly as specified
-- Qualify all columns with table aliases
-- Include all necessary tables in FROM/JOIN clauses
-- Only join if question requires related data together; otherwise use separate queries
-
-7. ATTRIBUTE-ONLY QUERIES
-- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
-
-8. STRING FILTERING - CASE INSENSITIVE
-- Always use UPPER() on both sides for text/string comparisons
-- Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-9. TOP N/BOTTOM N QUERIES WITH CONTEXT
--Show requested top/bottom N records with their individual values
--CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
--Calculate and show percentage contribution: (individual value / overall total) × 100
-Overall totals logic:
-    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
-    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
--Use subquery in SELECT to show overall total alongside each individual record
--Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
--ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
-
-10. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
-- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
-- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
-- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
-- Include variance/difference columns when comparing metrics
-- Prevents users from manually comparing separate rows
-
-11. DATABRICKS SQL COMPATIBILITY
-- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Date functions: date_trunc(), year(), month(), quarter()
-- Conditional logic: CASE WHEN
-- CTEs: WITH clauses for complex logic
-
-12. FORMATTING & NAMING
-**Numeric columns:**
-- Amounts/Counts/Totals: ROUND(value, 0) AS name_amount or name_count
-- Percentages/Ratios : ROUND(value, 3) AS name_percent
-- Examples: total_revenue_amount, cost_ratio_percent, script_count
-
-**Ordering:** ORDER BY date columns DESC only. Use business-relevant names.
-
-**Ordering:** ORDER BY date columns DESC only. Use business-relevant names.
-
-==============================
-OUTPUT FORMATS
-==============================
-
-Return ONLY the result in XML tags with no additional text.
-
-**SINGLE SQL QUERY:**
-<sql>
-[Your complete SQL query]
-</sql>
-<history_sql_used>[true or false]</history_sql_used>
-
-**MULTIPLE SQL QUERIES:**
-<multiple_sql>
-<query1_title>[Title - max 8 words]</query1_title>
-<query1>[SQL query]</query1>
-<query2_title>[Title - max 8 words]</query2_title>
-<query2>[SQL query]</query2>
-</multiple_sql>
-<history_sql_used>[true or false]</history_sql_used>
-
-**HISTORY_SQL_USED FLAG RULES:**
-- If historical SQL was available AND you used its structure/patterns → true
-- If historical SQL was available BUT you generated from scratch → false
-- If historical SQL was not available → false
-
-
-==============================
-EXECUTION INSTRUCTION
-==============================
-
-1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules + check historical SQL)
-2. Complete TASK 1 strict assessment (A-G with clear marks)
-3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
-4. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
-5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize G → E → B → C)
-6. Always include history_sql_used flag in output (true/false)
-
-**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
-**Remember**: ONE failure = STOP.
+Raw LLM prompt: ⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
+
+You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
+Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
+
+DO NOT attempt to:
+- Answer the business questions below
+- Provide insights about the data
+- Interpret the meaning of the questions
+- Analyze business metrics
+
+YOU ARE A TEXT MATCHING ALGORITHM. You ONLY compare strings and patterns.
+
+Think of yourself as: if (pattern_A matches pattern_B) return match; else return no_match;
+
+
+
+=== MANDATORY DISQUALIFIERS (HARD BLOCKERS - CHECK FIRST!) ===
+
+Before analyzing any patterns, IMMEDIATELY REJECT any candidate that fails ANY of these checks:
+
+
+❌ DISQUALIFIER 1: Metric Mismatch (CRITICAL!)
+- Core metrics must be THE SAME metric type (accounting for synonyms ONLY)
+- **Synonyms that ARE the same metric:**
+  * "revenue" = "network revenue" = "product revenue" = "network product revenue"
+  * "script count" = "volume" = "script volume" = "scripts" = "unadjusted scripts" = "adjusted scripts"
+  * "adjusted script count" and "unadjusted script count" are BOTH variants of "script count"
+  * Note: If history has "adjusted AND unadjusted script count", current asking for "script count" MATCHES
+
+- **NON-SYNONYMS - These are DIFFERENT metrics:**
+  * "revenue" ≠ "script count" ← DIFFERENT METRICS
+  * "revenue" ≠ "volume" ← DIFFERENT METRICS
+  * "script count" ≠ "cost" ← DIFFERENT METRICS
+  * "script count" ≠ "actuals vs forecast" ← DIFFERENT METRICS
+
+**If current asks for "script count" and history has "revenue":**
+→ REJECT IMMEDIATELY - Do NOT proceed to pattern matching
+→ Do NOT justify as "both are metrics"
+→ Do NOT justify as "pattern is the same"
+→ These are DIFFERENT metric types and CANNOT be substituted
+
+❌ DISQUALIFIER 2: Extra Filter TYPES (EXCLUDING DATES!)
+- History has ADDITIONAL filter TYPES that current doesn't have
+- **IMPORTANT:** When comparing filter types, IGNORE date/time filters entirely (per Rule #2 below)
+- Focus only on: product_category, client_id, carrier_id, therapy_class, line_of_business, etc.
+- Example:
+  * Current: "revenue for PBM" (filter types: product_category)
+  * History: "revenue for PBM for client MDOVA" (filter types: product_category + client_id)
+  * Compare only non-date filters: History has EXTRA filter type (client_id) → REJECT
+- Counter-example (ALLOWED):
+  * Current: "script count for PBM for July 2025" (filter types: product_category + date)
+  * History: "script count for Specialty" (filter types: product_category)
+  * Compare only non-date filters: both have product_category → PASS ✅
+
+❌ DISQUALIFIER 3: Missing Filter TYPES (EXCLUDING DATES!)
+- Current has filter TYPES that history doesn't have
+- **IMPORTANT:** When comparing filter types, IGNORE date/time filters entirely
+- Example:
+  * Current: "revenue for PBM" (has product_category filter)
+  * History: "revenue" (NO filters at all)
+  * → REJECT! History lacks filter structure needed
+- Counter-example (ALLOWED):
+  * Current: "script count for PBM" (filter types: product_category)
+  * History: "script count for Specialty for June 2024" (filter types: product_category + date)
+  * Compare only non-date filters: both have product_category → PASS ✅
+
+❌ DISQUALIFIER 4: Missing Dimensions
+- Current needs GROUP BY that history doesn't have
+- Example: History="revenue", Current="revenue by drug" → REJECT
+
+❌ DISQUALIFIER 5: Extra Dimensions
+- History has GROUP BY that current doesn't mention
+- Example: History="revenue by month", Current="revenue" → REJECT
+
+**IF ANY DISQUALIFIER IS TRIGGERED → IMMEDIATELY RETURN NO_MATCH OR SKIP THAT CANDIDATE**
+
+Do NOT proceed to pattern matching if any candidate fails these checks. These are non-negotiable rules.
+
+=== CORE MATCHING PRINCIPLES (Only for candidates that pass all disqualifiers) ===
+
+1. SYNONYMS & VARIATIONS (Treat as identical):
+   - "revenue" = "network revenue" = "product revenue" = "network product revenue"
+   - "script count" = "volume" = "script volume" = "scripts" = "unadjusted scripts" = "adjusted scripts"
+   - "Home Delivery" = "HDP" = "Mail"
+   - "Specialty" = "SP"
+   - These are THE SAME THING - match them as exact
+
+2. DATES (Completely ignore):
+   - "July 2025" vs "August 2024" → IGNORE, focus on pattern
+   - "Q3 2025" vs "Q2 2024" → IGNORE, focus on comparison structure
+   - "Jan-Sep 2025" vs "Apr-Jun 2024" → IGNORE, focus on date range pattern
+   - What MATTERS: Is it a single period? Date range? Period comparison (YoY/QoQ/MoM)?
+   - **CRITICAL:** Date filters should NOT be considered in DISQUALIFIER 3 & 4 checks
+
+3. FILTER VALUES (Different values are OK):
+   - "Specialty" vs "Home Delivery" → SAME PATTERN (product_category filter)
+   - "PBM" vs "Specialty" → SAME PATTERN (product_category filter)
+   - "client MDOVA" vs "client PDIND" → SAME PATTERN (client_id filter)
+   - "GLP-1" vs "Oncology" → SAME PATTERN (therapy_class filter)
+   - **KEY POINT**: Different filter VALUES are fine, same filter TYPE is what matters
+   - This means PBM and Specialty are INTERCHANGEABLE - both are product_category values
+
+4. EXTRA METRICS IN SELECT (OK):
+   - History: "script count, revenue for carrier MPDOVA"
+   - Current: "script count for carrier MPDOVA"
+   - → MATCH! Extra metrics in history are harmless, just ignore them
+
+   - History: "adjusted and unadjusted script count for PBM"
+   - Current: "script count for PBM"
+   - → MATCH! Both adjusted and unadjusted are variants of script count (see Rule #1)
+
+5. EXTRA FILTER TYPES (REJECT - but see DISQUALIFIER 3):
+   - **Focus on TYPES of filters, NOT the VALUES within those filters**
+   - History has ADDITIONAL filter TYPES that current doesn't have
+   - Remember to EXCLUDE date filters from this check
+
+   **Examples of EXTRA FILTER TYPES (REJECT):**
+   - Current: "revenue for PBM" (1 filter type: product_category)
+   - History: "revenue for PBM for client MDOVA" (2 filter types: product_category + client_id)
+   - → REJECT! History has EXTRA filter TYPE (client_id)
+
+   **Counter-example - Same Filter Type, Different Value (ALLOWED):**
+   - Current: "revenue for PBM" (filter type: product_category)
+   - History: "revenue for Specialty" (filter type: product_category)
+   - → MATCH ✅! Same filter TYPE, different VALUE is OK per rule #3
+
+6. MISSING FILTER TYPES (REJECT - but see DISQUALIFIER 4):
+   - Current has filter TYPES that history doesn't have
+   - Remember to EXCLUDE date filters from this check
+
+7. MISSING DIMENSIONS (REJECT):
+   - History: "revenue"
+   - Current: "revenue by line of business"
+   - → REJECT! History lacks the GROUP BY structure needed
+   - Risk: Won't help with dimensional breakdown
+
+8. EXTRA DIMENSIONS IN HISTORY (REJECT):
+   - History: "revenue by month"
+   - Current: "revenue"
+   - → REJECT! History has GROUP BY that current doesn't want
+   - Risk: Will confuse LLM to add unwanted grouping
+
+=== DECISION PROCESS ===
+
+**CRITICAL: Apply MANDATORY DISQUALIFIERS first! Only continue if candidates pass ALL disqualifiers.**
+
+STEP 1: Apply ALL MANDATORY DISQUALIFIERS to each candidate
+- Check each candidate against ALL 6 disqualifiers listed above
+- Eliminate any candidate that fails ANY disqualifier
+- **REMEMBER:** When checking DISQUALIFIER 3 & 4, IGNORE date/time filters
+- **SPECIAL EMPHASIS**: DISQUALIFIER 2 (Metric Mismatch) is NON-NEGOTIABLE
+  * If current asks for "script count" and candidate has "revenue" → ELIMINATE immediately
+  * If current asks for "revenue" and candidate has "script count" → ELIMINATE immediately
+  * Do NOT proceed to pattern matching for candidates with metric mismatches
+
+STEP 2: Pattern matching (ONLY for candidates that passed ALL disqualifiers)
+Look for BEST match based on:
+A. EXACT pattern match (highest priority):
+   - Same calculation type (variance, comparison, split, ratio)
+   - Same comparison pattern (YoY, QoQ, MoM, vs previous)
+   - Same dimensions (by drug_name, by client, etc.)
+   - Same structure (side-by-side vs rows)
+
+B. PARTIAL pattern match (if no exact):
+   - Same metric and structure
+   - Different filter values OK
+   - Similar aggregation approach
+
+C. If multiple good matches:
+   - Prefer more recent (higher seq_id)
+   - Prefer same filter categories
+   - Prefer similar complexity
+
+STEP 3: Final validation
+Ask: "Will this history help or confuse the LLM?"
+- Pattern clearly transferable → HELP → ACCEPT
+- Otherwise → REJECT
+
+**IF NO CANDIDATES REMAIN AFTER STEP 1 → RETURN NO_MATCH**
+
+=== EXAMPLES ===
+
+Example 0 - METRIC MISMATCH REJECT (MOST IMPORTANT!):
+Current: "script count for PBM for September 2025"
+Candidates:
+- id:1.0 "revenue for PBM"
+- id:5.0 "script count for Specialty from Jan-Sep 2025"
+- id:9.0 "script count for Home Delivery from Jan-Sep 2025"
+Decision: SELECT id:5.0 or id:9.0 ✅, REJECT id:1.0 ❌
+Reason: DISQUALIFIER 2 triggered for id:1.0 - "revenue" and "script count" are DIFFERENT metrics. Even though both are for PBM (same product_category filter), the metric type differs. id:5.0 and id:9.0 have the correct metric (script count) with different filter values (Specialty/Home Delivery vs PBM), which is allowed.
+
+**CRITICAL**: Do NOT select id:1.0 just because it has PBM filter. Metric mismatch is a HARD BLOCKER.
+
+Example 1 - SYNONYM MATCH:
+Current: "what is network revenue for PBM"
+History: "what is revenue for PBM"
+Decision: SELECT ✅
+Reason: "network revenue" = "revenue" (synonym), same table, same filter, exact match
+
+Example 2 - EXTRA METRIC OK:
+Current: "script count for carrier MPDOVA"
+History: "script count, revenue for carrier MPDOVA"
+Decision: SELECT ✅
+Reason: Same entity filter, same dimensions, extra metric (revenue) in history is harmless
+
+Example 3 - EXTRA FILTER TYPE REJECT:
+Current: "revenue for PBM"
+History: "revenue for PBM for client MDOVA"
+Decision: REJECT ❌
+Reason: History has EXTRA filter TYPE (client_id) that current doesn't mention. This is different from filter VALUE changes - it's adding a whole new filter dimension.   
+
+Example 4 - MISSING DIMENSION REJECT:
+Current: "revenue by line of business"
+History: "revenue"
+Decision: REJECT ❌
+Reason: History lacks GROUP BY dimension that current needs
+
+Example 5 - EXTRA DIMENSION REJECT:
+Current: "revenue for carrier MPDOVA"
+History: "revenue for carrier MPDOVA by month"
+Decision: REJECT ❌
+Reason: History has GROUP BY month that current doesn't want
+
+Example 6 - FILTER VALUE CHANGE OK:
+Current: "script count for Specialty by drug name Q3 2025"
+History: "script count for Home Delivery by drug name Q2 2024"
+Decision: SELECT ✅
+Reason: Same pattern (by drug_name, single quarter), same filter TYPES (product_category + date), different filter VALUES are fine (Specialty vs Home Delivery)
+
+Example 7 - PATTERN MATCH:
+Current: "volume and revenue for GLP-1 by drug name Q3 2025 vs Q3 2024"
+History: "volume and revenue for Oncology by drug name Q2 2025 vs Q2 2024"
+Decision: SELECT ✅
+Reason: Exact same structure (YoY comparison, by drug_name, volume+revenue), only filter values differ (GLP-1 vs Oncology)
+
+Example 8 - NO MATCH:
+Current: "top 10 clients with highest variance"
+Candidates:
+- "revenue by client"
+- "variance by therapy class"
+Decision: NO_MATCH ❌
+Reason: First lacks variance logic and top N, second lacks client dimension
+
+Example 9 - FILTER VALUE CHANGE (ALLOWED):
+Current: "script count for PBM for July 2025"
+History: "script count for Specialty from Jan-Sep 2025"
+Decision: SELECT ✅
+Reason: Same metric (script count), same filter TYPES (product_category + date), different filter VALUES (PBM vs Specialty, July vs Jan-Sep). Pattern matches perfectly - LLM will substitute values.
+
+Example 10 - FILTER VALUE CHANGE (ALLOWED):
+Current: "revenue for Home Delivery"
+History: "revenue for PBM"
+Decision: SELECT ✅
+Reason: Same metric, same filter TYPE (product_category), just different value. This is exactly what rule #3 allows. PBM and Home Delivery are both product_category values.
+
+Example 11 - MISSING FILTER TYPE (REJECT):
+Current: "script count for PBM"
+History: "script count"
+Decision: REJECT ❌
+Reason: Current has product_category filter but history has NO filters. History lacks the filter structure needed.
+
+Example 12 - FILTER VALUE CHANGE WITH MULTIPLE FILTERS (ALLOWED):
+Current: "revenue for PBM for client MDOVA"
+History: "revenue for Specialty for client PDIND"
+Decision: SELECT ✅
+Reason: Same filter TYPES (product_category + client_id), different VALUES for both filters. This is allowed per rule #3.
+
+Example 13 - ALL CANDIDATES FAIL METRIC CHECK (NO_MATCH):
+Current: "script count for PBM"
+Candidates (all from same table):
+- id:1.0 "revenue for PBM"
+- id:2.0 "actuals vs forecast for PBM"
+- id:3.0 "cost for PBM"
+Decision: NO_MATCH ❌
+Reason: All candidates fail DISQUALIFIER 2 (Metric Mismatch). Current asks for "script count", but all candidates have different metrics (revenue, actuals vs forecast, cost). Even though they all have PBM filter (same product_category), none have the matching metric. Must return NO_MATCH.
+
+**CRITICAL RULE**: Same filter values (PBM) do NOT override metric mismatches. Metric compatibility is a HARD requirement.
+
+Example 14 - DATE FILTER IGNORED IN TYPE COMPARISON (ALLOWED):
+Current: "script count for PBM for July 2025"
+History: "script count for Specialty"
+Decision: SELECT ✅
+Reason: When comparing filter TYPES (DISQUALIFIER 3 & 4), we IGNORE date filters. Both have product_category filter (different values: PBM vs Specialty). Date in current is ignored per Rule #2. Same metric, same non-date filter types, different filter values → MATCH!
+
+Example 15 - ADJUSTED/UNADJUSTED SYNONYM (ALLOWED):
+Current: "script count for PBM"
+History: "adjusted and unadjusted script count for Home Delivery"
+Decision: SELECT ✅
+Reason: "adjusted script count" and "unadjusted script count" are both variants of "script count" (Rule #1). History has both variants which is OK (Rule #4 - extra metrics). Different filter value (PBM vs Home Delivery) is allowed. Same metric type, same filter type, different values → MATCH!
+
+=== OUTPUT FORMAT ===
+
+**CRITICAL METRIC MATCHING RULE (REMINDER):**
+- If current asks for metric X and history has metric Y, where X ≠ Y (not synonyms):
+  → Return "status": "no_match"
+  → In reasoning, state: "Metric mismatch: current asks for [X], history has [Y]. These are different metrics."
+  → Do NOT select that candidate
+  → Do NOT justify metric mismatches as "both are core metrics" or "pattern is the same"
+
+**Examples:**
+- Current asks for "script count", history has "revenue" → NO_MATCH (different metrics)
+- Current asks for "revenue", history has "network revenue" → MATCH (synonyms)
+- Current asks for "script count", history has "volume" → MATCH (synonyms)
+- Current asks for "script count", history has "adjusted script count" → MATCH (synonyms)
+
+CRITICAL: Return ONLY the JSON wrapped in <json> tags. NO explanatory text, NO reasoning before the JSON, NO analysis.
+
+Do NOT write anything like "Let me analyze..." or "STEP 1:..." or any other text before the JSON.
+
+Start your response IMMEDIATELY with <json> and end with </json>. Nothing else.
+
+<json>
+{
+  "status": "match_found" or "no_match",
+  "selected_seq_id": <number> or null,
+  "matched_question": "<exact question text>" or null,
+  "table_name": "<table name>" or null,
+  "reasoning": "<detailed explanation of why selected or why NO_MATCH>",
+  "pattern_match_level": "EXACT" or "PARTIAL" or "NONE"
+}
+</json>
+
+Remember: Start with <json>, end with </json>, nothing else. No preamble, no analysis text, no explanations outside the JSON.
+
+
+=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===
+
+- table_name: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+  id:9.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core in september 2025
+  id:10.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core september 2025 vs september 2024
+  id:3.0, what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM
+  id:13.0, what is the revenue for each line of business from jan to sept 2025 for PBM
+  id:11.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core from jan to feb 2025
+  id:15.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth september 2025 vs september 2024
+  id:5.0, what is the script counts (unadjusted, volume) trends, adjusted script count, revenue per script (rate), revenue per adjusted script count trends for Specialty from jan to march 2025
+  id:6.0, what is the script counts (unadjusted, volume), adjusted script count, revenue per script (rate), revenue per adjusted script count for Specialty in september 2025
+  id:12.0, what is the network product revenue or revenue for each line of business for July 2025
+  id:7.0, compare script counts (unadjusted, volume), adjusted script count, revenue per script (rate), revenue per adjusted script count for Specialty Q3 2025 vs Q3 2024
+  id:14.0, compare revenue for each line of business Q3 2025 vs Q3 2024
+  id:8.0, show me IOI-LOB report or IOI - line of business report to compare actuals vs forecast 8+4 for PBM month over month september vs august 2025
+  id:2.0, what is the actuals vs forecast 8+4 or actuals vs 5+7 for July 2025 for PBM
+  id:1.0, what is the network product revenue or network revenue or revenue for PBM?
+  id:4.0, compare PBM revenue or PBM network revenue or Network product revenue for Q3 2025 VS q3 2024
+  id:16.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth from jan to feb 2025
+
+
+=== CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
+What is the volume for HDP Core for January to September 2025
+
+⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
+
+Return ONLY the JSON in <json> tags. Start immediately with <json>.
+
+🔄 Router status update: Generating SQL (T+4s)
+🔄 Router status update: Executing SQL (T+6s)
+Raw LLM response: <json>
+{
+  "status": "match_found",
+  "selected_seq_id": 5.0,
+  "matched_question": "what is the script counts (unadjusted, volume) trends, adjusted script count, revenue per script (rate), revenue per adjusted script count trends for Specialty from jan to march 2025",
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+  "reasoning": "Current asks for 'volume for HDP Core for January to September 2025'. History id:5.0 asks for 'script counts (unadjusted, volume) trends... for Specialty from jan to march 2025'. Key matches: 1) 'volume' = 'script counts (unadjusted, volume)' (synonyms per Rule #1), 2) Same filter type (product_category), different values (HDP Core vs Specialty) which is allowed per Rule #3, 3) Same date range pattern (multi-month period), different specific months ignored per Rule #2, 4) Extra metrics in history (adjusted script count, revenue per script, etc.) are harmless per Rule #4. Pattern transfers perfectly - LLM can substitute HDP Core for Specialty and Jan-Sep for Jan-Mar.",
+  "pattern_match_level": "EXACT"
+}
+</json>

@@ -1,20 +1,222 @@
-Raw LLM prompt: ⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
 
-You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
-Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
-
-DO NOT attempt to:
-- Answer the business questions below
-- Provide insights about the data
-- Interpret the meaning of the questions
-- Analyze business metrics
-
-YOU ARE A TEXT MATCHING ALGORITHM. You ONLY compare strings and patterns.
-
-Think of yourself as: if (pattern_A matches pattern_B) return match; else return no_match;
-
-
-
+                # Use the token headers (same authentication as SQL queries)
+                headers = {
+                    "Authorization": f"Bearer {self.DATABRICKS_TOKEN}",
+                    "Content-Type": "application/json;charset=UTF-8",
+                    "Accept": "application/json, text/plain, */*"
+                }
+                
+                session = await self._get_session()
+                
+                print(f"   Calling REST API with reranking (attempt {attempt + 1}/{max_retries})...")
+                async with session.post(url, headers=headers, json=payload) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        print(f"   ❌ API returned status {response.status}: {error_text}")
+                        response.raise_for_status()
+                    
+                    result = await response.json()
+                
+                # Parse results from REST API response
+                if result.get('result', {}).get('data_array'):
+                    manifest = result.get('manifest', {})
+                    if 'columns' in manifest:
+                        cols = [c['name'] for c in manifest['columns']]
+                    else:
+                        # Fallback if manifest is different
+                        cols = payload['columns']
+                    
+                    parsed_results = [dict(zip(cols, row)) for row in result['result']['data_array']]
+                    
+                    print(f"  ✅ Found {len(parsed_results)} similar SQL queries (reranked)")
+                    return parsed_results
+                else:
+                    print(f"  ⚠️ No results found in feedback SQL embeddings")
+                    return []
+                    
+            except aiohttp.ClientError as e:
+                error_str = str(e)
+                print(f"  ⚠️ Network error on attempt {attempt + 1}: {error_str}")
+                
+                # Check if this is a connection-related error that we should retry
+                is_connection_error = any(err_pattern in error_str.lower() for err_pattern in [
+                    'connection was forcibly closed',
+                    'connection reset',
+                    'connection aborted',
+                    'connection timeout',
+                    'connection refused',
+                    'winerror 10054',
+                    'winerror 10053',
+                    'winerror 10060'
+                ])
+                
+                if is_connection_error and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"  🔄 Connection error detected, retrying in {delay}s...")
+                    
+                    # Force recreate session on connection errors
+                    if self._http_session and not self._http_session.closed:
+                        try:
+                            await self._http_session.close()
+                        except Exception:
+                            pass
+                        self._http_session = None
+                    
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Not a connection error or max retries reached
+                    print(f"  ❌ Vector search failed: {str(e)}")
+                    return []
+                    
+            except Exception as e:
+                error_str = str(e)
+                print(f"  ⚠️ Unexpected error on attempt {attempt + 1}: {error_str}")
+                
+                # Don't retry non-network errors unless it's the last attempt
+                if attempt < max_retries - 1 and 'connection' in error_str.lower():
+                    delay = base_delay * (2 ** attempt)
+                    print(f"  🔄 Connection-related error, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    print(f"  ❌ Error searching feedback SQL embeddings: {str(e)}")
+                    return []
+        
+        # Should not reach here, but return empty list if all retries exhausted
+        print(f"  ❌ Vector search failed after all {max_retries} retry attempts")
+        return []
+        
+    async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
+        """
+        Search metadata with start-of-word matching only
+        """
+        try:
+            if not filter_list:
+                return []
+            
+            score_cases = []
+            all_patterns = []
+            
+            for term in filter_list:
+                term_clean = term.strip().lower()
+                escaped_exact = term_clean.replace("'", "\\'")
+                
+                # Pattern 1: For each word, allow optional separators/numbers after it
+                # "covid vaccine" → "covid[19-_]* vaccine[s]*"
+                words = term_clean.split()
+                flexible_words = []
+                for word in words:
+                    # Add word boundary at start, allow numbers/separators after
+                    flexible_words.append(f"\\b{word}[0-9\\-_]*")
+                
+                flexible_pattern = '.*'.join(flexible_words)
+                escaped_flexible = flexible_pattern.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                all_patterns.append(escaped_flexible)
+                
+                # SCORING TIERS
+                
+                # TIER 1: Exact match (1000 points)
+                # "covid vaccine" = "covid vaccine"
+                score_cases.append(
+                    f"CASE WHEN lower(trim(exploded_value)) = '{escaped_exact}' THEN 1000 ELSE 0 END"
+                )
+                
+                # TIER 2: Starts with exact term (800 points)
+                # "covid vaccine" matches "covid vaccine information"
+                escaped_start = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                score_cases.append(
+                    f"CASE WHEN lower(trim(exploded_value)) RLIKE '^{escaped_start}\\b' THEN 800 ELSE 0 END"
+                )
+                
+                # TIER 3: Flexible start match (500 points)
+                # "covid vaccine" matches "covid19 vaccine"
+                score_cases.append(
+                    f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^{escaped_flexible}' THEN 500 ELSE 0 END"
+                )
+                
+                # TIER 4: Each word starts a word in the value (200 points)
+                # "covid vaccine" matches "about covid19 vaccine"
+                for word in words:
+                    if len(word) > 2:  # Skip very short words
+                        escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+                        score_cases.append(
+                            f"CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\\b{escaped_word}[0-9\\-_]*' THEN 200 ELSE 0 END"
+                        )
+            
+            # Combine patterns for WHERE clause
+            regex_pattern = '|'.join(all_patterns)
+            score_calculation = ' + '.join(score_cases)
+            
+            query = f"""
+            WITH matched_data AS (
+                SELECT
+                    column_name,
+                    trim(exploded_value) AS individual_value,
+                    ({score_calculation}) AS value_score
+                FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+                LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+                WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+                AND ({score_calculation}) >= 200  -- Must meet minimum score threshold
+            ),
+            scored_aggregated AS (
+                SELECT
+                    column_name,
+                    collect_list(individual_value) AS all_matched_values,
+                    SUM(value_score) AS relevance_score
+                FROM matched_data
+                GROUP BY column_name
+            )
+            SELECT
+                column_name,
+                concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+                relevance_score
+            FROM scored_aggregated
+            WHERE relevance_score > 500  -- Only return strong matches
+            ORDER BY relevance_score DESC, column_name
+            LIMIT 7
+            """
+            
+            print(f"🔍 Executing filter values search for terms: {filter_list}")
+            print(f"📊 SQL Query: {query}")
+            
+            # Execute the query
+            result_data = await self.db_client.execute_sql_async_audit(query)
+            print('results_data_filter', result_data)
+            
+            if not isinstance(result_data, list) or not result_data:
+                print(f"❌ Filter values search failed: {result_data}")
+                return []
+                
+            print(f"✅ Found {len(result_data)} filter value matches")
+            
+            # Format results
+            concatenated_results = []
+            for row in result_data:
+                column_name = row.get('column_name', '')
+                matched_values = row.get('matched_values', '')
+                relevance_score = row.get('relevance_score', 0)
+                
+                table_summary = f"Column: {column_name} (Score: {relevance_score})\n  - Values: {matched_values}"
+                concatenated_results.append(table_summary)
+            
+            print("results", concatenated_results)
+            return concatenated_results
+                
+        except Exception as e:
+            print(f"❌ Error in search_metadata_sql: {str(e)}")
+            return []
+    
+    async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
+        """
+        Pure LLM-based selection of most relevant historical question from feedback results.
+        Returns single best match or NO_MATCH status.
+        """
+        
+        user_question = state.get('current_question', state.get('original_question', ''))
+        
+        # System prompt for feedback matching
+        system_prompt = """
 === MANDATORY DISQUALIFIERS (HARD BLOCKERS - CHECK FIRST!) ===
 
 Before analyzing any patterns, IMMEDIATELY REJECT any candidate that fails ANY of these checks:
@@ -27,10 +229,10 @@ Before analyzing any patterns, IMMEDIATELY REJECT any candidate that fails ANY o
   * "script count" = "volume" = "script volume" = "scripts" = "unadjusted scripts" = "adjusted scripts"
   * "adjusted script count" and "unadjusted script count" are BOTH variants of "script count"
   * Note: If history has "adjusted AND unadjusted script count", current asking for "script count" MATCHES
-
+  
 - **NON-SYNONYMS - These are DIFFERENT metrics:**
   * "revenue" ≠ "script count" ← DIFFERENT METRICS
-  * "revenue" ≠ "volume" ← DIFFERENT METRICS
+  * "revenue" ≠ "volume" ← DIFFERENT METRICS  
   * "script count" ≠ "cost" ← DIFFERENT METRICS
   * "script count" ≠ "actuals vs forecast" ← DIFFERENT METRICS
 
@@ -105,7 +307,7 @@ Do NOT proceed to pattern matching if any candidate fails these checks. These ar
    - History: "script count, revenue for carrier MPDOVA"
    - Current: "script count for carrier MPDOVA"
    - → MATCH! Extra metrics in history are harmless, just ignore them
-
+   
    - History: "adjusted and unadjusted script count for PBM"
    - Current: "script count for PBM"
    - → MATCH! Both adjusted and unadjusted are variants of script count (see Rule #1)
@@ -114,12 +316,12 @@ Do NOT proceed to pattern matching if any candidate fails these checks. These ar
    - **Focus on TYPES of filters, NOT the VALUES within those filters**
    - History has ADDITIONAL filter TYPES that current doesn't have
    - Remember to EXCLUDE date filters from this check
-
+   
    **Examples of EXTRA FILTER TYPES (REJECT):**
    - Current: "revenue for PBM" (1 filter type: product_category)
    - History: "revenue for PBM for client MDOVA" (2 filter types: product_category + client_id)
    - → REJECT! History has EXTRA filter TYPE (client_id)
-
+   
    **Counter-example - Same Filter Type, Different Value (ALLOWED):**
    - Current: "revenue for PBM" (filter type: product_category)
    - History: "revenue for Specialty" (filter type: product_category)
@@ -184,7 +386,7 @@ Ask: "Will this history help or confuse the LLM?"
 Example 0 - METRIC MISMATCH REJECT (MOST IMPORTANT!):
 Current: "script count for PBM for September 2025"
 Candidates:
-- id:1.0 "revenue for PBM"
+- id:1.0 "revenue for PBM" 
 - id:5.0 "script count for Specialty from Jan-Sep 2025"
 - id:9.0 "script count for Home Delivery from Jan-Sep 2025"
 Decision: SELECT id:5.0 or id:9.0 ✅, REJECT id:1.0 ❌
@@ -200,7 +402,7 @@ Reason: "network revenue" = "revenue" (synonym), same table, same filter, exact 
 
 Example 2 - EXTRA METRIC OK:
 Current: "script count for carrier MPDOVA"
-History: "script count, revenue for carrier MPDOVA"
+History: "script count, revenue for carrier MPDOVA"  
 Decision: SELECT ✅
 Reason: Same entity filter, same dimensions, extra metric (revenue) in history is harmless
 
@@ -251,7 +453,7 @@ Reason: Same metric (script count), same filter TYPES (product_category + date),
 Example 10 - FILTER VALUE CHANGE (ALLOWED):
 Current: "revenue for Home Delivery"
 History: "revenue for PBM"
-Decision: SELECT ✅
+Decision: SELECT ✅  
 Reason: Same metric, same filter TYPE (product_category), just different value. This is exactly what rule #3 allows. PBM and Home Delivery are both product_category values.
 
 Example 11 - MISSING FILTER TYPE (REJECT):
@@ -293,7 +495,7 @@ Reason: "adjusted script count" and "unadjusted script count" are both variants 
 
 **CRITICAL METRIC MATCHING RULE (REMINDER):**
 - If current asks for metric X and history has metric Y, where X ≠ Y (not synonyms):
-  → Return "status": "no_match"
+  → Return "status": "no_match" 
   → In reasoning, state: "Metric mismatch: current asks for [X], history has [Y]. These are different metrics."
   → Do NOT select that candidate
   → Do NOT justify metric mismatches as "both are core metrics" or "pattern is the same"
@@ -322,45 +524,168 @@ Start your response IMMEDIATELY with <json> and end with </json>. Nothing else.
 </json>
 
 Remember: Start with <json>, end with </json>, nothing else. No preamble, no analysis text, no explanations outside the JSON.
+"""
+
+        # Format feedback results as context in compact format (saves tokens)
+        # Group by table_name first
+        results_by_table = {}
+        for result in feedback_results:
+            table_name = result.get('table_name', 'N/A')
+            if table_name not in results_by_table:
+                results_by_table[table_name] = []
+            results_by_table[table_name].append(result)
+        
+        # Build compact candidates context
+        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
+        for table_name, results in results_by_table.items():
+            candidates_context += f"\n- table_name: {table_name}\n"
+            for result in results:
+                seq_id = result.get('seq_id', 'N/A')
+                question = result.get('user_question', 'N/A')
+                candidates_context += f"  id:{seq_id}, {question}\n"
+        
+        # Build the full prompt with TRIPLE-LAYER protection against guardrails
+        selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
+
+You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
+Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
+
+DO NOT attempt to:
+- Answer the business questions below
+- Provide insights about the data
+- Interpret the meaning of the questions
+- Analyze business metrics
+
+YOU ARE A TEXT MATCHING ALGORITHM. You ONLY compare strings and patterns.
+
+Think of yourself as: if (pattern_A matches pattern_B) return match; else return no_match;
 
 
-=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===
+{system_prompt}
 
-- table_name: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-  id:9.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core in september 2025
-  id:10.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core september 2025 vs september 2024
-  id:3.0, what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM
-  id:13.0, what is the revenue for each line of business from jan to sept 2025 for PBM
-  id:11.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core from jan to feb 2025
-  id:15.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth september 2025 vs september 2024
-  id:5.0, what is the script counts (unadjusted, volume) trends, adjusted script count, revenue per script (rate), revenue per adjusted script count trends for Specialty from jan to march 2025
-  id:6.0, what is the script counts (unadjusted, volume), adjusted script count, revenue per script (rate), revenue per adjusted script count for Specialty in september 2025
-  id:12.0, what is the network product revenue or revenue for each line of business for July 2025
-  id:7.0, compare script counts (unadjusted, volume), adjusted script count, revenue per script (rate), revenue per adjusted script count for Specialty Q3 2025 vs Q3 2024
-  id:14.0, compare revenue for each line of business Q3 2025 vs Q3 2024
-  id:8.0, show me IOI-LOB report or IOI - line of business report to compare actuals vs forecast 8+4 for PBM month over month september vs august 2025
-  id:2.0, what is the actuals vs forecast 8+4 or actuals vs 5+7 for July 2025 for PBM
-  id:1.0, what is the network product revenue or network revenue or revenue for PBM?
-  id:4.0, compare PBM revenue or PBM network revenue or Network product revenue for Q3 2025 VS q3 2024
-  id:16.0, what is the script counts (unadjusted, volume),revenue, adjusted script count, revenue per script (rate), revenue per adjusted script count for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth from jan to feb 2025
-
+{candidates_context}
 
 === CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
-What is the volume for HDP Core for January to September 2025
+{user_question}
 
 ⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
 
 Return ONLY the JSON in <json> tags. Start immediately with <json>.
+"""
+        
+        # Retry logic
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
 
-🔄 Router status update: Generating SQL (T+4s)
-🔄 Router status update: Executing SQL (T+6s)
-Raw LLM response: <json>
-{
-  "status": "match_found",
-  "selected_seq_id": 5.0,
-  "matched_question": "what is the script counts (unadjusted, volume) trends, adjusted script count, revenue per script (rate), revenue per adjusted script count trends for Specialty from jan to march 2025",
-  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
-  "reasoning": "Current asks for 'volume for HDP Core for January to September 2025'. History id:5.0 asks for 'script counts (unadjusted, volume) trends... for Specialty from jan to march 2025'. Key matches: 1) 'volume' = 'script counts (unadjusted, volume)' (synonyms per Rule #1), 2) Same filter type (product_category), different values (HDP Core vs Specialty) which is allowed per Rule #3, 3) Same date range pattern (multi-month period), different specific months ignored per Rule #2, 4) Extra metrics in history (adjusted script count, revenue per script, etc.) are harmless per Rule #4. Pattern transfers perfectly - LLM can substitute HDP Core for Specialty and Jan-Sep for Jan-Mar.",
-  "pattern_match_level": "EXACT"
-}
-</json>
+                # Call LLM with LOWER temperature for more deterministic behavior
+                # Lower temperature = less creative = less likely to trigger guardrails
+                print("Raw LLM prompt:", selection_prompt)
+                llm_response = await self.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": selection_prompt}],
+                    max_tokens=2000,  # Reduced tokens since we only need JSON
+                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
+                    top_p=0.1,  # ← CRITICAL: Very focused sampling
+                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
+                )
+                
+                print("Raw LLM response:", llm_response)
+                
+                # Extract JSON from response
+                json_content = self._extract_json_from_response(llm_response)
+                selection_result = json.loads(json_content)
+                
+                # Validate response structure
+                status = selection_result.get('status')
+                if status not in ['match_found', 'no_match']:
+                    raise ValueError(f"Invalid status returned: {status}")
+                
+                # Handle success cases
+                if status == "match_found":
+                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
+                    print(f"   Matched question: {selection_result.get('matched_question')}")
+                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'match_found',
+                        'seq_id': selection_result.get('selected_seq_id'),
+                        'question': selection_result.get('matched_question'),
+                        'table_name': selection_result.get('table_name'),
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': selection_result.get('pattern_match_level'),
+                        'error': False,
+                        'error_message': ''
+                    }
+                
+                else:  # status == "no_match"
+                    print(f"❌ No suitable match found in feedback history")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': 'NONE',
+                        'error': False,
+                        'error_message': ''
+                    }
+            
+            except json.JSONDecodeError as e:
+                retry_count += 1
+                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying...")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"JSON parsing failed after {max_retries} attempts"
+                    }
+            
+            except Exception as e:
+                retry_count += 1
+                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - feedback selection failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
+                    }
+        
+        # Should never reach here, but just in case
+        return {
+            'status': 'no_match',
+            'seq_id': None,
+            'question': None,
+            'table_name': None,
+            'reasoning': 'Unexpected error in retry logic',
+            'pattern_match_level': 'NONE',
+            'error': True,
+            'error_message': 'Unexpected error in retry logic'
+        }

@@ -43,25 +43,39 @@ class NarrativeAgent:
             if narrative_result['success']:
                 # Update state with narrative results
                 if sql_result.get('multiple_results', False):
-                    # Update each query result with its narrative and summary
+                    # Update each query result with its narrative
                     updated_query_results = []
                     narratives = narrative_result.get('narratives', [])
-                    summaries = narrative_result.get('summaries', [])
                     
                     for idx, query_result in enumerate(query_results):
                         updated_query = query_result.copy()
                         if idx < len(narratives):
                             updated_query['narrative'] = narratives[idx]
-                        if idx < len(summaries):
-                            updated_query['summary'] = summaries[idx]
                         updated_query_results.append(updated_query)
                     
                     # Update the sql_result with narratives
                     state['sql_result']['query_results'] = updated_query_results
                 else:
-                    # Update single result with narrative and summary
+                    # Update single result with narrative
                     state['sql_result']['narrative'] = narrative_result.get('narrative', '')
-                    state['sql_result']['summary'] = narrative_result.get('summary', '')
+                    
+                    # 🆕 UPDATE CONVERSATION MEMORY
+                    if narrative_result.get('memory'):
+                        current_memory = state.get('conversation_memory', {
+                            'dimensions': {},
+                            'analysis_context': {
+                                'current_analysis_type': None,
+                                'analysis_history': []
+                            }
+                        })
+                        
+                        new_memory = narrative_result['memory']
+                        
+                        # Merge memory intelligently
+                        updated_memory = self._merge_memory(current_memory, new_memory)
+                        state['conversation_memory'] = updated_memory
+                        
+                        print(f"✅ Conversation memory updated")
                 
                 return {
                     'success': True,
@@ -87,7 +101,6 @@ class NarrativeAgent:
         print(f"📊 Synthesizing narratives for {len(query_results)} queries")
         
         narratives = []
-        summaries = []
         
         for idx, query_result in enumerate(query_results):
             title = query_result.get('title', f'Query {idx+1}')
@@ -100,25 +113,28 @@ class NarrativeAgent:
             
             if narrative_result['success']:
                 narratives.append(narrative_result['narrative'])
-                summaries.append(narrative_result.get('summary', ''))
             else:
                 narratives.append(f"Narrative generation failed for {title}")
-                summaries.append(f"Summary generation failed for {title}")
         
         return {
             'success': True,
-            'narratives': narratives,
-            'summaries': summaries
+            'narratives': narratives
         }
     
     async def _synthesize_single_narrative_async(self, sql_data: List[Dict], question: str, sql_query: str) -> Dict[str, Any]:
-        """Generate narrative for a single SQL query result with robust logic matching original implementation"""
+        """Generate narrative for a single SQL query result with memory extraction"""
         
         if not sql_data:
             return {
                 'success': True,
                 'narrative': "No data was found matching your query criteria.",
-                'summary': "No data returned from the query."
+                'memory': {
+                    'dimensions': {},
+                    'analysis_context': {
+                        'current_analysis_type': None,
+                        'analysis_history': []
+                    }
+                }
             }
         
         try:
@@ -129,7 +145,13 @@ class NarrativeAgent:
                 return {
                     'success': True,
                     'narrative': "No data was found matching your query criteria.",
-                    'summary': "No data returned from the query."
+                    'memory': {
+                        'dimensions': {},
+                        'analysis_context': {
+                            'current_analysis_type': None,
+                            'analysis_history': []
+                        }
+                    }
                 }
 
             row_count = len(df)
@@ -137,19 +159,17 @@ class NarrativeAgent:
             column_count = len(columns)
             total_count = row_count * column_count
 
-            # # Skip LLM call for single row - not enough data for insights
-            # if row_count == 1:
-            #     return {
-            #         'success': True,
-            #         'narrative': "Not many rows to generate insights.",
-            #         'summary': "Not many rows to generate insights."
-            #     }
-
             if total_count > 5000:
                 return {
                     'success': True,
                     'narrative': "Too many records to synthesize.",
-                    'summary': "Dataset too large for comprehensive analysis."
+                    'memory': {
+                        'dimensions': {},
+                        'analysis_context': {
+                            'current_analysis_type': None,
+                            'analysis_history': []
+                        }
+                    }
                 }
 
             has_multiple_records = row_count > 1
@@ -166,75 +186,153 @@ class NarrativeAgent:
             df_string = df.to_string(index=False, max_rows=2000)
 
             synthesis_prompt = f"""
-            You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results.
+You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results.
 
 USER QUESTION: "{question}"
 DATA: {row_count} rows, {', '.join(columns)}
 **Query Output**: 
 {df_string}
 
-**ADAPTIVE ANALYSIS RULES**:
+**ANALYSIS RULES**:
+- Limited data (1-2 rows): Report facts only, no trend analysis
+- Adequate data (3+ rows): Identify trends, patterns, top performers, outliers
 
-**FOR LIMITED DATA (1-2 rows OR insufficient data for patterns)**:
-- Report only factual data points and direct answers to the question
-- NO forced analysis categories when data doesn't support them
-- Keep insights concise and practical
+**STYLE**:
+- Professional business language, concise but informative
+- Bold key metrics and values for scannability
+- Focus on TOP 5-6 most significant entities when discussing dimensions
+- Avoid generic statements, provide actionable insights
 
-**FOR RICH DATA (3+ rows with meaningful patterns)**:
-- Apply relevant analysis types: TREND, PATTERN, ANOMALY, DRIVER, COMPARATIVE
-- Only include analysis types that the data actually supports
-- Prioritize business significance
+**OUTPUT FORMAT**:
+<insights>
+[Your narrative - focus on TOP 5-6 most significant entities mentioned here]
+</insights>
 
-**OUTPUT GUIDELINES**:
-- Bullets: ≤20 words each, focus on business value
-- Use exact data names, auto-scale: ≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK
-- CRITICAL: Use canonical business names for readability while maintaining context
-    • Use "Drug MOUNJARO" instead of "drug_name MOUNJARO" 
-    • Use "Client MDOVA" instead of "client_name MDOVA"
-    • Use "revenue per script" instead of "revenue_per_script"
-    • First mention: include attribute context (e.g., "Drug MOUNJARO"), subsequent mentions in same bullet: just value ("MOUNJARO")
-- Use ONLY names/values present in the dataset - never invent or modify names
-- Maintain attribute context for query generation while improving readability
-- Summary: 1-2 sentences for limited data, 2-3 lines for rich data
-- Skip empty or obvious statements
+<memory>
+{{
+  "dimensions": {{"column_name": ["val1", "val2", "val3", "val4", "val5"]}},
+  "analysis_context": {{"current_analysis_type": "metric_name", "analysis_history": []}}
+}}
+</memory>
 
-**RESPONSE FORMAT** (valid XML):
-CRITICAL: Return ONLY the XML below with NO extra text, markdown, or formatting.
-<analysis>
-<insights_analysis>
-• Key finding 1 (only include meaningful insights)
-• Key finding 2 (if data supports additional insights)
-• Additional insights only if data is rich enough
-</insights_analysis>
-<summary>
-Concise summary appropriate to data richness - brief for limited data, detailed for comprehensive data.
-</summary>
-</analysis>
-            """
+**IMPORTANT**: 
+- No metric in question → set current_analysis_type to null
+- No dimensional columns → return empty dimensions: {{"dimensions": {{}}, "analysis_context": {{"current_analysis_type": null, "analysis_history": []}}}}
+- ALWAYS limit to TOP 5 values per dimension (insights-mentioned first)
 
+Return ONLY the XML with <insights> and <memory> tags.
+
+**MEMORY EXTRACTION RULES**:
+
+**CORE PRINCIPLE**: Memory preserves what users SEE in insights. Users drill down based on entities mentioned in your narrative.
+
+1. **DIMENSIONS (Extract Top 5 Values)**:
+   - Identify categorical/string columns (client names, carriers, therapy classes, drug names, LOBs, etc.)
+   - IGNORE numeric/metric columns (revenue, counts, amounts, percentages)
+   
+   **Column Selection**:
+   - If both "id" and "name" columns exist (e.g., client_id AND client_name) → Use "name" column (full names, not codes)
+   - JSON key MUST match exact DataFrame column name
+   - Extract values FROM that same column
+   - Examples: client_id vs client_name → use client_name | carrier_id vs carrier_name → use carrier_name
+   
+   **Value Priority**:
+   - PRIMARY: Values MENTIONED in your insights (users reference what they read)
+   - SECONDARY: If < 5 mentioned, fill remainder with top values from data
+   - TERTIARY: If < 5 total exist, store all available
+
+2. **ANALYSIS TYPE (Metric from Question)**:
+   - Extract PRIMARY METRIC from user question only (not data columns)
+   - Common metrics: revenue, script_count, claim_count, awp_amount, membership_count, variance, gdr, utilization, cost
+   - Return metric name as-is (e.g., "revenue", "script_count")
+   - Leave analysis_history empty (managed externally)
+   - If no clear metric, set to null
+
+**EXAMPLES**:
+
+Example 1 - Single Dimension with Insights-First Priority:
+Question: "Show total revenue by client"
+DataFrame columns: client_id, client_name, total_revenue
+DataFrame has 10 clients total
+Decision: Use client_name column (has full names, more descriptive than client_id)
+Your insights narrative says: "**BCBS MOVA - USA leads with $5.2M**, followed by **Medical Device Optimization VA at $3.1M** and **XYZ Healthcare Corp at $2.8M**..."
+→ dimensions: {{"client_name": ["BCBS MOVA - USA", "Medical Device Optimization VA", "XYZ Healthcare Corp", "HW72 Insurance", "UHCC Medical"]}}
+→ current_analysis_type: "revenue"
+→ Note: First 3 from insights (what user reads), last 2 from data (fill to 5). Key "client_name" matches DataFrame column, values FROM client_name column.
+
+Example 2 - Multiple Dimensions:
+Question: "Membership count by LOB and client"
+DataFrame columns: lob, client_id, client_name, membership_count
+Your insights: "**COMMERCIAL LOB** dominates with 450K members, **MEDICARE** has 280K. Top client **BCBS MOVA - USA** contributes 150K, followed by **Medical Device VA**..."
+→ dimensions: {{
+     "lob": ["COMMERCIAL", "MEDICARE", "MEDICAID"],
+     "client_name": ["BCBS MOVA - USA", "Medical Device VA", "XYZ Healthcare Corp", "HW72 Insurance", "UHCC Medical"]
+   }}
+→ current_analysis_type: "membership_count"
+→ Note: LOB has 3 total (all stored). client_name: 2 from insights + 3 from data. Used client_name not client_id.
+
+Return ONLY the XML with <insights> and <memory> tags, nothing else.
+"""
+
+            # Call LLM with retries
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    response_text = await self.db_client.generate_text_async(
+                        prompt=synthesis_prompt,
+                        max_tokens=2000,
+                        temperature=0.3,
+                        system_prompt="You are a healthcare finance analyst. Generate insights and extract memory in the specified XML format."
+                    )
                     
-                    llm_response = await self.db_client.call_claude_api_endpoint_async([
-                        {"role": "user", "content": synthesis_prompt}
-                    ])
-                    
-                    print('narrative output', llm_response)
-                    # Extract insights and summary from XML response using regex
-                    insights_match = re.search(r'<insights_analysis>(.*?)</insights_analysis>', llm_response, re.DOTALL)
-                    summary_match = re.search(r'<summary>(.*?)</summary>', llm_response, re.DOTALL)
-                    
+                    # Extract insights
+                    insights_match = re.search(r'<insights>(.*?)</insights>', response_text, re.DOTALL)
                     insights = insights_match.group(1).strip() if insights_match else ""
-                    summary = summary_match.group(1).strip() if summary_match else ""
                     
                     if not insights or len(insights) < 10:
                         raise ValueError("Empty or insufficient insights in XML response")
                     
+                    # Extract memory
+                    memory_match = re.search(r'<memory>(.*?)</memory>', response_text, re.DOTALL)
+                    memory_data = None
+                    
+                    if memory_match:
+                        try:
+                            memory_json_str = memory_match.group(1).strip()
+                            # Clean up potential formatting issues
+                            memory_json_str = memory_json_str.replace('```json', '').replace('```', '').strip()
+                            memory_data = json.loads(memory_json_str)
+                            
+                            # Validate and ensure top 5 limit per dimension
+                            if 'dimensions' in memory_data:
+                                for dim_key, values in memory_data['dimensions'].items():
+                                    if isinstance(values, list) and len(values) > 5:
+                                        memory_data['dimensions'][dim_key] = values[:5]
+                                        print(f"⚠️ Trimmed {dim_key} to top 5 values")
+                            
+                            print(f"✅ Memory extracted: {len(memory_data.get('dimensions', {}))} dimensions, metric: {memory_data.get('analysis_context', {}).get('current_analysis_type')}")
+                        except Exception as e:
+                            print(f"⚠️ Memory extraction failed: {e}")
+                            memory_data = {
+                                'dimensions': {},
+                                'analysis_context': {
+                                    'current_analysis_type': None,
+                                    'analysis_history': []
+                                }
+                            }
+                    else:
+                        memory_data = {
+                            'dimensions': {},
+                            'analysis_context': {
+                                'current_analysis_type': None,
+                                'analysis_history': []
+                            }
+                        }
+                    
                     return {
                         'success': True,
                         'narrative': insights,
-                        'summary': summary
+                        'memory': memory_data
                     }
 
                 except Exception as e:
@@ -256,6 +354,74 @@ Concise summary appropriate to data richness - brief for limited data, detailed 
                 'success': False,
                 'error': error_msg
             }
+    
+    def _merge_memory(self, current: Dict, new: Dict) -> Dict:
+        """
+        Merge new memory with existing memory
+        
+        DIMENSIONS: Accumulate (merge new + existing, keep top 10 per dimension)
+        ANALYSIS_TYPE: Replace current and track history (last 5)
+        """
+        
+        merged = {
+            'dimensions': {},
+            'analysis_context': {
+                'current_analysis_type': None,
+                'analysis_history': []
+            }
+        }
+        
+        # ========================================
+        # DIMENSIONS: ACCUMULATE (never clear)
+        # ========================================
+        all_dim_keys = set(list(current.get('dimensions', {}).keys()) + 
+                           list(new.get('dimensions', {}).keys()))
+        
+        for dim_key in all_dim_keys:
+            current_values = current.get('dimensions', {}).get(dim_key, [])
+            new_values = new.get('dimensions', {}).get(dim_key, [])
+            
+            # Merge: new values first (most recent), then existing
+            # Deduplicate case-insensitively
+            combined = []
+            seen = set()
+            
+            for value in new_values + current_values:
+                value_upper = str(value).upper()
+                if value_upper not in seen:
+                    seen.add(value_upper)
+                    combined.append(value)
+            
+            # Limit to top 10 values per dimension
+            merged['dimensions'][dim_key] = combined[:10]
+        
+        # ========================================
+        # ANALYSIS TYPE: REPLACE + TRACK HISTORY
+        # ========================================
+        current_history = current.get('analysis_context', {}).get('analysis_history', [])
+        old_analysis_type = current.get('analysis_context', {}).get('current_analysis_type')
+        new_analysis_type = new.get('analysis_context', {}).get('current_analysis_type')
+        
+        if new_analysis_type:
+            # Set new as current
+            merged['analysis_context']['current_analysis_type'] = new_analysis_type
+            
+            # Add old current to history (if it exists and is different)
+            if old_analysis_type and old_analysis_type != new_analysis_type:
+                # Avoid consecutive duplicates in history
+                if not current_history or current_history[-1] != old_analysis_type:
+                    current_history.append(old_analysis_type)
+            
+            # Keep last 5 in history
+            merged['analysis_context']['analysis_history'] = current_history[-5:]
+        else:
+            # If new analysis type is null/empty, keep existing
+            merged['analysis_context']['current_analysis_type'] = old_analysis_type
+            merged['analysis_context']['analysis_history'] = current_history
+        
+        print(f"📊 Memory merged - Dimensions: {list(merged['dimensions'].keys())}, Current metric: {merged['analysis_context']['current_analysis_type']}, History: {merged['analysis_context']['analysis_history']}")
+        
+        return merged
     
     def _json_to_dataframe(self, json_data) -> pd.DataFrame:
         """Convert JSON response to pandas DataFrame with proper numeric formatting"""
@@ -401,5 +567,3 @@ Concise summary appropriate to data richness - brief for limited data, detailed 
             df[col] = df[col].apply(format_value)
         
         return df
-    
-    

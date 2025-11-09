@@ -226,15 +226,17 @@ Return ONLY the XML with <insights> and <memory> tags.
 
 **CORE PRINCIPLE**: Memory preserves what users SEE in insights. Users drill down based on entities mentioned in your narrative.
 
+**IMPORTANT**: When writing insights, reference entities by their ID codes (e.g., "BCBS", "MDOVA") that exist in the ID columns. This ensures what users read matches what's stored in memory for seamless follow-up questions.
+
 1. **DIMENSIONS (Extract Top 5 Values)**:
    - Identify categorical/string columns (client names, carriers, therapy classes, drug names, LOBs, etc.)
    - IGNORE numeric/metric columns (revenue, counts, amounts, percentages)
    
    **Column Selection**:
-   - If both "id" and "name" columns exist (e.g., client_id AND client_name) → Use "name" column (full names, not codes)
+   - If both "id" and "name" columns exist (e.g., client_id AND client_name) → Use "id" column (compact codes)
    - JSON key MUST match exact DataFrame column name
    - Extract values FROM that same column
-   - Examples: client_id vs client_name → use client_name | carrier_id vs carrier_name → use carrier_name
+   - Examples: client_id vs client_name → use client_id | carrier_id vs carrier_name → use carrier_id
    
    **Value Priority**:
    - PRIMARY: Values MENTIONED in your insights (users reference what they read)
@@ -254,22 +256,22 @@ Example 1 - Single Dimension with Insights-First Priority:
 Question: "Show total revenue by client"
 DataFrame columns: client_id, client_name, total_revenue
 DataFrame has 10 clients total
-Decision: Use client_name column (has full names, more descriptive than client_id)
-Your insights narrative says: "**BCBS MOVA - USA leads with $5.2M**, followed by **Medical Device Optimization VA at $3.1M** and **XYZ Healthcare Corp at $2.8M**..."
-→ dimensions: {{"client_name": ["BCBS MOVA - USA", "Medical Device Optimization VA", "XYZ Healthcare Corp", "HW72 Insurance", "UHCC Medical"]}}
+Decision: Use client_id column (compact codes, easier for SQL matching)
+Your insights narrative says: "**BCBS leads with $5.2M**, followed by **MDOVA at $3.1M** and **XYZ at $2.8M**..."
+→ dimensions: {{"client_id": ["BCBS", "MDOVA", "XYZ", "HW72", "UHCC"]}}
 → current_analysis_type: "revenue"
-→ Note: First 3 from insights (what user reads), last 2 from data (fill to 5). Key "client_name" matches DataFrame column, values FROM client_name column.
+→ Note: First 3 from insights (what user reads), last 2 from data (fill to 5). Key "client_id" matches DataFrame column, values FROM client_id column.
 
 Example 2 - Multiple Dimensions:
 Question: "Membership count by LOB and client"
 DataFrame columns: lob, client_id, client_name, membership_count
-Your insights: "**COMMERCIAL LOB** dominates with 450K members, **MEDICARE** has 280K. Top client **BCBS MOVA - USA** contributes 150K, followed by **Medical Device VA**..."
+Your insights: "**COMMERCIAL LOB** dominates with 450K members, **MEDICARE** has 280K. Top client **BCBS** contributes 150K, followed by **MDOVA**..."
 → dimensions: {{
      "lob": ["COMMERCIAL", "MEDICARE", "MEDICAID"],
-     "client_name": ["BCBS MOVA - USA", "Medical Device VA", "XYZ Healthcare Corp", "HW72 Insurance", "UHCC Medical"]
+     "client_id": ["BCBS", "MDOVA", "XYZ", "HW72", "UHCC"]
    }}
 → current_analysis_type: "membership_count"
-→ Note: LOB has 3 total (all stored). client_name: 2 from insights + 3 from data. Used client_name not client_id.
+→ Note: LOB has 3 total (all stored). client_id: 2 from insights + 3 from data. Used client_id not client_name.
 
 Return ONLY the XML with <insights> and <memory> tags, nothing else.
 """

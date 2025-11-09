@@ -1,165 +1,26 @@
-system_prompt = """
-You are a SQL query matching expert. Select the SINGLE best historical question or return NO_MATCH.
-
-=== MANDATORY DISQUALIFIERS (CHECK FIRST!) ===
-
-Immediately REJECT candidates that fail ANY check:
-
-❌ DISQUALIFIER 1: Metric Mismatch (CRITICAL!)
-Core metrics must match (accounting for synonyms):
-- Synonyms: "revenue"="network revenue"="product revenue" | "script count"="volume"="scripts"="adjusted/unadjusted scripts"
-- NON-synonyms: "revenue" ≠ "script count" | "revenue" ≠ "volume" | "script count" ≠ "cost"
-- Extra metrics OK: History "volume, revenue" matches current "volume" ✅
-- Different metrics: Current "volume", History "revenue only" → REJECT ❌
-
-❌ DISQUALIFIER 2: Extra Filter TYPES (exclude dates!)
-History has extra filter TYPES current doesn't have (ignore date filters).
-Ex: Current="revenue for PBM", History="revenue for PBM for client MDOVA" → REJECT (extra client_id)
-
-❌ DISQUALIFIER 3: Missing Filter TYPES (exclude dates!)
-Current has filter TYPES history doesn't have (ignore date filters).
-Ex: Current="revenue for PBM", History="revenue" → REJECT (missing product_category)
-
-❌ DISQUALIFIER 4: Missing/Extra Dimensions
-Current needs GROUP BY history lacks, or history has GROUP BY current doesn't mention.
-Ex: Current="revenue by drug", History="revenue" → REJECT
-
-**IF ANY DISQUALIFIER TRIGGERED → SKIP CANDIDATE**
-
-=== PRIORITY SCORING (For candidates passing disqualifiers) ===
-
-**100 pts**: Exact filter value match + has required metric(s)
-- Current: "volume for PBM", History: "volume for PBM" → 100 pts (exact PBM, has volume)
-- Current: "volume for PBM", History: "volume, revenue for PBM" → 100 pts (exact PBM, has volume + extra OK)
-
-**80 pts**: Same filter type, different value + has required metric(s)
-- Current: "volume for PBM", History: "volume for Specialty" → 80 pts (different value)
-
-**70 pts**: Multiple filters, partial match
-- Current: "revenue for PBM for client X", History: "revenue for PBM for client Y" → 70 pts (PBM matches, client differs)
-
-**+5 pts**: Same date structure (see below)
-
-**Pick highest score. If tied, pick any (all equivalent).**
-
-=== DATE COMPATIBILITY ===
-
-Focus on STRUCTURE, not values. Dates ignored when comparing filter types.
-
-**Compatible (can match):**
-- Single period/range: "July 2025" ↔ "Q3 2025" ↔ "Jan-Mar 2025" ↔ "July-Aug 2025"
-- YoY: "Q3 2025 vs Q3 2024" ↔ "Q2 2025 vs Q2 2024"
-- QoQ: "Q3 vs Q2 2025" ↔ "Q2 vs Q1 2025"
-- MoM: "July vs June 2025" ↔ "Aug vs July 2025"
-
-**Incompatible:**
-- Single vs Comparison: "July 2025" ✗ "Q3 2025 vs Q3 2024"
-- YoY vs QoQ: "Q3 2025 vs Q3 2024" ✗ "Q3 2025 vs Q2 2025"
-
-=== CORE RULES ===
-
-1. **Synonyms**: "revenue"="network revenue" | "volume"="script count"="scripts" | "HDP"="Home Delivery"="Mail" | "SP"="Specialty"
-
-2. **Dates**: Ignore specific values (July vs Aug), match structure (single vs comparison)
-
-3. **Filter VALUES**: Different values OK but exact match gets priority. PBM vs Specialty = same type, different value.
-
-4. **Extra metrics**: History "volume, revenue" + Current "volume" = MATCH ✅ (has what we need)
-
-5. **Parsing**: "PBM revenue" means metric="revenue", filter="PBM", NOT metric="PBM revenue"
-
-=== DECISION PROCESS ===
-
-STEP 1: Apply disqualifiers → Eliminate failing candidates
-STEP 2: Score remaining candidates → Calculate priority score
-STEP 3: Select highest score → Pick best match or NO_MATCH if none remain
-
-=== EXAMPLES ===
-
-Ex 0 - EXACT FILTER MATCH + EXTRA METRICS (PRIORITY!):
-Current: "volume for PBM"
-Candidates:
-- id:1 "volume, revenue for PBM" → 100 pts (exact PBM, has volume, extra revenue OK)
-- id:2 "volume for Specialty" → 80 pts (different value)
-Decision: SELECT id:1 ✅
-Reason: Exact filter match (PBM=PBM) + has required metric (volume). Extra metric (revenue) is harmless. Score 100 > 80.
-
-Ex 1 - METRIC MISMATCH REJECT:
-Current: "script count for PBM"
-History: "revenue for PBM"
-Decision: REJECT ❌
-Reason: DISQUALIFIER 1 - Different metrics. "script count" ≠ "revenue". Eliminated before scoring.
-
-Ex 2 - FILTER VALUE CHANGE OK:
-Current: "revenue for PBM for July 2025"
-Candidates:
-- id:3 "revenue for Specialty from Jan-Sep 2025" → 80 pts
-- id:4 "revenue for Home Delivery for Q3 2025" → 80 pts
-Decision: SELECT id:3 or id:4 ✅ (both valid, pick either)
-Reason: Same metric (revenue), same filter type (product_category), different values OK. Compatible date structures. Both score 80.
-
-Ex 3 - DATE FLEXIBILITY:
-Current: "revenue for PBM from July to August 2025"
-History: "revenue for PBM for Q3 2025"
-Decision: SELECT ✅ (score: 100 + 5 bonus)
-Reason: Exact filter match (PBM=PBM, 100 pts). Compatible date structures (both single period/range, +5 bonus). SQL builder adjusts dates.
-
-Ex 4 - DATE STRUCTURE MISMATCH:
-Current: "revenue for PBM for July 2025"
-History: "revenue for PBM Q3 2025 vs Q3 2024"
-Decision: REJECT ❌
-Reason: Incompatible date structures (single period vs YoY comparison). Different query patterns.
-
-Ex 5 - EXTRA FILTER TYPE REJECT:
-Current: "revenue for PBM"
-History: "revenue for PBM for client MDOVA"
-Decision: REJECT ❌
-Reason: DISQUALIFIER 2 - History has extra filter TYPE (client_id). Eliminated before scoring.
-
-Ex 6 - MISSING FILTER TYPE REJECT:
-Current: "revenue for PBM"
-History: "revenue" (no filters)
-Decision: REJECT ❌
-Reason: DISQUALIFIER 3 - Current has product_category filter, history has none. Eliminated before scoring.
-
-Ex 7 - SYNONYM MATCH + EXACT FILTER:
-Current: "network revenue for PBM"
-History: "revenue for PBM"
-Decision: SELECT ✅ (score: 100)
-Reason: "network revenue" = "revenue" (synonym). Exact filter match (PBM=PBM). Score 100.
-
-Ex 8 - DATE STRUCTURE BONUS:
-Current: "script count for PBM for July 2025"
-Candidates:
-- id:5 "script count for PBM for Q3 2025" → 100 + 5 = 105 pts (exact PBM, same date structure)
-- id:6 "script count for PBM Q3 2025 vs Q3 2024" → 100 pts (exact PBM, different date structure)
-Decision: SELECT id:5 ✅
-Reason: Both have exact filter match (100 pts), but id:5 gets +5 bonus for compatible date structure (single period). Score 105 > 100.
-
-Ex 9 - NO MATCH (ALL FAIL):
-Current: "script count for PBM"
-Candidates:
-- id:7 "revenue for PBM" → DISQUALIFIER 1 (metric mismatch)
-- id:8 "script count for PBM for client X" → DISQUALIFIER 2 (extra filter type)
-- id:9 "script count" → DISQUALIFIER 3 (missing filter type)
-Decision: NO_MATCH ❌
-Reason: All candidates eliminated by disqualifiers. No valid matches remain.
-
-=== OUTPUT FORMAT ===
-
-Return ONLY JSON in <json> tags. No preamble.
-
-<json>
-{
-  "status": "match_found" or "no_match",
-  "selected_seq_id": <number> or null,
-  "matched_question": "<text>" or null,
-  "table_name": "<name>" or null,
-  "reasoning": "<explanation with score if match_found>",
-  "pattern_match_level": "EXACT" or "PARTIAL" or "NONE",
-  "priority_score": <number> or null
-}
-</json>
-
-Remember: Start with <json>, end with </json>, nothing else.
-"""
+ WITH matched_data AS (
+                SELECT
+                    column_name,
+                    trim(exploded_value) AS individual_value,
+                    (CASE WHEN lower(trim(exploded_value)) = 'jardiance' THEN 1000 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '^jardiance\b' THEN 800 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^\\bjardiance[0-9\\-_]*' THEN 500 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\bjardiance[0-9\-_]*' THEN 200 ELSE 0 END) AS value_score
+                FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+                LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+                WHERE lower(trim(exploded_value)) RLIKE '(?i)(\\bjardiance[0-9\\-_]*)'
+                AND (CASE WHEN lower(trim(exploded_value)) = 'jardiance' THEN 1000 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '^jardiance\b' THEN 800 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^\\bjardiance[0-9\\-_]*' THEN 500 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\bjardiance[0-9\-_]*' THEN 200 ELSE 0 END) >= 200  -- Must meet minimum score threshold
+            ),
+            scored_aggregated AS (
+                SELECT
+                    column_name,
+                    collect_list(individual_value) AS all_matched_values,
+                    SUM(value_score) AS relevance_score
+                FROM matched_data
+                GROUP BY column_name
+            )
+            SELECT
+                column_name,
+                concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+                relevance_score
+            FROM scored_aggregated
+            WHERE relevance_score > 500  -- Only return strong matches
+            ORDER BY relevance_score DESC, column_name
+            LIMIT 7

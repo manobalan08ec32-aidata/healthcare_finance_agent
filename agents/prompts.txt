@@ -1,12 +1,13 @@
- WITH matched_data AS (
+ query = f"""
+            WITH matched_data AS (
                 SELECT
                     column_name,
                     trim(exploded_value) AS individual_value,
-                    (CASE WHEN lower(trim(exploded_value)) = 'jardiance' THEN 1000 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '^jardiance\b' THEN 800 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^\\bjardiance[0-9\\-_]*' THEN 500 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\bjardiance[0-9\-_]*' THEN 200 ELSE 0 END) AS value_score
+                    ({score_calculation}) AS value_score
                 FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
                 LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-                WHERE lower(trim(exploded_value)) RLIKE '(?i)(\\bjardiance[0-9\\-_]*)'
-                AND (CASE WHEN lower(trim(exploded_value)) = 'jardiance' THEN 1000 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '^jardiance\b' THEN 800 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)^\\bjardiance[0-9\\-_]*' THEN 500 ELSE 0 END + CASE WHEN lower(trim(exploded_value)) RLIKE '(?i)\bjardiance[0-9\-_]*' THEN 200 ELSE 0 END) >= 200  -- Must meet minimum score threshold
+                WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+                AND ({score_calculation}) >= 200  -- Must meet minimum score threshold
             ),
             scored_aggregated AS (
                 SELECT
@@ -21,6 +22,7 @@
                 concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
                 relevance_score
             FROM scored_aggregated
-            WHERE relevance_score > 500  -- Only return strong matches
+            WHERE relevance_score >= 500  -- Only return strong matches
             ORDER BY relevance_score DESC, column_name
             LIMIT 7
+            """

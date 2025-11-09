@@ -11,6 +11,26 @@ class LLMNavigationController:
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
     
+    def _calculate_forecast_cycle(self) -> str:
+        """
+        Calculate current forecast cycle based on month:
+        - Feb to May: 2+10
+        - Jun to Aug: 5+7
+        - Sep to Oct: 8+4
+        - Nov to Jan: 9+3
+        """
+        from datetime import datetime
+        current_month = datetime.now().month
+        
+        if 2 <= current_month <= 5:  # February to May
+            return "2+10"
+        elif 6 <= current_month <= 8:  # June to August
+            return "5+7"
+        elif 9 <= current_month <= 11:  # September to October
+            return "8+4"
+        else:  # November (11), December (12), January (1)
+            return "9+3"
+    
     async def process_user_query(self, state: AgentState) -> Dict[str, any]:
         """
         Main entry point: Single-step LLM processing
@@ -40,6 +60,10 @@ class LLMNavigationController:
         previous_question = state.get('rewritten_question', '') 
         history_context = questions_history[-2:] if questions_history else []
         
+        # Calculate current forecast cycle based on current month
+        current_forecast_cycle = self._calculate_forecast_cycle()
+        print(f"📊 Current forecast cycle: {current_forecast_cycle}")
+        
         max_retries = 3
         retry_count = 0
         
@@ -52,19 +76,34 @@ class LLMNavigationController:
                 prompt = self._build_combined_prompt(
                     current_question, 
                     previous_question,
-                    history_context
+                    history_context,
+                    current_forecast_cycle
                 )
                 
-                response = await self.db_client.call_claude_api_endpoint_async([
-                    {"role": "user", "content": prompt}
-                ])
+                response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=3000,
+                    temperature=0.0,  # Deterministic rewriting
+                    top_p=0.1  # Focused sampling
+                )
                 
                 print("LLM Response:", response)
                 
+                # Strip markdown code blocks if present
+                cleaned_response = response.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[7:]  # Remove ```json
+                if cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[3:]  # Remove ```
+                if cleaned_response.endswith("```"):
+                    cleaned_response = cleaned_response[:-3]  # Remove trailing ```
+                cleaned_response = cleaned_response.strip()
+                
                 try:
-                    result = json.loads(response)
+                    result = json.loads(cleaned_response)
                 except json.JSONDecodeError as json_error:
                     print(f"LLM response is not valid JSON: {json_error}")
+                    print(f"Cleaned response: {cleaned_response[:200]}")
                     # Treat as greeting
                     result = {
                         'analysis': {
@@ -73,29 +112,6 @@ class LLMNavigationController:
                             'response_message': response.strip()
                         }
                     }
-                
-                # Print analysis for debugging
-                if 'analysis' in result:
-                    print("="*60)
-                    print("ANALYSIS:")
-                    print(f"  Detected Prefix: {result['analysis'].get('detected_prefix', 'none')}")
-                    print(f"  Clean Question: {result['analysis'].get('clean_question', '')}")
-                    print(f"  Decision: {result['analysis'].get('context_decision', '')}")
-                    print(f"  Reasoning: {result['analysis'].get('reasoning', '')}")
-                    print("="*60)
-                
-                # Print rewrite for debugging
-                if 'rewrite' in result:
-                    print("REWRITE:")
-                    print(f"  Rewritten: {result['rewrite'].get('rewritten_question', '')}")
-                    print(f"  User Message: {result['rewrite'].get('user_message', '')}")
-                    print("="*60)
-                
-                # Print filters for debugging
-                if 'filters' in result:
-                    print("FILTERS:")
-                    print(f"  Extracted: {result['filters'].get('filter_values', [])}")
-                    print("="*60)
                 
                 # Handle non-business questions (greeting, DML, invalid)
                 analysis = result.get('analysis', {})
@@ -199,7 +215,7 @@ class LLMNavigationController:
                     }
     
     def _build_combined_prompt(self, current_question: str, previous_question: str,
-                               history_context: List) -> str:
+                               history_context: List, current_forecast_cycle: str) -> str:
         """
         Combined Prompt: Analyze → Rewrite → Extract in single call
         """
@@ -209,9 +225,22 @@ class LLMNavigationController:
         current_year = datetime.now().year
         
         # Special filters that are important for context inheritance
-        special_filters = ["PBM", "HDP", "Specialty", "Mail", "Retail", "8+4", "5+7", "9+3", "10+2"]
+        special_filters = ["PBM", "HDP", "Specialty", "Mail", "Retail", "8+4", "5+7", "9+3", "10+2", "2+10"]
         
-        prompt = f"""You are a healthcare finance analytics assistant that analyzes questions, rewrites them with proper context, and extracts filter values.
+        prompt = f"""⚠️⚠️⚠️ CRITICAL ROLE - READ THIS FIRST ⚠️⚠️⚠️
+
+You are a QUESTION REWRITER and ANALYZER - NOT an assistant that answers questions.
+Your ONLY job is to:
+1. Analyze the user's question
+2. Rewrite it with proper context
+3. Extract filter values
+
+You do NOT answer business questions. You do NOT provide data or insights.
+You ONLY rewrite questions into a complete format.
+
+Think of yourself as: analyze(question) → rewrite(question) → extract(filters) → JSON output
+
+⚠️ REMEMBER: You are NOT answering the question. You are ONLY rewriting it.
 
 ════════════════════════════════════════════════════════════
 INPUT INFORMATION
@@ -220,6 +249,7 @@ User Input: "{current_question}"
 Previous Question: "{previous_question if previous_question else 'None'}"
 History: {history_context}
 Current Year: {current_year}
+Current Forecast Cycle: {current_forecast_cycle}
 
 Special Context Filters (important for inheritance): {special_filters}
 
@@ -369,14 +399,33 @@ Now use your analysis from Section 1 to rewrite the question.
 
 **CRITICAL: Read your own reasoning - it tells you exactly what to do**
 
+**STEP 1: Apply Forecast Cycle Rules (if applicable)**
+
+**Available cycles:** 2+10, 5+7, 8+4, 9+3 | **Current cycle:** {current_forecast_cycle}
+
+**Rules:**
+1. "forecast" WITHOUT cycle → Add current cycle: "forecast {current_forecast_cycle}"
+2. Cycle pattern (2+10, 5+7, 8+4, 9+3) WITHOUT "forecast" → Prepend "forecast": "forecast [cycle]"
+3. BOTH present → Use as-is
+
+**Examples:**
+- "actuals vs forecast" → "actuals vs forecast {current_forecast_cycle}"
+- "actuals vs 8+4" → "actuals vs forecast 8+4"
+- "actuals vs forecast 5+7" → unchanged
+
+**STEP 2: Build Rewritten Question**
+
 **IF NEW:**
 → Use clean_question components as-is
+→ Apply forecast cycle rules (Step 1)
 → Format professionally: "What is [metric] for [filters] for [time]"
 → If time_is_partial, add current year: "for [time] {current_year}"
-→ user_message: "" (empty string)
+→ user_message: "" (empty string, unless forecast cycle was added)
+→ If forecast cycle added: user_message: "Using current forecast cycle {current_forecast_cycle}"
 
 **IF FOLLOW_UP:**
 → Start with clean_question components
+→ Apply forecast cycle rules (Step 1) to the clean_question
 → For each component that is null/empty/[] in current question:
   - Extract that component from previous_question string
   - Example: "What is revenue for PBM by line of business for July 2025" 
@@ -410,83 +459,70 @@ SECTION 3: EXTRACT FILTER VALUES
 
 **CRITICAL: Extract filter values from the REWRITTEN question (after inheritance)**
 
-**GENERIC EXTRACTION LOGIC:**
+**⚠️ IMPORTANT: Strip attribute suffixes, extract ONLY the actual filter value**
 
-For every word/phrase in the rewritten question, apply these checks in order:
+**EXTRACTION RULES (Apply in order):**
 
-**Step 1: Does it have an attribute label?**
-Attribute labels: carrier, invoice #, invoice number, claim #, claim number, member ID, provider ID, client, account
-→ If YES: EXCLUDE (LLM will handle in SQL)
+1. **Strip Suffixes** → Remove from end: drug(s), medication(s), class(es), category/categories, type(s), group(s), name(s), therapy/therapies
+   - "GLP-1 drug" → Strip "drug" → "GLP-1" ✅
+   - "diabetes class" → Strip "class" → "diabetes" ✅
+   - Exception: If ONLY the suffix word alone → EXCLUDE ❌
 
-**Step 2: Is it a pure number (digits only)?**
-Examples: 2025, 123, 456
-→ If YES: EXCLUDE
+2. **Attribute Prefixes** → Extract value after label (carrier, client, therapy class, line of business, etc.), exclude pure numbers
+   - "carrier MDOVA" → ["MDOVA"] | "invoice # 12345" → EXCLUDE ❌
 
-**Step 3: Is it in the exclusion list?**
-- **Common terms**: PBM, HDP, Home Delivery, SP, Specialty, Mail, Retail, Claim Fee, Claim Cost, Activity Fee
-- **Attribute/Dimension names**: therapy class, line of business, LOB, carrier, geography, region, state, channel, plan type, member type, provider type, facility type, drug class, drug category
-- **Metric modifiers**: unadjusted, adjusted, normalized, raw, calculated, derived, per script, per claim, per member, per capita, average, total, net, gross
-- **Forecast cycles**: 8+4, 5+7, 9+3, 10+2, any pattern like "N+M" (these are part of metric)
-- **Time/Date**: months (January-December), quarters (Q1-Q4), years (2024, 2025), dates, week, month, year
-- **Generic words**: revenue, cost, expense, data, analysis, total, overall, what, is, for, the, by, breakdown, trend, trends, volume, count, script, scripts, claim, claims, compare, versus, vs
-- **Metrics**: revenue, billed amount, claims count, expense, volume, actuals, forecast, script count, claim count, amount
-- **Grouping keywords**: by, breakdown, group, grouped, aggregate, aggregated, across, each, per
-- **Question words**: what, why, how, when, where, who
-→ If in ANY category: EXCLUDE
+3. **Pure Numbers** → EXCLUDE
 
-**Step 4: Does it contain letters?**
-→ If YES and passed above checks: EXTRACT ✅
+4. **Exclusion List** → EXCLUDE if matches (after stripping):
+   - Common: PBM, HDP,Home Delivery, Specialty, Mail, Retail, Claim Fee, Activity Fee
+   - Dimensions: therapy class, line of business, LOB, carrier, geography, region, channel
+   - Modifiers: unadjusted, normalized, per script, average, total, net, gross
+   - Time: months, quarters, years, dates
+   - Generic: revenue, cost, expense, data, what, is, for, by, breakdown, volume, count
+   - Metrics: billed amount, claims count, script count
+   - Keywords: by, breakdown, group, compare, versus
+   - Attribute names: drug, drugs, class, classes, category, categories, type, types
 
-**Multi-word handling:**
-- Keep phrases together: "covid vaccine" → ["covid vaccine"]
-- Multiple terms: "diabetes, asthma" → ["diabetes", "asthma"]
-- Hyphenated: "covid-19" → ["covid-19"]
+5. **Contains Letters?** → If passed above checks, EXTRACT ✅
 
-**FILTER EXTRACTION EXAMPLES:**
+**Multi-word:** "covid vaccine" → ["covid vaccine"] | "diabetes, asthma" → ["diabetes", "asthma"]
 
-Example 1: Simple Filter Extraction
-Rewritten: "What is the revenue for MPDOVA for September {current_year}"
-→ "MPDOVA": no attribute ✓, not pure number ✓, not in exclusion ✓, has letters ✓ → EXTRACT ✅
-→ filter_values: ["MPDOVA"]
+**EXAMPLES:**
 
-Example 2: Attribute Label Exclusion
-Rewritten: "What is revenue for covid vaccines for carrier MDOVA for Q3"
-→ "covid vaccines": passes all checks → EXTRACT ✅
-→ "MDOVA": has attribute label "carrier" → EXCLUDE
-→ filter_values: ["covid vaccines"]
+"What is revenue for GLP-1 drug for July 2025"
+→ "GLP-1 drug" → Strip "drug" → ["GLP-1"] ✅
 
-Example 3: Multiple Exclusions
-Rewritten: "What is unadjusted script count by therapy class for diabetes for PBM for July {current_year}"
-→ "unadjusted": metric modifier → EXCLUDE
-→ "script": generic word → EXCLUDE
-→ "count": generic word → EXCLUDE
-→ "therapy class": attribute name → EXCLUDE
-→ "diabetes": passes all checks → EXTRACT ✅
-→ "PBM": common term → EXCLUDE
-→ filter_values: ["diabetes"]
+"What is revenue for diabetes class for July 2025"
+→ "diabetes class" → Strip "class" → ["diabetes"] ✅
 
-Example 4: All Exclusions (No Filters)
-Rewritten: "What is revenue for PBM by line of business for July {current_year}"
-→ "PBM": common term → EXCLUDE
-→ "line of business": attribute name → EXCLUDE
-→ filter_values: []
+"What is revenue by therapy class for diabetes for July 2025"
+→ "diabetes" → No suffix → ["diabetes"] ✅
 
-Example 5: Drug Names
-Rewritten: "What is revenue for humira for Specialty for Q3 2025"
-→ "humira": passes all checks → EXTRACT ✅
-→ "Specialty": common term → EXCLUDE
-→ filter_values: ["humira"]
+"What is revenue for Humira medication for July 2025"
+→ "Humira medication" → Strip "medication" → ["Humira"] ✅
+
+"What is revenue for MPDOVA for September 2025 for PBM"
+→ ["MPDOVA"] ✅ (PBM excluded)
+
+"What is revenue for covid vaccines for carrier MDOVA for Q3"
+→ ["covid vaccines", "MDOVA"] ✅
+
+"What is claim cost for invoice # 98765 for August 2025"
+→ [] (pure numbers excluded)
+
+"What is actuals vs forecast 8+4 for diabetes for Q3 2025"
+→ filter_values: ["8+4", "diabetes"] (forecast cycles NOT in exclusion list)
 
 ════════════════════════════════════════════════════════════
-OUTPUT FORMAT
+OUTPUT FORMAT - PURE JSON ONLY
 ════════════════════════════════════════════════════════════
+**CRITICAL REQUIREMENTS:**
+1. Return ONLY valid JSON - no markdown, no code blocks, no extra text
+2. Do NOT wrap in ```json or ``` 
+3. Start directly with {{ and end with }}
+4. No explanatory text before or after the JSON
 
-You MUST output valid JSON in this EXACT structure. Use proper JSON formatting with double quotes.
-Do NOT include markdown formatting like ```json.
-Do NOT include any text before or after the JSON.
-
-**IMPORTANT: The components you detect should be explained in the reasoning, not as separate JSON fields.**
-
+**CORRECT FORMAT:**
 {{
     "analysis": {{
         "detected_prefix": "new question|follow-up|validation|none",
@@ -503,32 +539,14 @@ Do NOT include any text before or after the JSON.
         "user_message": "explanation of what was inherited or added, empty string if nothing"
     }},
     "filters": {{
-        "filter_values": ["array", "of", "extracted", "filter", "values"]
+        "filter_values": ["array", "of", "extracted", "filter", "values", "without", "attribute", "labels"]
     }}
 }}
 
-════════════════════════════════════════════════════════════
-OUTPUT FORMAT EXAMPLE
-════════════════════════════════════════════════════════════
-
-Input: "follow-up - show me the expense" | Prev: "What is revenue for PBM by line of business for July 2025"
-{{
-    "analysis": {{
-        "detected_prefix": "follow-up",
-        "clean_question": "show me the expense",
-        "input_type": "business_question",
-        "is_valid_business_question": true,
-        "response_message": "",
-        "context_decision": "FOLLOW_UP",
-        "reasoning": "Prefix 'follow-up' detected. Clean has metric 'expense' only. Previous had filters (PBM), attributes (by line of business), and time (July 2025). Should inherit all three missing components."
-    }},
-    "rewrite": {{
-        "rewritten_question": "What is the expense for PBM by line of business for July 2025",
-        "question_type": "what",
-        "user_message": "I'm using PBM, line of business grouping, and July 2025 from your last question."
-    }},
-    "filters": {{"filter_values": []}}
-}}
+**WRONG FORMAT (DO NOT USE):**
+```json
+{{ ... }}
+```
 
 """
         return prompt

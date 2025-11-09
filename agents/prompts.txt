@@ -1,28 +1,32 @@
- query = f"""
-            WITH matched_data AS (
-                SELECT
-                    column_name,
-                    trim(exploded_value) AS individual_value,
-                    ({score_calculation}) AS value_score
-                FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
-                LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-                WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
-                AND ({score_calculation}) >= 200  -- Must meet minimum score threshold
-            ),
-            scored_aggregated AS (
-                SELECT
-                    column_name,
-                    collect_list(individual_value) AS all_matched_values,
-                    SUM(value_score) AS relevance_score
-                FROM matched_data
-                GROUP BY column_name
-            )
-            SELECT
-                column_name,
-                concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
-                relevance_score
-            FROM scored_aggregated
-            WHERE relevance_score >= 500  -- Only return strong matches
-            ORDER BY relevance_score DESC, column_name
-            LIMIT 7
-            """
+query = f"""
+WITH all_matches AS (
+    SELECT
+        column_name,
+        trim(exploded_value) AS individual_value,
+        ({score_calculation}) AS value_score
+    FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+    LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+    WHERE lower(trim(exploded_value)) RLIKE '(?i)({regex_pattern})'
+),
+matched_data AS (
+    SELECT *
+    FROM all_matches
+    WHERE value_score >= 200  -- Filter on pre-computed score
+),
+scored_aggregated AS (
+    SELECT
+        column_name,
+        collect_list(individual_value) AS all_matched_values,
+        SUM(value_score) AS relevance_score
+    FROM matched_data
+    GROUP BY column_name
+)
+SELECT
+    column_name,
+    concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+    relevance_score
+FROM scored_aggregated
+WHERE relevance_score >= 500
+ORDER BY relevance_score DESC, column_name
+LIMIT 7
+"""

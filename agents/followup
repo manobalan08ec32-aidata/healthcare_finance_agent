@@ -1,185 +1,178 @@
-followup_prompt = f"""
-You are generating intelligent follow-up questions for healthcare finance analysis to help users drill down deeper into their data.
-
-CURRENT CONTEXT:
-Current Question: "{current_question}"
-
-Last 3 questions summary: "{narrative_response_hist}"
-
-USER QUESTION HISTORY (Last 15):
-{recent_user_questions}
-
-DOMAIN SELECTION CONTEXT: {domain_selection}
-
-FORECAST CYCLE CONTEXT RULES:
-Current date context: October 2025 (Month 10)
-
-**When generating forecast-related follow-ups:**
-1. Check if user mentioned a specific cycle in their question (e.g., "8+4", "5+7", "2+10")
-2. Use cycles in this EXACT format in all follow-up questions:
-   - "8+4 Forecast" or "forecast 8+4"
-   - "5+7 Forecast" or "forecast 5+7" 
-   - "2+10 Forecast" or "forecast 2+10"
-
-**Cycle selection logic** (only if user didn't specify):
-- Months 1-4 (Jan-Apr): Use "8+4 Forecast"
-- Months 5-7 (May-Jul): Use "5+7 Forecast"
-- Months 8-12 (Aug-Dec): Use "8+4 Forecast"
-
-**CRITICAL**: Never use technical notations like "FC1", "FC2", "FC3", "forecast_cycle_2", or "forecast_cycle_3". Always use the business-friendly format: "8+4 Forecast", "5+7 Forecast", or "2+10 Forecast".
-
-Examples:
-✓ CORRECT: "Show revenue by LOB for 8+4 Forecast in July 2025"
-✓ CORRECT: "Break down forecast 5+7 expenses by product category"
-✗ WRONG: "Show forecast_cycle_3 revenue" 
-✗ WRONG: "What is FC2 by client"
-
-DATASET METADATA:
-{metadata}
-
-==============================
-CRITICAL RULES - FOLLOW EXACTLY
-==============================
-
-## MANDATORY PRE-CHECK: Product Category Validation
-**Check metadata for product_category dimension:**
-- If NOT found → Skip product category in all follow-ups
-- If found AND user already filtered by it (PBM/HDP/SP in current_question) → Preserve their filter
-- If found AND user did NOT filter by it → MANDATORY inclusion in ALL 3 follow-ups:
-  * Domain "PBM Network" → Add "for PBM" to every question
-  * Domain "Optum Pharmacy" → Add "for Home Delivery and Specialty" or "for HDP and SP" to every question
-
-**Examples:**
-✓ "Show revenue by LOB for PBM in July 2025" (PBM Network)
-✓ "Break down expenses for HDP and SP by client" (Optum Pharmacy)
-✗ "Show revenue by LOB in July 2025" (missing required filter)
-
-# Question Generation Requirements
-
-## Format
-- Use action verbs: "Show", "What", "Break down", "Compare", "List", "Calculate"
-- Be specific and executable - NOT vague like "dig deeper" or "analyze further"
-- Each question should be a clear, runnable query
-
-## STRICT PROHIBITION: No Root Cause or Investigative Questions
-**NEVER suggest questions asking WHY or WHAT CAUSED:**
-- ❌ "What drove the increase in revenue?"
-- ❌ "What caused the decline in scripts?"
-- ❌ "Why did margins compress?"
-- ❌ "What are the drivers of cost variance?"
-- ❌ "What factors contributed to..."
-
-**ONLY suggest direct, executable WHAT questions:**
-- ✓ "What is the revenue by client in July 2025?"
-- ✓ "Break down scripts by product category for Q3"
-- ✓ "Show top 20 LOBs by margin in September"
-- ✓ "Compare revenue for PBM vs prior month"
-
-**Rule: Ask WHAT to show, not WHY it happened. Focus on observable data queries, not causal analysis.**
-
-## Natural Language for Metrics
-- Use functional/business names instead of exact technical metric names
-- Examples:
-  - Instead of "revenue_amt", use "revenue"
-  - Instead of "expense_amt", use "cost" or "expenses"
-  - Instead of "revenue_per_script", use "revenue per script" or "rate"
-  - Instead of "brand_vs_generic_ind", use "brand vs generic"
-- Questions should still be interpretable for SQL generation - use clear business terminology that maps to the underlying metrics
-
-## Time Period Preservation
-- Carefully read `current_question` to identify the time period being analyzed (e.g., "Q3 2024", "last two months", "September 2024", "YTD")
-- Maintain the SAME time period context in all follow-up questions unless there's a specific reason to change it (like YoY comparison)
-- Examples:
-  - If user asked about "Q3 2024", follow-ups should reference "Q3 2024"
-  - If user asked about "last two months", follow-ups should reference "last two months" or the specific months
-  - If user asked about "September 2024", follow-ups should reference "September 2024"
-- When suggesting time comparisons (YoY, MoM, QoQ), make the comparison explicit: "Compare Q3 2024 vs Q3 2023" or "Show September 2024 vs August 2024"
-
-## Forecast Cycle Handling (CRITICAL - ALWAYS APPLY)
-- **Step 1**: Check if current_question contains forecast-related keywords (forecast, projection, projected, future, plan)
-- **Step 2**: If yes, check if user specified a cycle in their question
-  - Look for: "forecast 8+4", "forecast 5+7", "forecast 2+10", "8+4", "cycle 5+7", "cycle 3", "fc1", "fc2", "fc3"
-- **Step 3**: Determine which cycle to use:
-  - If user specified cycle → Use that exact cycle in all follow-ups
-  - If user did NOT specify cycle → Calculate cycle based on current month:
-    - Current month 1 (Jan) → forecast 8+4 [pattern: 0+12]
-    - Current month 2-4 (Feb-Apr) → forecast 2+10 [pattern: 2+10]
-    - Current month 5-7 (May-Jul) → forecast 5+7 [pattern: 5+7]
-    - Current month 8-12 (Aug-Dec) → forecast 8+4 [pattern: 8+4]
-- **Step 4**: Include the determined cycle in EVERY forecast-related follow-up question
-  - ✓ CORRECT: "Show forecast revenue by lob for forecast 8+4 in July 2025"
-  - ✓ CORRECT: "Break down forecast expenses for forecast 5+7 in September 2025"
-  - ✗ WRONG: "Show forecast revenue by client" (missing cycle)
-  - ✗ WRONG: "What is the forecast for next quarter" (missing cycle)
-
-## Investigation Flow
-- Read the `playbook` from metadata's `table_context` to understand recommended investigation sequences
-- Follow the `investigation_flow`, `investigation_priority`, or `recommended_investigation_flow` if present
-- Apply `pattern_recognition` or `pattern_signals` guidance based on patterns detected in `narrative_response_hist`
-- Progress through the investigation logically (don't jump levels randomly)
-
-## Context Awareness
-- Analyze `narrative_response_hist` to understand:
-  - What was discovered (patterns, concentration, variance drivers)
-  - What metrics moved and how (rate up/down, volume up/down, etc.)
-  - Whether results show concentration (top N = X%) or dispersed patterns
-- Use the playbook's analysis sections (revenue_analysis, cost_analysis, volume_analysis, etc.) as guidance
-- Adapt questions based on what the user is investigating (their focus area from history)
-
-## Reference Strategy for Follow-up Questions
-
-**Use Specific Names (ONLY when extractable with clear attribute context)**:
-- Extract actual values from narrative history ONLY if they include the attribute name (column context)
-  - **GOOD**: "Break down the revenue per script for Client MDOVA in July 2025" (narrative mentions "Client MDOVA" - clear column context)
-  - **GOOD**: "What is the performance for Drug MOUNJARO and ELIQUIS in July 2025?" (narrative mentions "Drug MOUNJARO" - clear column context)
-  - **BAD**: "Show me more about MDOVA" (narrative only mentions "MDOVA" without "Client" - unclear which column)
-  - **CRITICAL**: If narrative only contains raw values (like "MDOVA", "Commercial") without attribute prefixes (like "Client MDOVA", "Line of Business Commercial"), DO NOT use them in follow-up questions
-
-**COLUMN MAPPING REQUIREMENTS**:
-- Always reference metadata to ensure column names exist: drug_name, client_name, therapy_class_name, line_of_business, etc.
-- Use business-friendly terms that map to actual columns: "drugs" → drug_name, "clients" → client_name, "therapy classes" → therapy_class_name
-- Include appropriate filter context: "for [metric] in [timeframe]" or "by [dimension] for [timeframe]"
-
-**STRICT AVOIDANCE RULES**:
-- Vague references: "these top 10 drugs", "those clients", "the previous results"
-- Unmappable terms: Don't suggest dimensions/metrics not available in metadata
-- Context-dependent references that require memory of specific previous query results
-- **Isolated values without attribute context**: If narrative says "MDOVA has high revenue" instead of "Client MDOVA has high revenue", don't reference MDOVA in follow-ups
-- **Ambiguous values**: If you cannot determine which column a value belongs to, exclude it from follow-up questions
-
-## Leverage Available Fields
-- Reference `dimensions` from metadata to suggest valid grouping/filtering options
-- Reference `metrics` from metadata to suggest valid measures and derived calculations
-- Use business-friendly dimension names where appropriate (e.g., "client" instead of "client_name", "therapy class" instead of "therapy_class_name", "line of business" instead of "line_of_business")
-- Questions should be natural but still map clearly to the available dimensions and metrics
-
-## Constraints
-- Check `questions_history` - do NOT suggest questions that have already been asked, answered, or are semantically similar
-- Preserve scope: maintain time periods, filters, and dimensional focus from `current_question`
-- Use "top 20" or "bottom 20" for ranking questions (not top 5 or top 10)
-- If playbook suggests pivoting to complementary table, frame the question for that table's context
-- **Product category validation**: Apply MANDATORY PRE-CHECK (see top of CRITICAL RULES section)
-
-## Quality Standards
-- Questions should advance the investigation, not just restate what was asked
-- Suggest the "next logical step" based on investigation flow and what was discovered
-- If concentration found (top few entities = high %), drill into those entities
-- If dispersed pattern found, suggest segment-level or aggregated views
-- Balance between staying in current analysis depth vs advancing to next level
-- Ensure questions are business-friendly and natural-sounding while remaining precise enough for SQL generation
-
-==============================
-RESPONSE FORMAT
-==============================
-- Generate only 3 follow up questions strictly
-- The response MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. 
-- The response MUST not start with ```json and end with ```.
-
-{{
-  "followup_questions": [
-    "What is the [metric] by [attribute] for [context]?", 
-    "Break down the [metric] by [attribute] for [context]?", 
-    "Show me the [metric] by [attribute] for [context]?"
-  ]
-}}
-"""
+def render_historical_session_by_id(session_id: str):
+    """Render all records for a historical session in chronological order.
+    
+    Args:
+        session_id: The session ID to load all records for
+    """
+    try:
+        print(f"🎯 USER ACTION: Loading historical session {session_id}")
+        
+        # Check if we already have this session cached to avoid refetching
+        cache_key = f"session_records_{session_id}"
+        if cache_key in st.session_state:
+            print(f"📦 Using cached records for session {session_id}")
+            records = st.session_state[cache_key]
+        else:
+            print(f"🔄 Fetching records from database for session {session_id}")
+            records = asyncio.run(_fetch_session_records(session_id))
+            # Cache the records to avoid refetching
+            st.session_state[cache_key] = records
+        
+        if not records:
+            add_assistant_message(f"No records found for session: {session_id}", message_type="standard")
+            return
+        
+        print(f"📚 Rendering {len(records)} records for session: {session_id}")
+        
+        # Process each record in chronological order (already ordered by insert_ts ASC)
+        for i, record in enumerate(records):
+            print(f"🔍 Processing record {i+1}: type={type(record)}")
+            
+            if isinstance(record, dict):
+                user_question = record.get('user_question', f'Question {i+1}')
+                state_info_json = record.get('state_info', '')
+                insert_ts = record.get('insert_ts', '')
+            elif isinstance(record, str):
+                # If record is a string, try to parse it as JSON
+                try:
+                    record_dict = json.loads(record)
+                    user_question = record_dict.get('user_question', f'Question {i+1}')
+                    state_info_json = record_dict.get('state_info', '')
+                    insert_ts = record_dict.get('insert_ts', '')
+                except json.JSONDecodeError:
+                    print(f"⚠️ Could not parse record as JSON: {record[:100]}...")
+                    continue
+            else:
+                print(f"⚠️ Skipping unexpected record type {type(record)}: {record}")
+                continue
+            
+            print(f"  Processing record {i+1}: {user_question[:50]}... ({insert_ts})")
+            
+            # Add user message
+            st.session_state.messages.append({
+                "role": "user",
+                "content": user_question,
+                "message_type": "historical",
+                "timestamp": insert_ts,
+                "historical": True  # Mark as historical message
+            })
+            
+            # Handle the assistant response
+            if state_info_json and state_info_json.strip():
+                try:
+                    # Clean up the JSON string - handle different storage formats
+                    cleaned_json = state_info_json.strip()
+                    
+                    print(f"    🔍 Raw JSON first 100 chars: {cleaned_json[:100]}...")
+                    
+                    # Case 1: Triple quoted strings ("""{"json"}""")
+                    if cleaned_json.startswith('"""') and cleaned_json.endswith('"""'):
+                        cleaned_json = cleaned_json[3:-3]
+                        print("    🔄 Removed triple quotes")
+                    
+                    # Case 2: Double quoted JSON strings ("{\"key\":\"value\"}")
+                    elif cleaned_json.startswith('"') and cleaned_json.endswith('"'):
+                        # This is a JSON string stored as a quoted string
+                        try:
+                            # First parse: removes outer quotes and unescapes \" to ", \\n to actual \n
+                            intermediate = json.loads(cleaned_json)
+                            print("    🔄 First parse: extracted JSON string")
+                            
+                            # If intermediate is a string, we need to clean it before parsing as JSON
+                            if isinstance(intermediate, str):
+                                # The intermediate string contains JSON-like text but may have unescaped quotes
+                                # Strategy: Try multiple approaches in order
+                                import re
+                                import ast
+                                
+                                # Approach 1: Try parsing as-is (might work for simple cases)
+                                try:
+                                    cleaned_json = json.loads(intermediate)
+                                    print("    ✅ Second parse succeeded as-is")
+                                except json.JSONDecodeError as e1:
+                                    print(f"    🔄 Direct parse failed: {e1}")
+                                    
+                                    # Approach 2: Use ast.literal_eval after converting to Python dict syntax
+                                    try:
+                                        # Replace JSON booleans with Python booleans
+                                        intermediate_py = intermediate.replace('true', 'True').replace('false', 'False').replace('null', 'None')
+                                        cleaned_json = ast.literal_eval(intermediate_py)
+                                        print("    ✅ Second parse succeeded with ast.literal_eval")
+                                    except (ValueError, SyntaxError) as e2:
+                                        print(f"    🔄 ast.literal_eval failed: {e2}")
+                                        
+                                        # Approach 3: Properly escape newlines and control characters for JSON
+                                        try:
+                                            # Replace actual newline/tab/carriage return with JSON escape sequences
+                                            intermediate_clean = intermediate.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                                            # Also handle any other control characters
+                                            intermediate_clean = re.sub(r'[\x00-\x08\x0b-\x1f]', lambda m: f'\\u{ord(m.group()):04x}', intermediate_clean)
+                                            cleaned_json = json.loads(intermediate_clean)
+                                            print("    ✅ Second parse succeeded after newline escape")
+                                        except json.JSONDecodeError as e3:
+                                            print(f"    ❌ All parsing attempts failed")
+                                            error_pos = getattr(e3, 'pos', 0)
+                                            print(f"    📝 Problematic area around char {error_pos}: '{intermediate[max(0, error_pos-30):error_pos+30]}'")
+                                            # Create error result with partial data
+                                            cleaned_json = {
+                                                "error": f"JSON parse error: {str(e3)}",
+                                                "title": user_question,
+                                                "narrative": "Error parsing stored data - please contact support",
+                                                "sql_query": intermediate[:500] if len(intermediate) > 500 else intermediate
+                                            }
+                            else:
+                                # Already a dict after first parse
+                                cleaned_json = intermediate
+                                print("    ✅ First parse returned dict directly")
+                                
+                        except json.JSONDecodeError as e:
+                            print(f"    ❌ First parse failed: {e}")
+                            cleaned_json = {
+                                "error": f"JSON parse error: {str(e)}",
+                                "title": user_question,
+                                "narrative": "Error parsing stored data"
+                            }
+                    
+                    print(f"    🔍 Cleaned JSON preview: {str(cleaned_json)[:100]}...")
+                    
+                    # At this point, cleaned_json should be a dict (either parsed or error dict)
+                    if isinstance(cleaned_json, dict):
+                        sql_result = cleaned_json
+                        print(f"    ✅ Using parsed JSON object")
+                    else:
+                        print(f"    ❌ Unexpected type: {type(cleaned_json)}")
+                        sql_result = {
+                            "error": "Unexpected data type after parsing",
+                            "title": user_question,
+                            "narrative": "Error processing stored data"
+                        }
+                    
+                    # Add assistant message for the SQL result
+                    message = {
+                        "role": "assistant",
+                        "content": "",
+                        "message_type": "sql_result",
+                        "timestamp": insert_ts,
+                        "sql_result": sql_result,
+                        "rewritten_question": user_question,
+                        "historical": True  # Mark as historical message
+                    }
+                    st.session_state.messages.append(message)
+                    print(f"    ✅ Added SQL result for record {i+1}")
+                    
+                except json.JSONDecodeError as e:
+                    print(f"    ❌ JSON parse error for record {i+1}: {e}")
+                    print(f"    🔍 Raw JSON: {state_info_json[:200]}...")
+                    add_assistant_message(f"Data parsing error for: {user_question}", message_type="standard")
+                    
+            else:
+                # No state_info available
+                add_assistant_message(f"Historical response (limited data): {user_question}", message_type="standard")
+                print(f"    ⚠️ No state_info for record {i+1}")
+        
+        print(f"✅ Completed rendering session {session_id} with {len(records)} records")
+        
+    except Exception as e:
+        st.error(f"Error loading historical session {session_id}: {e}")
+        print(f"❌ Error rendering historical session {session_id}: {e}")
+        add_assistant_message(f"Error loading session: {session_id}", message_type="standard")

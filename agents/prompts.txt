@@ -1,189 +1,10 @@
-def render_historical_session_by_id(session_id: str):
-    """Render all records for a historical session in chronological order.
-    
-    Args:
-        session_id: The session ID to load all records for
-    """
-    try:
-        print(f"🎯 USER ACTION: Loading historical session {session_id}")
-        
-        # Check if we already have this session cached to avoid refetching
-        cache_key = f"session_records_{session_id}"
-        if cache_key in st.session_state:
-            print(f"📦 Using cached records for session {session_id}")
-            records = st.session_state[cache_key]
-        else:
-            print(f"🔄 Fetching records from database for session {session_id}")
-            records = asyncio.run(_fetch_session_records(session_id))
-            # Cache the records to avoid refetching
-            st.session_state[cache_key] = records
-        
-        if not records:
-            add_assistant_message(f"No records found for session: {session_id}", message_type="standard")
-            return
-        
-        print(f"📚 Rendering {len(records)} records for session: {session_id}")
-        
-        # Process each record in chronological order (already ordered by insert_ts ASC)
-        for i, record in enumerate(records):
-            print(f"🔍 Processing record {i+1}: type={type(record)}")
-            
-            if isinstance(record, dict):
-                user_question = record.get('user_question', f'Question {i+1}')
-                state_info_json = record.get('state_info', '')
-                insert_ts = record.get('insert_ts', '')
-            elif isinstance(record, str):
-                # If record is a string, try to parse it as JSON
-                try:
-                    record_dict = json.loads(record)
-                    user_question = record_dict.get('user_question', f'Question {i+1}')
-                    state_info_json = record_dict.get('state_info', '')
-                    insert_ts = record_dict.get('insert_ts', '')
-                except json.JSONDecodeError:
-                    print(f"⚠️ Could not parse record as JSON: {record[:100]}...")
-                    continue
-            else:
-                print(f"⚠️ Skipping unexpected record type {type(record)}: {record}")
-                continue
-            
-            print(f"  Processing record {i+1}: {user_question[:50]}... ({insert_ts})")
-            
-            # Add user message
-            st.session_state.messages.append({
-                "role": "user",
-                "content": user_question,
-                "message_type": "historical",
-                "timestamp": insert_ts,
-                "historical": True  # Mark as historical message
-            })
-            
-            # Handle the assistant response
-            if state_info_json and state_info_json.strip():
-                try:
-                    # Clean up the JSON string - handle different storage formats
-                    cleaned_json = state_info_json.strip()
-                    
-                    print(f"    🔍 Raw JSON first 100 chars: {cleaned_json[:100]}...")
-                    
-                    # Case 1: Triple quoted strings ("""{"json"}""")
-                    if cleaned_json.startswith('"""') and cleaned_json.endswith('"""'):
-                        cleaned_json = cleaned_json[3:-3]
-                        print("    🔄 Removed triple quotes")
-                    
-                    # Case 2: Double quoted JSON strings ("{\"key\":\"value\"}")
-                    elif cleaned_json.startswith('"') and cleaned_json.endswith('"'):
-                        # This is a JSON string stored as a quoted string
-                        try:
-                            # First parse: removes outer quotes and unescapes \" to ", \\n to actual \n
-                            intermediate = json.loads(cleaned_json)
-                            print("    🔄 First parse: extracted JSON string")
-                            
-                            # If intermediate is a string, we need to clean it before parsing as JSON
-                            if isinstance(intermediate, str):
-                                # The intermediate string contains JSON-like text but may have unescaped quotes
-                                # Strategy: Try multiple approaches in order
-                                import re
-                                import ast
-                                
-                                # Approach 1: Try parsing as-is (might work for simple cases)
-                                try:
-                                    cleaned_json = json.loads(intermediate)
-                                    print("    ✅ Second parse succeeded as-is")
-                                except json.JSONDecodeError as e1:
-                                    print(f"    🔄 Direct parse failed: {e1}")
-                                    
-                                    # Approach 2: Use ast.literal_eval after converting to Python dict syntax
-                                    try:
-                                        # Replace JSON booleans with Python booleans
-                                        intermediate_py = intermediate.replace('true', 'True').replace('false', 'False').replace('null', 'None')
-                                        cleaned_json = ast.literal_eval(intermediate_py)
-                                        print("    ✅ Second parse succeeded with ast.literal_eval")
-                                    except (ValueError, SyntaxError) as e2:
-                                        print(f"    🔄 ast.literal_eval failed: {e2}")
-                                        
-                                        # Approach 3: Escape all control characters and try again
-                                        try:
-                                            intermediate_clean = re.sub(r'[\x00-\x1f]', lambda m: '\\n' if ord(m.group()) == 10 else f'\\u{ord(m.group()):04x}', intermediate)
-                                            cleaned_json = json.loads(intermediate_clean)
-                                            print("    ✅ Second parse succeeded after control char cleanup")
-                                        except json.JSONDecodeError as e3:
-                                            print(f"    ❌ All parsing attempts failed")
-                                            error_pos = getattr(e3, 'pos', 0)
-                                            print(f"    📝 Problematic area around char {error_pos}: '{intermediate[max(0, error_pos-30):error_pos+30]}'")
-                                            # Create error result with partial data
-                                            cleaned_json = {
-                                                "error": f"JSON parse error: {str(e3)}",
-                                                "title": user_question,
-                                                "narrative": "Error parsing stored data - please contact support",
-                                                "sql_query": intermediate[:500] if len(intermediate) > 500 else intermediate
-                                            }
-                            else:
-                                # Already a dict after first parse
-                                cleaned_json = intermediate
-                                print("    ✅ First parse returned dict directly")
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"    ❌ First parse failed: {e}")
-                            cleaned_json = {
-                                "error": f"JSON parse error: {str(e)}",
-                                "title": user_question,
-                                "narrative": "Error parsing stored data"
-                            }
-                    
-                    print(f"    🔍 Cleaned JSON preview: {str(cleaned_json)[:100]}...")
-                    
-                    # At this point, cleaned_json should be a dict (either parsed or error dict)
-                    if isinstance(cleaned_json, dict):
-                        sql_result = cleaned_json
-                        print(f"    ✅ Using parsed JSON object")
-                    else:
-                        print(f"    ❌ Unexpected type: {type(cleaned_json)}")
-                        sql_result = {
-                            "error": "Unexpected data type after parsing",
-                            "title": user_question,
-                            "narrative": "Error processing stored data"
-                        }
-                    
-                    # Add assistant message for the SQL result
-                    message = {
-                        "role": "assistant",
-                        "content": "",
-                        "message_type": "sql_result",
-                        "timestamp": insert_ts,
-                        "sql_result": sql_result,
-                        "rewritten_question": user_question,
-                        "historical": True  # Mark as historical message
-                    }
-                    st.session_state.messages.append(message)
-                    print(f"    ✅ Added SQL result for record {i+1}")
-                    
-                except json.JSONDecodeError as e:
-                    print(f"    ❌ JSON parse error for record {i+1}: {e}")
-                    print(f"    🔍 Raw JSON: {state_info_json[:200]}...")
-                    add_assistant_message(f"Data parsing error for: {user_question}", message_type="standard")
-                    
-            else:
-                # No state_info available
-                add_assistant_message(f"Historical response (limited data): {user_question}", message_type="standard")
-                print(f"    ⚠️ No state_info for record {i+1}")
-        
-        print(f"✅ Completed rendering session {session_id} with {len(records)} records")
-        
-    except Exception as e:
-        st.error(f"Error loading historical session {session_id}: {e}")
-        print(f"❌ Error rendering historical session {session_id}: {e}")
-        add_assistant_message(f"Error loading session: {session_id}", message_type="standard")
-
-
-
-{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH q3_2024 AS (\n    SELECT \n        client_id,\n        client_name,\n        SUM(revenue_amt) AS revenue_2024\n    FROM prd_optumrx_orxfdmprdsa.rag.pbm_claims\n    WHERE UPPER(drug_name) = UPPER(\"WEGOVY\") \n        AND quarter = \"Q3\" \n        AND year = 2024 \n        AND claim_status_code IN (\"P\", \"X\")\n        AND UPPER(line_of_business) = UPPER(\"External\")\n    GROUP BY client_id, client_name\n),\nq3_2025 AS (\n    SELECT \n        client_id,\n        client_name,\n        SUM(revenue_amt) AS revenue_2025\n    FROM prd_optumrx_orxfdmprdsa.rag.pbm_claims\n    WHERE UPPER(drug_name) = UPPER(\"WEGOVY\") \n        AND quarter = \"Q3\" \n        AND year = 2025 \n        AND claim_status_code IN (\"P\", \"X\")\n        AND UPPER(line_of_business) = UPPER(\"External\")\n    GROUP BY client_id, client_name\n)\nSELECT \n    COALESCE(q24.client_id, q25.client_id) AS client_id,\n    COALESCE(q24.client_name, q25.client_name) AS client_name,\n    COALESCE(q24.revenue_2024, 0) AS q3_2024_revenue_amount,\n    COALESCE(q25.revenue_2025, 0) AS q3_2025_revenue_amount,\n    ROUND(COALESCE(q25.revenue_2025, 0) - COALESCE(q24.revenue_2024, 0), 0) AS revenue_change_amount,\n    ROUND(\n        CASE \n            WHEN COALESCE(q24.revenue_2024, 0) > 0 \n            THEN ((COALESCE(q25.revenue_2025, 0) - COALESCE(q24.revenue_2024, 0)) / q24.revenue_2024) * 100\n            ELSE NULL \n        END, 3\n    ) AS revenue_change_percent\nFROM q3_2024 q24\nFULL OUTER JOIN q3_2025 q25 ON q24.client_id = q25.client_id\nWHERE COALESCE(q24.client_id, q25.client_id) NOT IN (\"-\", \"BL\")\nORDER BY revenue_change_amount ASC\", \"query_results\": [{\"client_id\": \"57760\", \"client_name\": \"BCBSM\", \"q3_2024_revenue_amount\": \"4.216057991000008E7\", \"q3_2025_revenue_amount\": \"9862664.669999996\", \"revenue_change_amount\": \"-3.2297915E7\", \"revenue_change_percent\": \"-76.607\"}, {\"client_id\": \"58132\", \"client_name\": \"Independence BC (IBC) - Commercial/HIX\", \"q3_2024_revenue_amount\": \"623130.9900000001\", \"q3_2025_revenue_amount\": \"4778404.740000002\", \"revenue_change_amount\": \"4155274.0\", \"revenue_change_percent\": \"666.838\"}], \"narrative\": \"• Client BCBSM had the largest revenue decline at -32.3M (-76.6%), dropping from 42.2M to 9.9M\n• Client HARVARD PILGRIM experienced near-total revenue loss at -20.0M (-98.6%), falling from 20.3M to 293K\n• Client Point32Health - Commercial/HIX lost -14.9M (-99.6%), declining from 15.0M to 62K\n• 89 clients had complete revenue elimination (100% decline), including Norton Healthcare Inc, MGM Resorts, and multiple IUOE locals\n• Top 10 declining clients collectively lost -142.8M in Drug Wegovy revenue, representing massive market share erosion\", \"summary\": \"\", \"execution_attempts\": 1, \"row_count\": 870, \"used_followup\": false, \"user_question\": \"What clients in External LOB contributed to the revenue decline in drug name Wegovy between Q3 2025 vs Q3 2024?\", \"title\": \"What clients in External LOB contributed to the revenue decline in drug name Wegovy between Q3 2025 vs Q3 2024?\"}
-
-
-{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH drug_revenue AS (\n    SELECT \n        drug_name,\n        SUM(revenue_amt) AS total_revenue_amount,\n        SUM(adjusted_script_count) AS total_script_count\n    FROM prd_optumrx_orxfdmprdsa.rag.pbm_claims\n    WHERE year = 2025 \n        AND month = 8\n        AND claim_status_code IN ('P', 'X')\n        AND drug_name IS NOT NULL\n        AND drug_name NOT IN ('-', 'BL', '')\n    GROUP BY drug_name\n),\noverall_total AS (\n    SELECT SUM(total_revenue_amount) AS overall_revenue_total\n    FROM drug_revenue\n)\nSELECT \n    drug_name,\n    ROUND(total_revenue_amount, 0) AS total_revenue_amount,\n    total_script_count,\n    (SELECT overall_revenue_total FROM overall_total) AS overall_revenue_total,\n    ROUND((total_revenue_amount / (SELECT overall_revenue_total FROM overall_total)) * 100, 3) AS revenue_percent_contribution\nFROM drug_revenue\nORDER BY total_revenue_amount DESC\nLIMIT 10\", \"query_results\": [{\"drug_name\": \"MOUNJARO\", \"total_revenue_amount\": \"7.22590562E8\", \"total_script_count\": \"137373\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"6.895\"}, {\"drug_name\": \"OZEMPIC\", \"total_revenue_amount\": \"5.7443346E8\", \"total_script_count\": \"153060\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"5.482\"}, {\"drug_name\": \"ELIQUIS\", \"total_revenue_amount\": \"5.50239698E8\", \"total_script_count\": \"551910\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"5.251\"}, {\"drug_name\": \"JARDIANCE\", \"total_revenue_amount\": \"4.38549436E8\", \"total_script_count\": \"491901\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"4.185\"}, {\"drug_name\": \"ZEPBOUND\", \"total_revenue_amount\": \"2.31832631E8\", \"total_script_count\": \"9090\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"2.212\"}, {\"drug_name\": \"BIKTARVY\", \"total_revenue_amount\": \"1.97716509E8\", \"total_script_count\": \"5355\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"1.887\"}, {\"drug_name\": \"FARXIGA\", \"total_revenue_amount\": \"1.89074065E8\", \"total_script_count\": \"199356\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"1.804\"}, {\"drug_name\": \"TRELEGY ELLIPTA\", \"total_revenue_amount\": \"1.73245759E8\", \"total_script_count\": \"77985\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"1.653\"}, {\"drug_name\": \"TRULICITY\", \"total_revenue_amount\": \"1.62262631E8\", \"total_script_count\": \"52272\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"1.548\"}, {\"drug_name\": \"XARELTO\", \"total_revenue_amount\": \"1.55154069E8\", \"total_script_count\": \"176268\", \"overall_revenue_total\": \"1.0479344323240211E10\", \"revenue_percent_contribution\": \"1.481\"}], \"narrative\": \"• Drug MOUNJARO leads with $722.6M revenue (6.9% of total), despite lower script count than OZEMPIC\n• Diabetes/weight management drugs dominate top 5: MOUNJARO, OZEMPIC, JARDIANCE, ZEPBOUND account for 18.7% of total revenue\n• Drug ZEPBOUND shows highest revenue per script at $25.5K, significantly above MOUNJARO's $5.3K\n• Anticoagulants ELIQUIS and XARELTO generate substantial volume with 551K and 176K scripts respectively\n• Top 10 drugs represent 32.4% of $10.5B total August revenue, showing concentrated market performance\", \"summary\": \"\", \"execution_attempts\": 1, \"row_count\": 10, \"used_followup\": false, \"user_question\": \"What are the top 10 drugs by revenue for August 2025\", \"title\": \"What are the top 10 drugs by revenue for August 2025\"}
-
-
-
- Processing record 1: type=<class 'dict'>
+ Direct list response with 2 records
+  Record 1: What clients in External LOB contributed to the re... - 2025-11-10T16:49:36.707Z
+    State_info present: True
+  Record 2: What are the top 10 drugs by revenue for August 20... - 2025-11-10T16:51:24.757Z
+    State_info present: True
+📚 Rendering 2 records for session: 1effde91-d2fd-425c-89d5-cfcc96c325be
+🔍 Processing record 1: type=<class 'dict'>
   Processing record 1: What clients in External LOB contributed to the re... (2025-11-10T16:49:36.707Z)
     🔍 Raw JSON first 100 chars: "{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH q3_2024 AS (\n    SELECT \n ...
     🔄 First parse: extracted JSON string
@@ -194,10 +15,15 @@ def render_historical_session_by_id(session_id: str):
         AND quarter = "Q3"'
     🔍 Cleaned JSON preview: {'error': "JSON parse error: Expecting ',' delimiter: line 1 column 261 (char 260)", 'title': 'What ...
     ✅ Using parsed JSON object
-
-
-
-
-
-
-
+    ✅ Added SQL result for record 1
+🔍 Processing record 2: type=<class 'dict'>
+  Processing record 2: What are the top 10 drugs by revenue for August 20... (2025-11-10T16:51:24.757Z)
+    🔍 Raw JSON first 100 chars: "{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH drug_revenue AS (\n    SELEC...
+    🔄 First parse: extracted JSON string
+    🔄 Direct parse failed: Invalid control character at: line 1 column 82 (char 81)
+    🔄 ast.literal_eval failed: unterminated string literal (detected at line 1) (<unknown>, line 1)
+    ✅ Second parse succeeded after newline escape
+    🔍 Cleaned JSON preview: {'success': True, 'multiple_results': False, 'sql_query': "WITH drug_revenue AS (\n    SELECT \n    ...
+    ✅ Using parsed JSON object
+    ✅ Added SQL result for record 2
+✅ Completed rendering session 1effde91-d2fd-425c-89d5-cfcc96c325be with 2 records

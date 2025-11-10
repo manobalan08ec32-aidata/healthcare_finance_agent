@@ -1,29 +1,32 @@
- Direct list response with 2 records
-  Record 1: What clients in External LOB contributed to the re... - 2025-11-10T16:49:36.707Z
-    State_info present: True
-  Record 2: What are the top 10 drugs by revenue for August 20... - 2025-11-10T16:51:24.757Z
-    State_info present: True
-📚 Rendering 2 records for session: 1effde91-d2fd-425c-89d5-cfcc96c325be
-🔍 Processing record 1: type=<class 'dict'>
-  Processing record 1: What clients in External LOB contributed to the re... (2025-11-10T16:49:36.707Z)
-    🔍 Raw JSON first 100 chars: "{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH q3_2024 AS (\n    SELECT \n ...
-    🔄 First parse: extracted JSON string
-    🔄 Direct parse failed: Invalid control character at: line 1 column 77 (char 76)
-    🔄 ast.literal_eval failed: unterminated string literal (detected at line 1) (<unknown>, line 1)
-    ❌ All parsing attempts failed
-    📝 Problematic area around char 260: 'PER(drug_name) = UPPER("WEGOVY")
-        AND quarter = "Q3"'
-    🔍 Cleaned JSON preview: {'error': "JSON parse error: Expecting ',' delimiter: line 1 column 261 (char 260)", 'title': 'What ...
-    ✅ Using parsed JSON object
-    ✅ Added SQL result for record 1
-🔍 Processing record 2: type=<class 'dict'>
-  Processing record 2: What are the top 10 drugs by revenue for August 20... (2025-11-10T16:51:24.757Z)
-    🔍 Raw JSON first 100 chars: "{\"success\": true, \"multiple_results\": false, \"sql_query\": \"WITH drug_revenue AS (\n    SELEC...
-    🔄 First parse: extracted JSON string
-    🔄 Direct parse failed: Invalid control character at: line 1 column 82 (char 81)
-    🔄 ast.literal_eval failed: unterminated string literal (detected at line 1) (<unknown>, line 1)
-    ✅ Second parse succeeded after newline escape
-    🔍 Cleaned JSON preview: {'success': True, 'multiple_results': False, 'sql_query': "WITH drug_revenue AS (\n    SELECT \n    ...
-    ✅ Using parsed JSON object
-    ✅ Added SQL result for record 2
-✅ Completed rendering session 1effde91-d2fd-425c-89d5-cfcc96c325be with 2 records
+# Approach 3: Properly escape newlines, quotes, and control characters for JSON
+try:
+    # First escape backslashes, then quotes, then newlines/tabs/returns
+    intermediate_clean = intermediate.replace('\\', '\\\\')  # Escape backslashes first
+    intermediate_clean = intermediate_clean.replace('"', '\\"')  # Escape double quotes
+    intermediate_clean = intermediate_clean.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+    # Also handle any other control characters
+    intermediate_clean = re.sub(r'[\x00-\x08\x0b-\x1f]', lambda m: f'\\u{ord(m.group()):04x}', intermediate_clean)
+    cleaned_json = json.loads(f'"{intermediate_clean}"')  # Wrap in quotes to parse as JSON string first
+    
+    # Now parse the result as JSON object
+    if isinstance(cleaned_json, str):
+        cleaned_json = json.loads(cleaned_json)
+    print("    ✅ Second parse succeeded after full escape")
+except json.JSONDecodeError as e3:
+    print(f"    ❌ All parsing attempts failed: {e3}")
+    error_pos = getattr(e3, 'pos', 0)
+    print(f"    📝 Problematic area around char {error_pos}: '{intermediate[max(0, error_pos-30):error_pos+30]}'")
+    # Create error result with partial data
+    cleaned_json = {
+        "error": f"JSON parse error: {str(e3)}",
+        "title": user_question,
+        "narrative": "Error parsing stored data - please contact support",
+        "sql_query": intermediate[:500] if len(intermediate) > 500 else intermediate
+    }
+except Exception as e3:
+    print(f"    ❌ Unexpected error in Approach 3: {e3}")
+    cleaned_json = {
+        "error": f"Parse error: {str(e3)}",
+        "title": user_question,
+        "narrative": "Error parsing stored data - please contact support"
+    }

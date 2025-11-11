@@ -1,439 +1,129 @@
-thrpc_class_nm
-GLP-1 Anti-Obesity Agents
-GLP-1 Receptor Agonists
-
-user_question
-What is volume and revenue for GLP-1s by drug name between Q3 2025 and Q3 2024
-Compare PBM revenue for Q3 2025 vs Q3 2024
-What is PBM revenue by month Jan - Sep, 2025
-What is volume and revenue for GLP-1s for PBM split between obesity versus diabetes for Q3 2025 vs Q3 2024
-What is volume and revenue for GLP-1s by drug name for PBM for Q3 2025 vs Q3 2024
-What is the volume and revenue for GLP-1s by drug name for PBM for Q3 2025 vs Q3 2024
-What is the volume and revenue for GLP-1s by drug name for PBM for Q3 2025
-Compare volume and rate for GLP-1s for Q3 2025 vs Q3 2024
-What is rate/script for GLP-1s by drug name for Jan-Sept 2025
-What is volume and revenue for GLP-1 by drug name for April to June 2025
-What is the volume and revenue for Thrombolytic Enzymes for PBM by drug name for April to June 2025
-What therapies contributed to rate increase for PBM from April to June 2025?
-What is revenue per adjusted scripts for PBM by month from Jan through Sept 2025
-What is the revenue per script for PBM by month from Jan through Sept 2025
-What is PBM revenue from Jan thru Sept 2025
-What is claim fee for PBM revenue for September 2025
-What is actuals to forecast for PBM revenue for September 2025
-What is revenue for MPDOVA carrier for PBM revenue
-What is network product revenue for Jan-Sept 2025
-What is monthly revenue from Jan through Sep 2025 for network revenue
-Compare September 2025 PBM network revenue versus Jan through August 2025
-What therapies are causing higher network revenue rate per script when comparing August 2025 vs September 2025
-What is the revenue per script for Jan through Sept 2025
-Compare September 2025 vs August 2025 revenue per script
-Filter for volumes greater than 10,000 for revenue per script trends for October 2025 vs September 2025 by product category
-What therapies are causing higher network revenue rate per script when comparing October 2025 vs September 2025
-Show the revenue per script trends for October 2025 vs September 2025 by product category to understand the rate component of the revenue decline
-Compare October 2025 PBM results to September 2025 PBM results
-Compare October PBM results to September PBM results
-What is the 8+4 forecast data availability issue for October PBM results - are all forecast values showing as zero across all metrics
-How is October PBM results looking as of today versus 8+4 forecast?
-What was state membership for CA for September 2025
-Compare PBM services revenue to 5+7 forecast for September 2025
-Compare PBM services revenue to forecast for September 2025
-What was the PBM services revenue for September 2025
-What was membership for California for September 2025
-What was membership for September 2025
-What was the approved amount paid for MDOVA
-Show the top 20 clients by client due amount for September 2025
-What was the client due amount for September 2025?
-What was client due amount for October 2025?
-How much was postage fees for Invoice 1637630
-How much was postage fees for activity code postage
-How much was postage fees for invoice 1637630
-What was the total activity fees for invoice 1637630
-When product code description contains EOB, summarize total charges for invoice # 1553027
-When product code description contains EOB, summarize total charges for invoice # 1553027
-Break down activity fee charges by activity code for invoice # 1553027
-What was activity fee charges for invoice # 1553027
-For ORCL_PROD_DESC RX CLAIM FEE, show top 25 clients for total billed amount in 2025 and show each month
-What is the PROD565 trend for Jan-Sept 2025
-Break down the 2025 total billing by product code
-What was total billing for 2025 by month
-What is the billed amount for activity code with EOB for 2025
-How much billed for EOB fees in 2025
-What are the activity fee charges by client for invoice # 1553027
-What was activity fee charges for invoice # 1553027
-Break down the monthly claim billing trends by line of business from January through September 2025
-What trends in claim billing from January 2025 through September 2025?
-What is the breakdown of PBM billed amounts by revenue source type to see the mix of claim fees, claim costs, and activity fees for the top 20 clients by billed amounts within the PBM line of business
-Show the top 20 clients by billed amounts within the PBM line of business
-What was billed in September 2025 for External Line of Business
-What was invoiced for carrier AZM in 2025, show invoice number and billed amounts
-Compare the claim cost per product code for invoice 1639535's retail vs specialty prescription claims
-Show the breakdown of invoice 1639535's $338.3M claim cost by product code
-What is the breakdown of the $343.4M billed amount for invoice 1639535 by revenue source type?
-What was the billed amount for invoice 1639535
-What was the activity fee for September 2025 by line of business
-What were the claim fees for vaccine only claims
-What was the claim fee for carrier MPDOVA for Sept 2025
-What was the breakdown of claim cost vs activity fee vs claim fee for MPDOVA in Sept 2025?
-What was claim cost vs activity fee for MPDOVA for Sept 2025
-What was claim billed amount for carrier MPDOVA for Sept 2025
-Are there new script activity in Oct 2025 for clients that previously had no activity Aug 2025 and prior?
-What is the PBM membership by month in 2025
-What is the membership by month in 2025
-What was membership for September 2025 vs January 2025
-What is the network margin for Sept 2025 in total
-What are the top 20 clients by vaccine volume change for Jan-Sept 2025 vs 2024
-Compare the vaccine volume decline by LOB for Jan-Sept 2025 vs 2024
-Break down the vaccine volume decline by client type for Jan-Sept 2025 vs 2024
-What are the top 20 specific vaccine drugs by volume decline comparing Jan-Sept 2025 vs 2024?
-What is the monthly PBM vaccine volume trend compared to the same period in 2024
-What is vaccine volume for 2025 for Jan through Sept?
-What is the network product revenue for September 2025 vs September 2024
-Show the revenue per script trend by therapy class for September 2025 vs September 2024 to identify which drug categories drove the rate increases
-Show the revenue per script trend comparing Sept 2025 vs Sept 2024 to understand if growth was driven by volume or rate increases
-Compare Sept 2025 revenue vs Sept 2024 revenue for year-over-year growth
-What was Sept 2025 revenue?
-
-
-28f6f8e3-5889-4e5b-aba9-58da52ad4791
-sivakumm@optum.com
-
-CREATE TABLE prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking (
-  session_id STRING,
-  user_id STRING,
-  user_question STRING,
-  state_info STRING,
-  positive_feedback BOOLEAN,
-  feedback STRING,
-  insert_ts TIMESTAMP,
-  table_name STRING)
-USING delta
-TBLPROPERTIES (
-  'delta.enableDeletionVectors' = 'true',
-  'delta.feature.deletionVectors' = 'supported',
-  'delta.feature.variantType-preview' = 'supported',
-  'delta.minReaderVersion' = '3',
-  'delta.minWriterVersion' = '7')
-
-{
-    "prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
-"**revenue_amt**:Revenue amount.This is also called client due amount. Use with unadjusted_script_count to derive revenue_per_script.",
-"**expense_amount**: Expense/cost of goods sold for the claim.This is called as app_due_amount or approved due amount. Pairs with revenue_amt for gross margin views.",
-"**drug_name**: Name of the dispensed drug.",
-"**therapy_class_name**: Therapeutic class of the drug. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information",
-"**brand_vs_generic_ind**: Product type indicator. Drives brand/generic mix and Generic Dispense Rate and also use it filter clause in case of brand vs generic calculation using [Values: Brand, Generic]",
-"**submit_date**: Exact claim submission date. Use for daily trending and time-window filters. format is YYYY-MM-DD.",
-"**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.",
-"**month**: Calendar month of submission; it has numerical value (1-12).",
-"**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4",
-"**client_id**: used for client analysis.This contain unique 5-6 digit client id.always return client_name along with client id. Sample values [PDIND,MDCSP,57939]",
-"**client_name**: This contains client description. Return alongside client_id for user-facing reports.Sample values[MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]",
-"**client_type**: it used identify the type of the client.This is not client id.Sample values [SECONDARY,PHARM TECH,MS UHCMB,STRATEGIC SOLUTIONS,PAYER,WRAP,DIRECT EMPLOYER,MS WC,HEALTH PLAN]",
-"**carrier_id**:5-6 digit code. Identifier of the insurance carrier administering the plan.used for carrier reporting",
-"**account_id**: Unique employer account identifier under which the policy is issued.",
-"**group_id**: Group/subgroup within the account;",
-"**CAG**: calculated column .concatenate carrier_id, account_id, and group_id to derive CAG",
-"**revenue_per_script or rate**: Column not exists.Derived Metric- calculate using revenue_amt divided by unadjusted_script_count. This revenue per script or rate is used for per-script profitability and rate analysis.",
-"**rate variance**: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume).Rate is revenue_amt divided by column unadjusted_script_count. Volume is column unadjusted_script_count.",
-"**volume variance**: Column not exists.Derived formula-(prior Month volume - Current Month Volume) x Current Rate.",
-"**mix variance**: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas",
-"**unadjusted_script_count**: Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script.",
-"**adjusted_script_count**: adjusted script count and should not be used for raw script count or revenue per script analysis.",
-"**30_days_script_count**: Count of 30-day prescriptions; complements 90-day for supply-mix insights.",
-"**90_days_script_count**: Count of 90-day prescriptions; useful for mail-order and adherence analyses",
-"**claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. Do not use for any calculation; use unadjusted_script_count for claim counts",
-"**claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations or script counts.",
-"**claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]",
-"**product_category**: Indicates the category of product or service for each claim.This product should not be considered as drug. Distinct values: PBM [Values: PBM]",
-"**line_of_business**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR this is distinct from client type. [Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External]",
-"**line_of_business_desc**: Contains detailed descriptive name of the line of business [Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External]",
-"**pharmacy_name**: Dispensing pharmacy/provider name; used for provider-level performance.",
-"**pharmacy_npi_no**: National Provider Identifier (NPI) of the dispensing pharmacy/provider.",
-"**pharmacy_type**: Used to identify the pharmacy type whether optum owned internal or external pharmacies.[Values: EXTERNAL-NON OPTUM OWNED,INTERNAL OPTUM OWNED]",
-"**gpi_no**: Generic Product Identifier; standardized drug classification used for grouping.",
-"**DRUG_MANUFCTR_NM**: Drug manufacturer; supports brand/manufacturer market-share views",
-"**wac_amount**: Wholesale Acquisition Cost reference used for cost analysis.",
-"**awp_cost_amount**: Average Wholesale Price reference used for cost analytics",
-"**GDR_Ratio**: Column not exists.Derived Metric:Calculates the percentage of generic drug scripts (unadjusted_script_count) by dividing the count of scripts (unadjusted_script_count) where brand_vs_generic_ind =Generic by the total script volume (unadjusted_script_count)",
-"**mbr_sex**: Contains values M or F representing Male or Female respectively, and is suitable for sex-level demographic or behavioral analysis.",
-"**mbr_dt_of_brth**: Contains member date of birth in the format YYYY-MM-DD, enabling age-based segmentation and analysis.",
-"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
-    ],
-    "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims": [
-"**revenue_amt**:Revenue amount.This is also called client due amount. Use with unadjusted_script_count to derive revenue_per_script.",
-"**expense_amount**: Expense/cost of goods sold for the claim.This is called as app_due_amount or approved due amount. Pairs with revenue_amt for gross margin views.",
-"**drug_name**: Name of the dispensed drug.",
-"**therapy_class_name**: Therapeutic class of the drug. sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information",
-"**brand_vs_generic_ind**: Product type indicator. Drives brand/generic mix and Generic Dispense Rate and also use it filter clause in case of brand vs generic calculation using [Values: Brand, Generic]",
-"**submit_date**: Exact claim submission date. Use for daily trending and time-window filters. format is YYYY-MM-DD.",
-"**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.",
-"**month**: Calendar month of submission; it has numerical value (1-12).",
-"**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4",
-"**client_id**: used for client analysis.This contain unique 5-6 digit client id.always return client_name along with client id. Sample values [PDIND,MDCSP,57939]",
-"**client_name**: This contains client description. Return alongside client_id for user-facing reports.Sample values[MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]",
-"**client_type**: it used identify the type of the client.This is not client id.Sample values [SECONDARY,PHARM TECH,MS UHCMB,STRATEGIC SOLUTIONS,PAYER,WRAP,DIRECT EMPLOYER,MS WC,HEALTH PLAN]",
-"**carrier_id**:5-6 digit code. Identifier of the insurance carrier administering the plan.used for carrier reporting",
-"**account_id**: Unique employer account identifier under which the policy is issued.",
-"**group_id**: Group/subgroup within the account;",
-"**CAG**: calculated column .concatenate carrier_id, account_id, and group_id to derive CAG",
-"**revenue_per_script or rate**: Column not exists.Derived Metric- calculate using revenue_amt divided by unadjusted_script_count. This revenue per script or rate is used for per-script profitability and rate analysis.",
-"**rate variance**: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume).Rate is revenue_amt divided by column unadjusted_script_count. Volume is column unadjusted_script_count.",
-"**volume variance**: Column not exists.Derived formula-(prior Month volume - Current Month Volume) x Current Rate.",
-"**mix variance**: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas",
-"**unadjusted_script_count**: Raw script/claim count per event. Use for total volume and as the denominator for revenue_per_script.",
-"**adjusted_script_count**: adjusted script count and should not be used for raw script count or revenue per script analysis.",
-"**30_days_script_count**: Count of 30-day prescriptions; complements 90-day for supply-mix insights.",
-"**90_days_script_count**: Count of 90-day prescriptions; useful for mail-order and adherence analyses",
-"**claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. Do not use for any calculation; use unadjusted_script_count for claim counts",
-"**claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations or script counts.",
-"**claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]",
-"**product_category**: Conatains service line info.This product should not be considered as drug. Distinct values: PBM [Values: PBM]",
-"**line_of_business**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR this is distinct from client type. [Values: E&I FI, E&I ASO, C&S, PDP, MAPD, E&I UMR, External]",
-"**line_of_business_desc**: Contains detailed descriptive name of the line of business [Values: Employer & Individual - United Medical Resources, Medicare Advantage Prescription Drug, Prescription Drug Plan, Others, Community & State, Employer & Individual - Fully Insured, Employer & Individual - Administrative Services Only, External]",
-"**pharmacy_name**: Dispensing pharmacy/provider name; used for provider-level performance.",
-"**pharmacy_npi_no**: National Provider Identifier (NPI) of the dispensing pharmacy/provider.",
-"**pharmacy_type**: Used to identify the pharmacy type whether optum owned internal or external pharmacies.[Values: EXTERNAL-NON OPTUM OWNED,INTERNAL OPTUM OWNED]",
-"**gpi_no**: Generic Product Identifier; standardized drug classification used for grouping.",
-"**DRUG_MANUFCTR_NM**: Drug manufacturer; supports brand/manufacturer market-share views",
-"**wac_amount**: Wholesale Acquisition Cost reference used for cost analysis.",
-"**awp_cost_amount**: Average Wholesale Price reference used for cost analytics",
-"**GDR_Ratio**: Column not exists.Derived Metric:Calculates the percentage of generic drug scripts (unadjusted_script_count) by dividing the count of scripts (unadjusted_script_count) where brand_vs_generic_ind =Generic by the total script volume (unadjusted_script_count)",
-"**mbr_sex**: Contains values M or F representing Male or Female respectively, and is suitable for sex-level demographic or behavioral analysis.",
-"**mbr_dt_of_brth**: Contains member date of birth in the format YYYY-MM-DD, enabling age-based segmentation and analysis.",
-"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
-],
-    "prd_optumrx_orxfdmprdsa.rag.claim_billing": [
-"**Since the entire dataset pertains to PBM, any filters related to PBM can be disregarded. If a query includes 'PBM', the PBM filter is not required**",
-"**inv_nbr**: This is invoice number contains multiple billing transactions and can come as # 7632763 for example. When a user requests an invoice number without specifying an invoice date, do not prompt for or infer a time period. The system should return the invoice number directly without requesting additional temporal context.",
-"**invoice_date**: (YYYY-MM-DD) format. Date when the invoice was generated and issued to the client.",
-"**billed_amount**: Represents the total billed amount. APPLY THESE RULES IN ORDER:",
-"  1. If question contains 'total billed amount' OR 'overall billed amount' → NO rev_src_type filter (include all)",
-"  2. If question contains 'activity fee' → rev_src_type = 'ACTIVITY FEE'",
-"  3. If question contains 'claim fee' → rev_src_type = 'CLAIM FEE'",
-"  4. If question contains 'fee' or 'fees' (without 'activity' or 'claim') → rev_src_type IN ('CLAIM FEE', 'ACTIVITY FEE')",
-"  5. DEFAULT: If question asks for 'billed amount' or 'claim billed' WITHOUT the words 'total' or 'overall' → rev_src_type = 'CLAIM COST'",
-"  IMPORTANT: 'billed amount' and 'total billed amount' are DIFFERENT. Only skip the filter if 'total' or 'overall' is explicitly mentioned.",
-"  Examples: 'What is the billed amount?' → use CLAIM COST | 'What is the total billed amount?' → no filter",
-"  Note: System only has CLAIM COST, CLAIM FEE, ACTIVITY FEE. Other fee names (EOB, etc.) filter on actvty_category_cd.",
-" ----------------",
-"**rev_src_type**: Categorizes the revenue source. Distinct Values include CLAIM FEE, CLAIM COST, and ACTIVITY FEE. when the user asks for specific fee, use this column else aggregate all amount and no group by needed",
-"**invoice_gl_date**: (YYYY-MM-DD) format. General ledger posting date for the invoice. Use for financial period reporting and GL reconciliation. May differ from invoice_date.",
-"**drug_name**: Name of the dispensed drug.",
-"**therapy_class_name**: Therapeutic class of the drug.sample therapy class names are Oncology,GLP-1 Receptor Agonists,SGLT-2 Inhibitors & Combos,GLP-1 Anti-Obesity Agents.if the user is asking generically GLP-1 then use like operator to get all the GLP-1 related information",
-"**brand_vs_generic_ind**: drug type indicator. Drives brand/generic mix. [Values: Brand, Generic]",
-"**carrier_id**: Identifier of the insurance carrier administering the plan.used for carrier reporting.This is part of carrier_id,account_id,group_id combo",
-"**account_id**: Unique employer account identifier under which the policy is issued.This is part of carrier_id,account_id,group_id combo",
-"**group_id**: Group/subgroup within the account;This is not invoice number",
-"**CAG**: calculated column .concatenate carrier_id, account_id, and group_id to derive CAG",
-"**client_id**: used for client analysis.This contain unique 5-6 digit client id.always return client_name along with client id. Sample values [PDIND,MDCSP,57939]",
-"**client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]",
-"**claim_nbr**: Contains unique claim numbers used to identify individual claims in the dataset. should not be used for any aggregation.",
-"**claim_seq_nbr**: Sequence of transactions within the same claim_nbr (e.g., original, reversal). Not used for aggregations.",
-"**claim_status_code**: Processing status of the claim. For utilization/financial metrics use P (Paid)and X (Reveresed). Paid and reversed together reflect net activity.Always Include P,X for derivation. [Values: P, X]",
-"**oracle_prod_code**: This is not drug related product code.This is services related product code from the Oracle system. Examples include PROD35, PROD57. Use for product-level categorization and analysis.always return orcl_prod_desc along with prod code.",
-"**orcl_prod_desc**: Oracle product description providing detailed product names or services. Examples include E-Prescribing Admin Fee, PMPM-VCS, Prior Auth. Specialty. Use for product identification and reporting.",
-"**actvty_category_cd**: Activity category code for operational classification. Examples include 02EPRES, 01PCMS. Use for activity-based analysis and categorization.",
-"**blng_entty_cd**: Billing entity code identifier. Examples include ORXUHC0036XX, ORXUHC0005XX. Use to identify which entity is performing the billing.",
-"**blng_entty_name**: Billing entity name providing descriptive billing entity information. Examples include UHC INSURANCE COMPANY, UHCACIS FULLY INSURED. Use for entity-level reporting and analysis.",
-"**fqa_cmpny_cd**: 3-digit company code component of the GL string. Use for company-level financial segmentation.",
-"**fqa_geo_cd**: 3-digit geography code component of the GL string. Use for geographic financial segmentation and reporting.",
-"**fqa_aflt_cd**: 3-digit affiliate code component of the GL string. Use for affiliate-level financial tracking.",
-"**fqa_lob_cd**: 3-digit line of business code component of the GL string. Use for LOB financial segmentation and P&L reporting.",
-"**fqa_acnt_cd**: 3-digit account code component of the GL string. Use for account-level GL mapping.This account is not related to carrier, account,employer_group_id.",
-"**fqa_dept_cd**: 3-digit department code component of the GL string. Use for departmental cost allocation and reporting.",
-"**fqa_prod_cd**: 3-digit product code component of the GL string. Use for product-level financial tracking in GL.This is not oracle product code.",
-"**fqa_sub_acnt_cd**: 3-digit sub-account code component of the GL string. Use for detailed sub-account level GL analysis.This is not related to carrier account group.",
-"**line_of_business_name**: Contains line of business (LOB) identifier such as External,C&S,E&I FI,E&I ASO,PDP,MAPD,E&I UMR . [Distinct Values: E&I-FI,E&I-ASO,C&S,PDP,MAPD,E&I-UMR,External]",
-"**gpi_no**: GPI code.",
-"**DRUG_MANUFCTR_NM**: Drug manufacturer; supports brand/manufacturer market-share views"
-    ],
-    "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
-"**clarification_rules**:This rule applicable only when the user mentions forecast in the question.If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose",
-"**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]",
-"**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Research,Generic Scripts,Total Membership,Reported Revenues];Please refer the Mapping synonym Volume or total scripts ->Unadjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.",
-"**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results",
-"**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].",
-"**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]",
-"**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail Other, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, Core HDP, CP Core, Mfr Discount, Hospice, RVOH Corp, Core Specialty, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]",
-"**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. Commonly used for portfolio or market-share breakdowns. [Values: C&S, E&I, M&R, Rev Reclass, External, Optum]"
-,
-"**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.",
-"**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.",
-"**month**: Calendar month of submission; it has numerical value (1-12).",
-"**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4",
-"**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]",
-"**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]",
-"**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.",
-"**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.",
-"**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues",
-"**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.",
-"**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.",
-"**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.",
-"**Revenue per Script or rate**:column not exists. calculated as Revenues / Unadjusted Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.",
-"**rate variance**: Column not exists.Derived formula- (Prior Month Average Rate - Current Month Average rate) x Current Month Volume.",
-"**volume variance**: (prior Month volume - Current Month Volume) x Current Rate.Rate is reveneue_amt divided by unadjusted_script_count. Volume is unajusted_script_count. current month and previous month should be extracted from user question.",
-"**mix variance**: Column not exists.Derived formula- (Prior month revenue - Current Month Revenue - Rate Variance- Volume Variance). current month and previous month should be extracted from user question .refer rate variance and volume variance formulas in other derived formulas",
-"   ",
-"**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.",
-"**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts",
-"**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.",
-"**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.",
-"**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.",
-"**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.",
-"**Cost per Script (Adj)**:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.",
-"**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.",
-"**Op Exp per Script (Adj)**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.",
-"**Op Cost per Script (Adj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.",
-"**IOI per Script (Adj)**:column not exists. calculated as IOI / Adjusted Scripts.",
-"**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.",
-"**Utilization PMPM (Adjusted)**:column not exists. calculated as Adjusted Scripts / Total Membership.",
-"**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).",
-"**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts"
-]
+Navigation Input - Current: 'new question - What is PBM revenue for Q3 2025 compared to Q3 2024'
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "new question",
+        "clean_question": "What is PBM revenue for Q3 2025 compared to Q3 2024",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "NEW",
+        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for NEW decision. Clean question contains metric (revenue), filters (PBM), and time periods (Q3 2025, Q3 2024) with comparison structure. This is a complete, self-contained business question about healthcare finance metrics. No inheritance needed since it's explicitly marked as new question and has all required components."
+    },
+    "rewrite": {
+        "rewritten_question": "What is PBM revenue for Q3 2025 compared to Q3 2024",
+        "question_type": "what",
+        "user_message": ""
+    },
+    "filters": {
+        "filter_values": ["PBM"]
+    }
 }
 
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
+Navigation Input - Current: 'follow-up - What therapies contributed to increase'
 
-(Only execute if Task 1 DECISION says "PROCEED")
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "What therapies contributed to increase",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which takes highest priority for decision making. Clean question contains 'increase' (growth term) but no metric before it - previous question had 'PBM revenue' so will inherit 'revenue' and rewrite as 'revenue increase'. Current question has partial components (growth term, asking about therapies as grouping) but is missing the core metric and specific filters. Previous question was about 'PBM revenue for Q3 2025 compared to Q3 2024' which had metric (revenue), filters (PBM), and time periods (Q3 2025, Q3 2024). Should inherit 'revenue' as the metric, 'PBM' as filter, and the time comparison 'Q3 2025 compared to Q3 2024' to provide complete context."
+    },
+    "rewrite": {
+        "rewritten_question": "What therapies contributed to revenue increase for PBM for Q3 2025 compared to Q3 2024",
+        "question_type": "what",
+        "user_message": "I'm using revenue, PBM, and Q3 2025 compared to Q3 2024 from your last question."
+    },
+    "filters": {
+        "filter_values": ["PBM"]
+    }
+}
 
-**CORE SQL GENERATION RULES:**
+Navigation Input - Current: 'follow-up - what GLP-1 drugs drove the increase , include adjusted scripts'
 
-1. MANDATORY FILTERS - ALWAYS APPLY
-- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "what GLP-1 drugs drove the increase , include adjusted scripts",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which is the primary signal for FOLLOW_UP decision. Current question has metric (implied from 'drove the increase'), filters (GLP-1 drugs), and additional request (adjusted scripts). Question contains 'increase' but no explicit metric before it - previous question had 'revenue' so will inherit that metric. Previous question had filters 'PBM' and time 'Q3 2025 compared to Q3 2024' which should be inherited since current question doesn't specify these contexts. Decision made based on explicit follow-up prefix."
+    },
+    "rewrite": {
+        "rewritten_question": "What GLP-1 drugs drove the revenue increase for PBM for Q3 2025 compared to Q3 2024, include adjusted scripts",
+        "question_type": "what",
+        "user_message": "I'm using revenue, PBM, and Q3 2025 compared to Q3 2024 from your last question."
+    },
+    "filters": {
+        "filter_values": ["GLP-1", "PBM"]
+    }
+}
 
-2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
-**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
-- Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
-- For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
+Navigation Input - Current: 'follow-up - compare drug Wegovy decline'
 
-The validation was already done in CHECK 3. Only use filters marked as ✓Valid
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "compare drug Wegovy decline",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Prefix 'follow-up' detected, making this a FOLLOW_UP question. Current question contains 'decline' (growth/decline term) and 'Wegovy' (drug name) but is missing a metric before 'decline'. Previous question had 'revenue' as the metric. Current question is missing filters (PBM), attributes (none in previous), and time period (Q3 2025 vs Q3 2024). Should inherit 'revenue' metric, 'PBM' filter, and 'Q3 2025 vs Q3 2024' time comparison from previous question."
+    },
+    "rewrite": {
+        "rewritten_question": "Compare drug Wegovy revenue decline for PBM for Q3 2025 vs Q3 2024",
+        "question_type": "what",
+        "user_message": "I'm using revenue metric, PBM filter, and Q3 2025 vs Q3 2024 time comparison from your last question."
+    },
+    "filters": {
+        "filter_values": ["Wegovy", "PBM"]
+    }
+}
 
-3. CALCULATED FORMULAS HANDLING (CRITICAL)
-**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+Navigation Input - Current: 'follow-up - What lines of business contributed to the decline"
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "What lines of business contributed to the decline in Wegovy",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which takes highest priority. Clean question contains 'decline' but no metric before it ('the decline in Wegovy'). Previous question had 'revenue decline'. Current question has attributes ('lines of business') and mentions Wegovy but is missing the metric and other context. Should inherit 'revenue' metric, 'PBM' filter, and time period 'Q3 2025 vs Q3 2024' from previous question. Decision made based on explicit follow-up prefix and missing components that existed in previous question."
+    },
+    "rewrite": {
+        "rewritten_question": "What lines of business contributed to the revenue decline for drug name Wegovy for PBM for Q3 2025 vs Q3 2024?",
+        "question_type": "what",
+        "user_message": "I'm using revenue metric, PBM filter, and Q3 2025 vs Q3 2024 time period from your last question."
+    },
+    "filters": {
+        "filter_values": ["Wegovy", "PBM"]
+    }
+}
 
-CORRECT PATTERN:
-```sql
-SELECT 
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-FROM table
-WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
-```
+Navigation Input - Current: 'follow-up - What Clients in External LOB contributed to the decline'
 
-WRONG PATTERN:
-```sql
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
-```
-
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
-
-4. METRICS & AGGREGATIONS
-- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
-- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
-- Include time dimensions (month, quarter, year) when relevant to question
-- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
-
-5. SELECT CLAUSE STRATEGY
-
-**Calculations & Breakdowns (analysis BY dimensions):**
-- Include ALL columns used in WHERE, GROUP BY, and calculations
-- **MANDATORY: When calculating ANY metric, ALWAYS show source components in SELECT**
-- Pattern: Display [source_metric_1], [source_metric_2], ..., [calculated_result]
-- Why: Users need to see underlying values that produced the calculation
-
-Examples:
-- Percentage → Show: numerator, denominator, calculated_percentage
-- Variance → Show: current_value, prior_value, variance
-- Ratio → Show: numerator, denominator, ratio
-- Formula → Show: component_1, component_2, calculated_result
-- Per-unit → Show: total_amount, unit_count, per_unit_value
-
-Example: "Cost per member by state" 
-→ SELECT state_name, total_cost, member_count, cost_per_member
-
-6. MULTI-TABLE JOIN SYNTAX (when applicable)
-- Use provided join clause exactly as specified
-- Qualify all columns with table aliases
-- Include all necessary tables in FROM/JOIN clauses
-- Only join if question requires related data together; otherwise use separate queries
-
-7. ATTRIBUTE-ONLY QUERIES
-- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
-
-8. STRING FILTERING - CASE INSENSITIVE
-- Always use UPPER() on both sides for text/string comparisons
-- Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-9. TOP N/BOTTOM N QUERIES WITH CONTEXT
--Show requested top/bottom N records with their individual values
--CRITICAL: Include the overall total as an additional COLUMN in each row (not as a separate row)
--Calculate and show percentage contribution: (individual value / overall total) × 100
-Overall totals logic:
-    -✅ Include overall total column for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
-    -❌ Exclude overall total column for derived metrics: margin %, ratios, rates, per-unit calculations, averages
--Use subquery in SELECT to show overall total alongside each individual record
--Column structure: [dimension] | [individual_value] | [overall_total] | [percentage_contribution]
--ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
-
-10. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
-- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
-- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
-- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
-- Include variance/difference columns when comparing metrics
-- Prevents users from manually comparing separate rows
-
-11. DATABRICKS SQL COMPATIBILITY
-- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Date functions: date_trunc(), year(), month(), quarter()
-- Conditional logic: CASE WHEN
-- CTEs: WITH clauses for complex logic
-
-12. FORMATTING & NAMING
-**Numeric columns:**
-- Amounts/Counts/Totals: ROUND(value, 0) AS name_amount or name_count
-- Percentages/Ratios : ROUND(value, 3) AS name_percent
-- Examples: total_revenue_amount, cost_ratio_percent, script_count
-
-**Ordering:** ORDER BY date columns DESC only. Use business-relevant names.
-
-==============================
-OUTPUT FORMATS
-==============================
-
-Return ONLY the result in XML tags with no additional text.
-
-**SINGLE SQL QUERY:**
-<sql>
-[Your complete SQL query]
-</sql>
-
-**MULTIPLE SQL QUERIES:**
-<multiple_sql>
-<query1_title>[Title - max 8 words]</query1_title>
-<query1>[SQL query]</query1>
-<query2_title>[Title - max 8 words]</query2_title>
-<query2>[SQL query]</query2>
-</multiple_sql>
-
-**FOLLOW-UP REQUEST:**
-<followup>
-[Use format above]
-</followup>
-
-==============================
-EXECUTION INSTRUCTION
-==============================
-
-1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules)
-2. Complete TASK 1 strict assessment (A-G with clear marks)
-3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
-4. If PROCEED: Execute TASK 2 with SQL generation
-5. If FOLLOW-UP: Ask targeted questions (max 2, prioritize G → E → B → C)
-
-**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
-**Remember**: ONE failure = STOP.
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "What Clients in External LOB contributed to the decline",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Prefix 'follow-up' detected, making this a FOLLOW_UP question. Current question has: attributes ('Clients'), filters ('External LOB'), and growth/decline term ('decline') but missing metric before 'decline'. Previous question had 'revenue decline' so will inherit 'revenue' metric. Current also missing time period. Previous question had 'for drug name Wegovy for PBM for Q3 2025 vs Q3 2024' so should inherit 'Wegovy', 'PBM', and 'Q3 2025 vs Q3 2024'. Decision made based on detected prefix and missing components that need inheritance."
+    },
+    "rewrite": {
+        "rewritten_question": "What Clients in External LOB contributed to the revenue decline for drug name Wegovy for PBM for Q3 2025 vs Q3 2024?",
+        "question_type": "what",
+        "user_message": "I'm using revenue metric, drug name Wegovy, PBM, and Q3 2025 vs Q3 2024 time period from your last question."
+    },
+    "filters": {
+        "filter_values": ["External LOB", "Wegovy", "PBM"]
+    }
+}

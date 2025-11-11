@@ -1,13 +1,10 @@
 import json
-from typing import Any, Dict
 
-def migrate_session_tracking_data(db_client):
+def migrate_session_tracking_data():
     """
     Migrate data from old fdmbotsession_tracking table to new fdmbotsession_tracking_updt table.
     Process session by session to handle multiple rows per session.
-    
-    Args:
-        db_client: Database client with execute_sql method
+    Uses spark.sql() for all database operations.
     """
     try:
         # Table name mapping for dataset detection
@@ -25,13 +22,13 @@ def migrate_session_tracking_data(db_client):
         FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking
         ORDER BY session_id
         """
-        session_results = db_client.execute_sql(session_query)
+        session_df = spark.sql(session_query)
+        session_ids = [row['session_id'] for row in session_df.collect()]
         
-        if not session_results or not session_results.get('data'):
+        if not session_ids:
             print("⚠️ No sessions found in old table")
             return
         
-        session_ids = [row['session_id'] for row in session_results['data']]
         total_sessions = len(session_ids)
         print(f"📊 Found {total_sessions} unique sessions to migrate")
         
@@ -53,33 +50,33 @@ def migrate_session_tracking_data(db_client):
                 ORDER BY insert_ts ASC
                 """
                 
-                rows_result = db_client.execute_sql(fetch_query)
+                rows_df = spark.sql(fetch_query)
+                rows = rows_df.collect()
                 
-                if not rows_result or not rows_result.get('data'):
+                if not rows:
                     print(f"⚠️ No rows found for session {session_id}")
                     continue
                 
-                rows = rows_result['data']
                 print(f"   Found {len(rows)} rows for this session")
                 
                 # Process each row in the session
                 for row_idx, row in enumerate(rows, 1):
                     try:
-                        session_id_val = row.get('session_id', '')
-                        user_id = row.get('user_id', '')
-                        user_question = row.get('user_question', '')
-                        state_info = row.get('state_info', '')
-                        insert_ts = row.get('insert_ts', '')
+                        session_id_val = row['session_id'] if row['session_id'] else ''
+                        user_id = row['user_id'] if row['user_id'] else ''
+                        user_question = row['user_question'] if row['user_question'] else ''
+                        state_info = row['state_info'] if row['state_info'] else ''
+                        insert_ts = row['insert_ts'] if row['insert_ts'] else ''
                         
                         print(f"   Row {row_idx}: {user_question[:50]}...")
                         
                         # Skip if no state_info
-                        if not state_info or not state_info.strip():
+                        if not state_info or not str(state_info).strip():
                             print(f"      ⚠️ No state_info, skipping")
                             continue
                         
                         # Clean the state_info JSON
-                        cleaned_json = state_info.strip()
+                        cleaned_json = str(state_info).strip()
                         
                         # Remove triple quotes if present
                         if cleaned_json.startswith('"""') and cleaned_json.endswith('"""'):
@@ -132,7 +129,7 @@ def migrate_session_tracking_data(db_client):
                              '{selected_dataset_escaped}', '{sql_info_escaped}', '{insert_ts}')
                         """
                         
-                        db_client.execute_sql(insert_sql)
+                        spark.sql(insert_sql)
                         print(f"      ✅ Row {row_idx} migrated successfully")
                         total_rows_migrated += 1
                         
@@ -164,5 +161,5 @@ def migrate_session_tracking_data(db_client):
         traceback.print_exc()
 
 
-# Usage in Databricks notebook:
-# migrate_session_tracking_data(db_client)
+# Usage in Databricks notebook - just run:
+migrate_session_tracking_data()

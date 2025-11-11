@@ -58,8 +58,15 @@ class LLMNavigationController:
         print("Starting single-step processing...")
         questions_history = state.get('user_question_history', [])
         previous_question = state.get('rewritten_question', '') 
+        conversation_memory = state.get('conversation_memory', {
+            'dimensions': {},
+            'analysis_context': {
+                'current_analysis_type': None,
+                'analysis_history': []
+            }
+        })
         history_context = questions_history[-2:] if questions_history else []
-        
+        print('conversation_memory',conversation_memory)
         # Calculate current forecast cycle based on current month
         current_forecast_cycle = self._calculate_forecast_cycle()
         print(f"📊 Current forecast cycle: {current_forecast_cycle}")
@@ -77,9 +84,10 @@ class LLMNavigationController:
                     current_question, 
                     previous_question,
                     history_context,
-                    current_forecast_cycle
+                    current_forecast_cycle,
+                    conversation_memory
                 )
-                
+                # print('question prompt', prompt)
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=3000,
@@ -88,6 +96,32 @@ class LLMNavigationController:
                 )
                 
                 print("LLM Response:", response)
+                
+                # Check if LLM cannot answer - trigger retry
+                if "Sorry, the model cannot answer this question" in response:
+                    retry_count += 1
+                    print(f"⚠️ LLM cannot answer - retrying ({retry_count}/{max_retries})")
+                    if retry_count < max_retries:
+                        await asyncio.sleep(2 ** retry_count)
+                        continue
+                    else:
+                        print(f"Failed after {max_retries} retries - returning error response")
+                        return {
+                            'rewritten_question': current_question,
+                            'question_type': 'what',
+                            'next_agent': 'END',
+                            'next_agent_disp': 'Model serving endpoint failed',
+                            'requires_domain_clarification': False,
+                            'domain_followup_question': None,
+                            'domain_selection': existing_domain_selection,
+                            'greeting_response': "Model serving endpoint failed. Please try again after some time.",
+                            'llm_retry_count': total_retry_count + retry_count,
+                            'pending_business_question': '',
+                            'error': True,
+                            'error_message': f"Model serving endpoint failed after {max_retries} attempts",
+                            'filter_values': [],
+                            'user_friendly_message': "Service temporarily unavailable."
+                        }
                 
                 # Strip markdown code blocks if present
                 cleaned_response = response.strip()
@@ -215,7 +249,8 @@ class LLMNavigationController:
                     }
     
     def _build_combined_prompt(self, current_question: str, previous_question: str,
-                               history_context: List, current_forecast_cycle: str) -> str:
+                               history_context: List, current_forecast_cycle: str, 
+                               conversation_memory: Dict = None) -> str:
         """
         Combined Prompt: Analyze → Rewrite → Extract in single call
         """
@@ -227,6 +262,32 @@ class LLMNavigationController:
         # Special filters that are important for context inheritance
         special_filters = ["PBM", "HDP", "Specialty", "Mail", "Retail", "8+4", "5+7", "9+3", "10+2", "2+10"]
         
+        # Initialize conversation memory if not provided
+        if conversation_memory is None:
+            conversation_memory = {
+                'dimensions': {},
+                'analysis_context': {
+                    'current_analysis_type': None,
+                    'analysis_history': []
+                }
+            }
+        
+        # Build memory context for prompt
+        memory_dimensions = conversation_memory.get('dimensions', {})
+        memory_context_str = ""
+        
+        if memory_dimensions:
+            memory_context_str = "\n**CONVERSATION MEMORY (Recent Analysis Context)**:\n"
+            for dim_key, values in memory_dimensions.items():
+                # Show dimension and its values (full list, not just first element)
+                values_str = str(values) if isinstance(values, list) else str([values])
+                memory_context_str += f"- {dim_key}: {values_str}\n"
+            memory_context_str += "\n**MEMORY USAGE RULE**: If user mentions a value that exists in memory (case-insensitive, fuzzy match), ADD the dimension prefix when rewriting.\n"
+            memory_context_str += "**CRITICAL**: Use the EXACT dimension key name from memory (e.g., 'client_name', 'client_id', 'drug_name'). Do NOT convert or simplify.\n"
+            memory_context_str += "**Example**: Memory has client_name: ['BCBSM', ...] and user says 'BCBSM' → Rewrite as 'for client_name BCBSM' (NOT 'for client BCBSM')\n"
+            memory_context_str += "**Priority**: If value appears in MULTIPLE dimensions, use the LATEST (last) dimension.\n"
+            memory_context_str += "**Fuzzy Match**: Case-insensitive matching for values (e.g., 'wegovy' matches 'WEGOVY'), but use EXACT case from memory.\n\n"
+            print('memory_context_str',memory_context_str)
         prompt = f"""⚠️⚠️⚠️ CRITICAL ROLE - READ THIS FIRST ⚠️⚠️⚠️
 
 You are a QUESTION REWRITER and ANALYZER - NOT an assistant that answers questions.
@@ -252,6 +313,8 @@ Current Year: {current_year}
 Current Forecast Cycle: {current_forecast_cycle}
 
 Special Context Filters (important for inheritance): {special_filters}
+
+{memory_context_str}
 
 ════════════════════════════════════════════════════════════
 SECTION 1: ANALYZE & CLASSIFY
@@ -287,8 +350,21 @@ Examples: "Hi", "Hello", "What can you do?", "Help me"
 Examples: "INSERT", "UPDATE", "DELETE", "CREATE table"
 
 **BUSINESS_QUESTION** - Healthcare finance queries
-Valid topics: Claims, pharmacy, drugs, therapy classes, revenue, expenses, payments, utilization, actuals, forecasts, finance questions
-Invalid: Weather, sports, retail (non-healthcare), non-healthcare topics
+⚠️ **IMPORTANT: If the question mentions ANY of these, it's a VALID business question:**
+- **Metrics**: revenue, claims, expenses, cost, volume, actuals, forecast, script count, utilization, payments, script, prescription, billed amount
+- **Healthcare entities**: drugs, medications, therapy classes (GLP-1, SGLT-2, etc.), carriers, clients, pharmacies, NDC, drug names (Wegovy, Ozempic, etc.)
+- **Pharmacy terms**: PBM, HDP, Specialty, Mail, Retail, Home Delivery, pharmacy channel
+- **Finance terms**: increase, decrease, decline, growth, variance, comparison, trend, breakdown
+- **Time comparisons**: Q3 2025 vs Q3 2024, year-over-year, month-over-month, quarterly
+
+✅ **Valid Examples:**
+- "what SGLT-2 Inhibitors drugs the PBM revenue increase" → VALID (drug class + PBM + revenue)
+- "show me actuals vs forecast 8+4 revenue for Q3 2025" → VALID (drug name + revenue + time)
+
+❌ **Invalid Examples:**
+- "What's the weather today?" → INVALID (not healthcare/finance)
+- "Show me sports scores" → INVALID (not healthcare/finance)
+- "Calculate 2+2" → INVALID (not business related)
 
 **Step 3: Component Detection (For business questions only)**
 
@@ -346,31 +422,44 @@ Valid question structures:
 **Inheritance Logic:**
 Compare what current has vs what previous had, then inherit the missing components.
 
-**Decision Examples (Inline - Use these patterns):**
+***Decision Examples (Use these patterns):**
 
-Ex1: "follow-up - show me expense" | Prev: "revenue for PBM by line of business for July 2025"
-→ Prefix: "follow-up" → FOLLOW_UP | Current: metric only | Prev had: filters+attributes+time → inherit all three
+**Real Conversation Chain from Production:**
 
-Ex2: "follow-up - show me expense" | Prev: "revenue for PBM for July 2025"
-→ Prefix: "follow-up" → FOLLOW_UP | Current: metric only | Prev had: filters+time (no attributes) → inherit filters+time
+Ex1: Current: "new question - What is PBM revenue for Q3 2025 compared to Q3 2024"
+→ Prefix: "new question" → NEW | Has: metric+filters+time (complete) → Use as-is
 
-Ex3: "follow-up - show me expense" | Prev: "revenue by line of business for July 2025"
-→ Prefix: "follow-up" → FOLLOW_UP | Current: metric only | Prev had: attributes+time (no filters) → inherit attributes+time
+Ex2: Current: "follow-up - What therapies contributed to increase" | Prev: "PBM revenue Q3 2025 vs Q3 2024"
+→ Prefix: "follow-up" → FOLLOW_UP | "increase" missing metric → inherit "revenue"
+→ Missing: filters (PBM), time → inherit both
+→ Rewrite: "What therapies contributed to revenue increase for PBM for Q3 2025 vs Q3 2024"
 
-Ex4: "new question - revenue by line of business" | Prev: any
-→ Prefix: "new question" → NEW | Has metric+attributes, valid structure → use as-is, add year if time missing
+Ex3: Current: "follow-up - what GLP-1 drugs drove the increase, include adjusted scripts" | Prev: "revenue increase for PBM Q3 2025 vs Q3 2024"
+→ Prefix: "follow-up" → FOLLOW_UP | "increase" missing metric → inherit "revenue"
+→ Current adds: GLP-1 | Inherits: PBM, time
 
-Ex5: "show me expense" (no prefix) | Prev: "revenue for PBM for July 2025"
-→ No prefix, auto-detect | Prev had filters+time, current missing both → FOLLOW_UP
+Ex4: Current: "follow-up - compare drug Wegovy decline" | Prev: "revenue increase for GLP-1 for PBM Q3 2025 vs Q3 2024"
+→ Prefix: "follow-up" → FOLLOW_UP | Change: "increase" → "decline", missing metric → inherit "revenue"
+→ Current: Wegovy replaces GLP-1 | Inherits: PBM, time
 
-Ex6: "actuals for PBM for September" (no prefix) | Prev: "revenue by LOB for Q3 2025"
-→ No prefix, auto-detect | Has metric+filters+partial time → FOLLOW_UP (add year)
+Ex5: Current: "follow-up - What lines of business contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
+→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
+→ Current adds: attributes (lines of business) | Inherits: Wegovy, PBM, time
 
-Ex7: "validation - revenue was wrong" | Prev: any
+Ex6: Current: "follow-up - What Clients in External LOB contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
+→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
+→ Current adds: attributes (Clients), filter (External LOB) | Inherits: Wegovy, PBM, time
+
+**Edge Cases:**
+
+Ex7: Current: "validation - revenue was wrong" | Prev: any
 → Prefix: "validation" → VALIDATION
 
-Ex8: "why is that high" (no prefix) | Prev: any
-→ No prefix, has pronoun "that" → FOLLOW_UP (inherit all)
+Ex8: Current: "why is that high" (no prefix) | Prev: "revenue for PBM for Q3 2025"
+→ No prefix, has pronoun "that" → FOLLOW_UP (inherit all: revenue, PBM, Q3 2025)
+
+Ex9: Current: "actuals for PBM for September" (no prefix) | Prev: "revenue by LOB for Q3 2025"
+→ No prefix, auto-detect | Has metric+filters+partial time → FOLLOW_UP (add year)
 
 **Step 5: Extract Components from Previous Question**
 
@@ -386,10 +475,13 @@ These will be used for inheritance if current question is FOLLOW_UP and is missi
 
 Clearly explain:
 1. Which prefix was detected (if any)
-2. What components are in clean_question
-3. What components are missing
-4. What should be inherited from previous (be specific: "Should inherit ['PBM'] and 'July 2025'")
+2. What components are in clean_question (metric, filters, attributes, time)
+3. **MANDATORY METRIC CHECK**: Does question contain growth/decline term (decline, growth, increase, decrease)? If YES, is there a metric BEFORE it? If NO metric, state which metric will be inherited from previous question.
+4. What other components should be inherited from previous (be specific: "Should inherit ['PBM'] and 'July 2025'")
 5. Why this decision was made
+
+**Reasoning Example for Metric Inheritance:**
+"Question contains 'decline' but no metric before it ('the decline in Wegovy'). Previous question had 'revenue decline'. Will inherit 'revenue' and rewrite as 'revenue decline in Wegovy'."
 
 ════════════════════════════════════════════════════════════
 SECTION 2: REWRITE QUESTION
@@ -399,119 +491,163 @@ Now use your analysis from Section 1 to rewrite the question.
 
 **CRITICAL: Read your own reasoning - it tells you exactly what to do**
 
-**STEP 1: Apply Forecast Cycle Rules (if applicable)**
+**STEP 0: METRIC INHERITANCE (Apply FIRST - MANDATORY CHECK)**
+
+⚠️ **CRITICAL: ALWAYS check if metric is missing when growth/decline terms present**
+
+**Detection Logic:**
+1. Does question contain: decline, growth, increase, decrease, trending, rising, falling?
+2. Does question ALREADY have a metric BEFORE the growth/decline term?
+   - Check for: revenue, volume, expense, script count, claims, cost, actuals, forecast
+   - Examples WITH metric: "revenue decline", "expense growth", "script count increase" ✅
+   - Examples WITHOUT metric: "the decline", "decline in Wegovy", "most by the decline" ❌
+
+**If growth/decline term found BUT no metric before it:**
+- Extract metric from PREVIOUS QUESTION
+- Inject metric IMMEDIATELY BEFORE the growth/decline term
+- Format: "[metric] [growth/decline term]"
+
+**Examples:**
+- Previous: "revenue for PBM" → User: "show decline" → Rewritten: "show revenue decline"
+- Previous: "revenue decline for Wegovy" → User: "decline in Wegovy" → Rewritten: "revenue decline in Wegovy"
+- Previous: "expense by LOB" → User: "impacted by the decline" → Rewritten: "impacted by the expense decline"
+
+**STEP 1: MEMORY-BASED DIMENSION DETECTION (Apply After Metric Inheritance)**
+
+**⚠️ CRITICAL: Check conversation memory BEFORE rewriting**
+
+If conversation memory exists:
+
+1. **Extract values mentioned in question** (entity names, drug names, client codes, multi-word phrases)
+   - Case-insensitive, fuzzy matching
+
+2. **Check if each value exists in memory dimensions**
+   - If found: Identify dimension key
+   - If in MULTIPLE dimensions: Use LATEST (last) dimension
+   - **CRITICAL: Use the EXACT dimension key name from memory (do NOT convert/simplify)**
+     * If memory has `client_id` → Use "client_id" (NOT "client")
+     * If memory has `client_name` → Use "client_name" (NOT "client")
+     * If memory has `carrier_id` → Use "carrier_id" (NOT "carrier")
+     * If memory has `drug_name` → Use "drug_name" (NOT "drug")
+   - Add dimension prefix with EXACT key name: "for [exact_dimension_key] [value]"
+   - Mark as DIMENSION_TAGGED (exclude from filters)
+
+3. **If NOT found in memory**: Keep as-is (will be extracted as filter)
+
+**EXAMPLES:**
+
+Memory: {{"client_id": ["57760", "57096"]}}
+User: "revenue for 57760"
+→ Rewritten: "What is revenue for client_id 57760" (use exact key "client_id")
+
+Memory: {{"client_name": ["BCBSM", "HARVARD PILGRIM"]}}
+User: "revenue for BCBSM"
+→ Rewritten: "What is revenue for client_name BCBSM" (use exact key "client_name")
+
+Memory: {{"drug_name": ["WEGOVY", "OZEMPIC"]}}
+User: "revenue for Wegovy and diabetes"
+→ Rewritten: "revenue for drug_name WEGOVY and diabetes" (use exact key "drug_name", exact value "WEGOVY")
+
+**STEP 2: Apply Forecast Cycle Rules (if applicable)**
 
 **Available cycles:** 2+10, 5+7, 8+4, 9+3 | **Current cycle:** {current_forecast_cycle}
 
 **Rules:**
 1. "forecast" WITHOUT cycle → Add current cycle: "forecast {current_forecast_cycle}"
-2. Cycle pattern (2+10, 5+7, 8+4, 9+3) WITHOUT "forecast" → Prepend "forecast": "forecast [cycle]"
+2. Cycle pattern (8+4,5+7,2+10,9+3,10+2,4+8) WITHOUT "forecast" → Prepend "forecast": "forecast [cycle]"
 3. BOTH present → Use as-is
-
-**Examples:**
-- "actuals vs forecast" → "actuals vs forecast {current_forecast_cycle}"
-- "actuals vs 8+4" → "actuals vs forecast 8+4"
-- "actuals vs forecast 5+7" → unchanged
 
 **STEP 2: Build Rewritten Question**
 
+**STEP 3: Build Rewritten Question**
+
 **IF NEW:**
 → Use clean_question components as-is
-→ Apply forecast cycle rules (Step 1)
-→ Format professionally: "What is [metric] for [filters] for [time]"
+→ Apply metric inheritance (Step 0) + forecast cycle rules (Step 2) + memory dimension detection (Step 1)
+→ Format: "What is [metric] for [filters] for [time]"
 → If time_is_partial, add current year: "for [time] {current_year}"
-→ user_message: "" (empty string, unless forecast cycle was added)
-→ If forecast cycle added: user_message: "Using current forecast cycle {current_forecast_cycle}"
+→ user_message: "" (empty unless forecast cycle added)
 
 **IF FOLLOW_UP:**
 → Start with clean_question components
-→ Apply forecast cycle rules (Step 1) to the clean_question
-→ For each component that is null/empty/[] in current question:
-  - Extract that component from previous_question string
-  - Example: "What is revenue for PBM by line of business for July 2025" 
-    → extract filters ["PBM"], attributes ["by line of business"], time "July 2025"
-  - Use the extracted value to fill the missing component in current question
-→ If time_is_partial is true, add {current_year}
-→ Format: "What is [metric] for [filters] [by attributes] for [time]"
-  - Include "by [attributes]" only if attributes exist
-  - Include "for [filters]" only if filters exist
-→ Create user_message explaining what was inherited:
-  - Be specific: "I'm using PBM, line of business grouping, and July 2025 from your last question."
-  - If only year added: "Added {current_year} as the year."
-  - List all inherited components clearly
+→ Apply metric inheritance (Step 0) + forecast cycle rules (Step 2) + memory dimension detection (Step 1)
+→ For missing components, extract from previous_question
+→ If time_is_partial, add {current_year}
+→ Create user_message: "I'm using [specific inherited components] from your last question."
 
 **IF VALIDATION:**
 → Format: "[Previous Question] - VALIDATION REQUEST: [clean_question]"
 → user_message: "This is a validation request for the previous answer."
 
 **Question Type:**
-- If clean_question starts with "why", "how come", "explain" → question_type: "why"
+- "why", "how come", "explain" → question_type: "why"
 - Otherwise → question_type: "what"
-
-**IMPORTANT:**
-- Preserve forecast cycles exactly: "actuals vs forecast 8+4" → keep "8+4"
-- Use specific values in user_message, not generic statements
-- Always capitalize time periods: "July 2025" not "july 2025"
 
 ════════════════════════════════════════════════════════════
 SECTION 3: EXTRACT FILTER VALUES
 ════════════════════════════════════════════════════════════
 
-**CRITICAL: Extract filter values from the REWRITTEN question (after inheritance)**
+**CRITICAL: Extract filter values from REWRITTEN question (after inheritance and memory dimension tagging)**
 
-**⚠️ IMPORTANT: Strip attribute suffixes, extract ONLY the actual filter value**
+**⚠️ IMPORTANT: ALWAYS extract the actual value, even if it has a dimension prefix**
 
 **EXTRACTION RULES (Apply in order):**
 
-1. **Strip Suffixes** → Remove from end: drug(s), medication(s), class(es), category/categories, type(s), group(s), name(s), therapy/therapies
+1. **Dimension Prefixes** → **EXTRACT the VALUE only** ✅
+   - "for drug name Wegovy" → EXTRACT "Wegovy" ✅
+   - "for client BCBS" → EXTRACT "BCBS" ✅
+   - "for therapy class GLP-1" → EXTRACT "GLP-1" ✅
+   - "for carrier MDOVA" → EXTRACT "MDOVA" ✅
+   - Strip the dimension prefix, keep only the value
+
+2. **Strip Suffixes** → Remove: drug(s), medication(s), class(es), category/categories, type(s), group(s), name(s), therapy/therapies
    - "GLP-1 drug" → Strip "drug" → "GLP-1" ✅
-   - "diabetes class" → Strip "class" → "diabetes" ✅
-   - Exception: If ONLY the suffix word alone → EXCLUDE ❌
+   - "Wegovy medication" → Strip "medication" → "Wegovy" ✅
+   - Exception: If ONLY suffix word → EXCLUDE ❌
 
-2. **Attribute Prefixes** → Extract value after label (carrier, client, therapy class, line of business, etc.), exclude pure numbers
-   - "carrier MDOVA" → ["MDOVA"] | "invoice # 12345" → EXCLUDE ❌
+3. **Pure Numbers** → EXCLUDE ❌
+   - "invoice # 12345" → EXCLUDE ❌ (pure numbers)
 
-3. **Pure Numbers** → EXCLUDE
-
-4. **Exclusion List** → EXCLUDE if matches (after stripping):
-   - Common: PBM, HDP,Home Delivery, Specialty, Mail, Retail, Claim Fee, Activity Fee
-   - Dimensions: therapy class, line of business, LOB, carrier, geography, region, channel
+4. **Exclusion List** → EXCLUDE if matches:
+   - Common: PBM, HDP, Home Delivery, Specialty, Mail, Retail, Claim Fee, Activity Fee
+   - Dimension names (not values): therapy class, line of business, LOB, carrier, geography, region, channel, drug name, drug, client (only when standalone)
    - Modifiers: unadjusted, normalized, per script, average, total, net, gross
    - Time: months, quarters, years, dates
    - Generic: revenue, cost, expense, data, what, is, for, by, breakdown, volume, count
    - Metrics: billed amount, claims count, script count
    - Keywords: by, breakdown, group, compare, versus
-   - Attribute names: drug, drugs, class, classes, category, categories, type, types
 
 5. **Contains Letters?** → If passed above checks, EXTRACT ✅
 
-**Multi-word:** "covid vaccine" → ["covid vaccine"] | "diabetes, asthma" → ["diabetes", "asthma"]
+**KEY PRINCIPLE: Extract the actual entity VALUE, strip dimension labels and suffixes**
 
 **EXAMPLES:**
 
-"What is revenue for GLP-1 drug for July 2025"
-→ "GLP-1 drug" → Strip "drug" → ["GLP-1"] ✅
+Rewritten: "What lines of business contributed to the decline for drug name Wegovy between Q3 2025 vs Q3 2024?"
+→ "drug name Wegovy" → Extract "Wegovy" → filter_values: ["Wegovy"]
 
-"What is revenue for diabetes class for July 2025"
-→ "diabetes class" → Strip "class" → ["diabetes"] ✅
+Rewritten: "What is revenue for diabetes?"
+→ "diabetes" → Extract "diabetes" → filter_values: ["diabetes"]
 
-"What is revenue by therapy class for diabetes for July 2025"
-→ "diabetes" → No suffix → ["diabetes"] ✅
+Rewritten: "What is revenue for drug name Wegovy and diabetes?"
+→ "drug name Wegovy" → Extract "Wegovy", "diabetes" → Extract "diabetes"
+→ filter_values: ["Wegovy", "diabetes"]
 
-"What is revenue for Humira medication for July 2025"
-→ "Humira medication" → Strip "medication" → ["Humira"] ✅
+Rewritten: "What is revenue for client BCBS for drug name Ozempic?"
+→ "client BCBS" → Extract "BCBS", "drug name Ozempic" → Extract "Ozempic"
+→ filter_values: ["BCBS", "Ozempic"]
 
-"What is revenue for MPDOVA for September 2025 for PBM"
-→ ["MPDOVA"] ✅ (PBM excluded)
+Rewritten: "What is revenue for External LOB and carrier MDOVA for July 2025?"
+→ "carrier MDOVA" ,External LOB → Extract "MDOVA","External"
+→ filter_values: ["MDOVA","External"]
 
-"What is revenue for covid vaccines for carrier MDOVA for Q3"
-→ ["covid vaccines", "MDOVA"] ✅
+Rewritten: "What is actuals vs forecast 8+4 for diabetes for Q3 2025"
+→ "8+4" → Extract "8+4", "diabetes" → Extract "diabetes"
+→ filter_values: ["8+4", "diabetes"]
 
-"What is claim cost for invoice # 98765 for August 2025"
-→ [] (pure numbers excluded)
-
-"What is actuals vs forecast 8+4 for diabetes for Q3 2025"
-→ filter_values: ["8+4", "diabetes"] (forecast cycles NOT in exclusion list)
+Rewritten: "What is revenue for GLP-1 drug for July 2025"
+→ "GLP-1 drug" → Strip "drug" → Extract "GLP-1"
+→ filter_values: ["GLP-1"]
 
 ════════════════════════════════════════════════════════════
 OUTPUT FORMAT - PURE JSON ONLY

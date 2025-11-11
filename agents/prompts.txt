@@ -1,49 +1,13 @@
-async def _insert_session_tracking_row(sql_result: Dict[str, Any]):
-    """Insert the sql_result JSON into tracking table after narrative generation.
-    NEW TABLE: fdmbotsession_tracking_updt
-    Columns: session_id, user_id, user_question, selected_dataset, sql_info, insert_ts
+{
+  "PBM Network": [
+    { "Peoplesoft GL": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast" },
+    { "Rx Claims": "prd_optumrx_orxfdmprdsa.rag.pbm_claims" },
+    { "CBS Billing": "prd_optumrx_orxfdmprdsa.rag.claim_billing" }
     
-    Note: selected_dataset column stores functional_names (user-friendly names like "PBM Claims")
-          from router state, NOT technical table names
-    """
-    try:
-        db_client = st.session_state.get('db_client')
-        if not db_client:
-            print("⚠️ No db_client in session; skipping tracking insert")
-            return
-        session_id = st.session_state.get('session_id', 'unknown')
-        user_id = get_authenticated_user()
-        
-        # Get user_question from sql_result user_question field (rewritten question from workflow)
-        user_question = sql_result.get('user_question', st.session_state.get('current_query', ''))
-        user_question_escaped = user_question.replace("'", "\\'") if user_question else ''
-        
-        # Get functional_names (user-friendly dataset names) from sql_result
-        # This comes from router state: state.get('functional_names', [])
-        functional_names = sql_result.get('functional_names', [])
-        if isinstance(functional_names, list):
-            selected_dataset = ', '.join(functional_names)  # Join with comma and space for display
-        else:
-            selected_dataset = str(functional_names) if functional_names else ''
-        selected_dataset_escaped = selected_dataset.replace("'", "\\'")
-        
-        # Serialize sql_result as JSON (already includes functional_names from router)
-        payload_json = json.dumps(sql_result, ensure_ascii=False)
-        
-        # CRITICAL: Remove newlines and escape single quotes (like _insert_feedback_row)
-        payload_escaped = payload_json.replace("'", "\\'").replace("\n", " ")
-        
-        insert_sql = f"""
-        INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
-            (session_id, user_id, user_question, selected_dataset, sql_info, insert_ts)
-        VALUES
-            ('{session_id}', '{user_id}', '{user_question_escaped}', '{selected_dataset_escaped}', '{payload_escaped}', current_timestamp())
-        """
-        
-        print("🗄️ Inserting session tracking row (NEW TABLE - cleaned):", len(payload_json))
-        print(f"   Functional names: {functional_names}")
-        await db_client.execute_sql_async_audit(insert_sql)
-        print("✅ Session tracking insert succeeded (NEW TABLE)")
-            
-    except Exception as e:
-        print(f"⚠️ Session tracking insert failed: {e}")
+  ],
+  "Optum Pharmacy": [
+    { "Pharmacy IRIS Claims": "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims" },
+    { "Peoplesoft GL": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast" },
+    { "CBS Billing": "prd_optumrx_orxfdmprdsa.rag.claim_billing" }
+  ]
+}

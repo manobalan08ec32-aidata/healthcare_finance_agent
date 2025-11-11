@@ -87,7 +87,7 @@ class LLMNavigationController:
                     current_forecast_cycle,
                     conversation_memory
                 )
-                print('question prompt', prompt)
+                # print('question prompt', prompt)
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=3000,

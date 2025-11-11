@@ -43,14 +43,14 @@ def migrate_session_tracking_data():
             
             try:
                 # Fetch all rows for this session from old table
-                # CRITICAL: Convert VARIANT to string using TO_JSON()
+                # Convert VARIANT to JSON string and convert timestamp to CST
                 fetch_query = f"""
                 SELECT 
                     session_id, 
                     user_id, 
                     user_question, 
                     TO_JSON(state_info) as state_info_json,
-                    insert_ts
+                    CONVERT_TIMEZONE('America/Chicago', insert_ts) as insert_ts_cst
                 FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking
                 WHERE session_id = '{session_id}'
                 ORDER BY insert_ts ASC
@@ -72,7 +72,7 @@ def migrate_session_tracking_data():
                         user_id = row['user_id'] if row['user_id'] else ''
                         user_question = row['user_question'] if row['user_question'] else ''
                         state_info_json = row['state_info_json'] if row['state_info_json'] else ''
-                        insert_ts = row['insert_ts'] if row['insert_ts'] else ''
+                        insert_ts_cst = row['insert_ts_cst'] if row['insert_ts_cst'] else ''
                         
                         print(f"   Row {row_idx}: {user_question[:50]}...")
                         
@@ -81,28 +81,44 @@ def migrate_session_tracking_data():
                             print(f"      ⚠️ No state_info, skipping")
                             continue
                         
-                        # Clean the JSON string - CRITICAL STEP
-                        # state_info_json is already a JSON string from TO_JSON()
+                        # Parse JSON to extract sql_query for dataset detection
                         state_info_str = str(state_info_json)
+                        state_dict = None
+                        sql_query = ""
                         
-                        # Parse to dict to extract sql_query for dataset detection
                         try:
-                            state_dict = json.loads(state_info_str)
+                            # First parse attempt
+                            parsed = json.loads(state_info_str)
+                            
+                            # Check if it's double-encoded (parsed result is a string)
+                            if isinstance(parsed, str):
+                                print(f"      🔄 Double-encoded JSON detected, parsing again...")
+                                state_dict = json.loads(parsed)
+                            else:
+                                state_dict = parsed
+                                
                         except json.JSONDecodeError as e:
                             print(f"      ⚠️ JSON parse error: {e}, using empty dict")
                             state_dict = {}
                         
+                        # Extract sql_query for dataset detection
+                        if isinstance(state_dict, dict):
+                            sql_query = state_dict.get('sql_query', '')
+                        
                         # Determine selected_dataset by checking sql_query
                         selected_dataset = ""
-                        sql_query = state_dict.get('sql_query', '') if isinstance(state_dict, dict) else ''
                         
                         if sql_query:
+                            print(f"      🔍 SQL Query length: {len(sql_query)} chars")
                             found_datasets = []
                             for table_name, dataset_name in TABLE_MAPPING.items():
                                 if table_name in sql_query:
                                     found_datasets.append(dataset_name)
+                                    print(f"      ✓ Found table: {table_name} -> {dataset_name}")
                             
                             selected_dataset = ', '.join(found_datasets) if found_datasets else ''
+                        else:
+                            print(f"      ⚠️ No sql_query found in state_dict")
                         
                         print(f"      📊 Dataset: '{selected_dataset}'")
                         
@@ -121,7 +137,7 @@ def migrate_session_tracking_data():
                             (session_id, user_id, user_question, selected_dataset, sql_info, insert_ts)
                         VALUES
                             ('{session_id_val}', '{user_id}', '{user_question_escaped}', 
-                             '{selected_dataset_escaped}', '{sql_info_clean}', '{insert_ts}')
+                             '{selected_dataset_escaped}', '{sql_info_clean}', '{insert_ts_cst}')
                         """
                         
                         spark.sql(insert_sql)
@@ -130,6 +146,8 @@ def migrate_session_tracking_data():
                         
                     except Exception as row_error:
                         print(f"      ❌ Error migrating row {row_idx}: {row_error}")
+                        import traceback
+                        traceback.print_exc()
                         error_count += 1
                         continue
                 
@@ -138,6 +156,8 @@ def migrate_session_tracking_data():
                 
             except Exception as session_error:
                 print(f"❌ Error processing session {session_id}: {session_error}")
+                import traceback
+                traceback.print_exc()
                 error_count += 1
                 continue
         

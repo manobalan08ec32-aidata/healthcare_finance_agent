@@ -1,32 +1,49 @@
-# Approach 3: Properly escape newlines, quotes, and control characters for JSON
-try:
-    # First escape backslashes, then quotes, then newlines/tabs/returns
-    intermediate_clean = intermediate.replace('\\', '\\\\')  # Escape backslashes first
-    intermediate_clean = intermediate_clean.replace('"', '\\"')  # Escape double quotes
-    intermediate_clean = intermediate_clean.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-    # Also handle any other control characters
-    intermediate_clean = re.sub(r'[\x00-\x08\x0b-\x1f]', lambda m: f'\\u{ord(m.group()):04x}', intermediate_clean)
-    cleaned_json = json.loads(f'"{intermediate_clean}"')  # Wrap in quotes to parse as JSON string first
+async def _insert_session_tracking_row(sql_result: Dict[str, Any]):
+    """Insert the sql_result JSON into tracking table after narrative generation.
+    NEW TABLE: fdmbotsession_tracking_updt
+    Columns: session_id, user_id, user_question, selected_dataset, sql_info, insert_ts
     
-    # Now parse the result as JSON object
-    if isinstance(cleaned_json, str):
-        cleaned_json = json.loads(cleaned_json)
-    print("    ✅ Second parse succeeded after full escape")
-except json.JSONDecodeError as e3:
-    print(f"    ❌ All parsing attempts failed: {e3}")
-    error_pos = getattr(e3, 'pos', 0)
-    print(f"    📝 Problematic area around char {error_pos}: '{intermediate[max(0, error_pos-30):error_pos+30]}'")
-    # Create error result with partial data
-    cleaned_json = {
-        "error": f"JSON parse error: {str(e3)}",
-        "title": user_question,
-        "narrative": "Error parsing stored data - please contact support",
-        "sql_query": intermediate[:500] if len(intermediate) > 500 else intermediate
-    }
-except Exception as e3:
-    print(f"    ❌ Unexpected error in Approach 3: {e3}")
-    cleaned_json = {
-        "error": f"Parse error: {str(e3)}",
-        "title": user_question,
-        "narrative": "Error parsing stored data - please contact support"
-    }
+    Note: selected_dataset column stores functional_names (user-friendly names like "PBM Claims")
+          from router state, NOT technical table names
+    """
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping tracking insert")
+            return
+        session_id = st.session_state.get('session_id', 'unknown')
+        user_id = get_authenticated_user()
+        
+        # Get user_question from sql_result user_question field (rewritten question from workflow)
+        user_question = sql_result.get('user_question', st.session_state.get('current_query', ''))
+        user_question_escaped = user_question.replace("'", "\\'") if user_question else ''
+        
+        # Get functional_names (user-friendly dataset names) from sql_result
+        # This comes from router state: state.get('functional_names', [])
+        functional_names = sql_result.get('functional_names', [])
+        if isinstance(functional_names, list):
+            selected_dataset = ', '.join(functional_names)  # Join with comma and space for display
+        else:
+            selected_dataset = str(functional_names) if functional_names else ''
+        selected_dataset_escaped = selected_dataset.replace("'", "\\'")
+        
+        # Serialize sql_result as JSON (already includes functional_names from router)
+        payload_json = json.dumps(sql_result, ensure_ascii=False)
+        
+        # CRITICAL: Remove newlines and escape single quotes (like _insert_feedback_row)
+        payload_escaped = payload_json.replace("'", "\\'").replace("\n", " ")
+        
+        insert_sql = f"""
+        INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+            (session_id, user_id, user_question, selected_dataset, sql_info, insert_ts)
+        VALUES
+            ('{session_id}', '{user_id}', '{user_question_escaped}', '{selected_dataset_escaped}', '{payload_escaped}', current_timestamp())
+        """
+        
+        print("🗄️ Inserting session tracking row (NEW TABLE - cleaned):", len(payload_json))
+        print(f"   Functional names: {functional_names}")
+        await db_client.execute_sql_async_audit(insert_sql)
+        print("✅ Session tracking insert succeeded (NEW TABLE)")
+            
+    except Exception as e:
+        print(f"⚠️ Session tracking insert failed: {e}")

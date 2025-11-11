@@ -1,44 +1,77 @@
-**Decision Examples (Use these patterns):**
+Navigation Input - Current: 'new question - what is the revenue for Mail for october '
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "new question",
+        "clean_question": "what is the revenue for Mail for october",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "NEW",
+        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for NEW decision. Clean question contains metric (revenue), filters (Mail), and partial time (october). Question is complete with metric+filters+time structure. Since prefix explicitly indicates 'new question', this overrides any other signals and results in NEW decision. No inheritance needed as this is a standalone new question."
+    },
+    "rewrite": {
+        "rewritten_question": "What is the revenue for Mail for October 2025",
+        "question_type": "what",
+        "user_message": ""
+    },
+    "filters": {
+        "filter_values": ["Mail"]
+    }
+}
 
-**Real Conversation Chain from Production:**
+Navigation Input - Current: 'follow-up - show me for the carrier MPDOVA
 
-Ex1: Current: "new question - What is PBM revenue for Q3 2025 compared to Q3 2024"
-→ Prefix: "new question" → NEW | Has: metric+filters+time (complete) → Use as-is
-→ Filters: ["PBM"]
+'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "show me for the carrier MPDOVA",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which is the primary signal for FOLLOW_UP decision. Clean question 'show me for the carrier MPDOVA' contains filter (carrier MPDOVA) but is missing metric and time components. Previous question was 'What is the revenue for Mail for October 2025' which contained metric (revenue), filter (Mail), and time (October 2025). Should inherit 'revenue' metric and 'October 2025' time period from previous question. Current question adds new filter 'carrier MPDOVA' while keeping inherited components."
+    },
+    "rewrite": {
+        "rewritten_question": "What is the revenue for Mail for carrier MPDOVA for October 2025",
+        "question_type": "what",
+        "user_message": "I'm using revenue and October 2025 from your last question."
+    },
+    "filters": {
+        "filter_values": ["Mail", "MPDOVA"]
+    }
+}
 
-Ex2: Current: "follow-up - What therapies contributed to increase" | Prev: "PBM revenue Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "increase" missing metric → inherit "revenue"
-→ Missing: filters (PBM), time → inherit both
-→ Rewrite: "What therapies contributed to revenue increase for PBM for Q3 2025 vs Q3 2024"
-→ Filters: ["PBM"]
-
-Ex3: Current: "follow-up - what GLP-1 drugs drove the increase, include adjusted scripts" | Prev: "revenue increase for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "increase" missing metric → inherit "revenue"
-→ Current adds: GLP-1 | Inherits: PBM, time
-→ Filters: ["GLP-1", "PBM"]
-
-Ex4: Current: "follow-up - compare drug Wegovy decline" | Prev: "revenue increase for GLP-1 for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | Change: "increase" → "decline", missing metric → inherit "revenue"
-→ Current: Wegovy replaces GLP-1 | Inherits: PBM, time
-→ Filters: ["Wegovy", "PBM"]
-
-Ex5: Current: "follow-up - What lines of business contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
-→ Current adds: attributes (lines of business) | Inherits: Wegovy, PBM, time
-→ Filters: ["Wegovy", "PBM"]
-
-Ex6: Current: "follow-up - What Clients in External LOB contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
-→ Current adds: attributes (Clients), filter (External LOB) | Inherits: Wegovy, PBM, time
-→ Filters: ["External LOB", "Wegovy", "PBM"]
-
-**Edge Cases:**
-
-Ex7: Current: "validation - revenue was wrong" | Prev: any
-→ Prefix: "validation" → VALIDATION
-
-Ex8: Current: "why is that high" (no prefix) | Prev: "revenue for PBM for Q3 2025"
-→ No prefix, has pronoun "that" → FOLLOW_UP (inherit all: revenue, PBM, Q3 2025)
-
-Ex9: Current: "actuals for PBM for September" (no prefix) | Prev: "revenue by LOB for Q3 2025"
-→ No prefix, auto-detect | Has metric+filters+partial time → FOLLOW_UP (add year)
+avigation Input - Current: 'follow-up - show me drug Mounjara revenue'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "clean_question": "show me drug Mounjara revenue",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which is the PRIMARY signal for FOLLOW_UP decision. Clean question contains metric 'revenue' and filter 'drug Mounjara'. Previous question had filters 'Mail' and 'carrier MPDOVA' and time 'October 2025'. Current question is complete with metric and filter but missing time period. Should inherit time 'October 2025' from previous question to provide complete context."
+    },
+    "rewrite": {
+        "rewritten_question": "What is drug Mounjara revenue for October 2025",
+        "question_type": "what",
+        "user_message": "I'm using October 2025 from your last question."
+    },
+    "filters": {
+        "filter_values": ["Mounjara"]
+    }
+}
+Added business question to history: 'What is drug Mounjara revenue for October 2025'

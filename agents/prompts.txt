@@ -1,24 +1,77 @@
-Navigation Input - Current: 'follow-up - show me the actuals vs 8+4 for revenue for october'
-Navigation Input - Existing Domain: PBM Network
-Starting single-step processing...
-conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
-📊 Current forecast cycle: 8+4
-LLM Response: {
-    "analysis": {
-        "detected_prefix": "follow-up",
-        "clean_question": "show me the actuals vs 8+4 for revenue for october",
-        "input_type": "business_question",
-        "is_valid_business_question": true,
-        "response_message": "",
-        "context_decision": "FOLLOW_UP",
-        "reasoning": "Detected 'follow-up' prefix which is the PRIMARY signal for FOLLOW_UP decision. Clean question has metric (revenue), partial time (october), and forecast cycle (8+4). Missing year from time period and missing filters that were in previous question. Previous question had filters ['PBM', 'HDP', 'Specialty', 'Mail', 'Retail'] and complete time 'October 2025'. Should inherit these filters and add year 2025 to make time complete. The 8+4 needs 'forecast' prefix per forecast cycle rules." 
-    },
-    "rewrite": {
-        "rewritten_question": "What is actuals vs forecast 8+4 for revenue for PBM for HDP for Specialty for Mail for Retail for October 2025",
-        "question_type": "what",
-        "user_message": "I'm using PBM, HDP, Specialty, Mail, Retail filters and complete time period October 2025 from your last question."
-    },
-    "filters": {
-        "filter_values": ["8+4", "PBM", "HDP", "Specialty", "Mail", "Retail"]
-    }
-}
+[
+  {
+    "table_name": "prd_optumrx_orxfdmprdsa.rag.pbm_claims",
+    "functional_table_name": "Rx Claims",
+    "description": "Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.",
+    "PHI_PII_Columns": ["member_id", "member_date_of_birth"],
+    "high_level_table": "False",
+    "useful_for": [
+      "claim-level financial analysis", "client-level analysis", "drug and therapy class performance", "manufacturer-level insights",
+      "revenue per script and GDR metrics", "line-of-business tracking", "daily and monthly trend analysis", "rate analysis"
+    ],
+    "not_useful_for": ["budget-level summaries", "forecast comparisons", "aggregated financial reporting without claim-level detail"],
+    "metrics": [
+      "revenue amount", "client due amount", "app due amount", "expense amount", "cogs", "Gross Margin %", "wac", "awp",
+      "unadjusted_scripts", "adjusted_scripts", "30_day_scripts", "90_day_scripts", "revenue_per_script", "generic_dispensing_ratio",
+      "volume", "rate_variance", "mix_variance", "volume_variance", "gross margin"
+    ],
+    "attributes": [
+      "Claim Number", "Submit Date", "Client ID", "Client Name", "Pharmacy NPI", "Drug Name",
+      "Therapy Class", "Drug Manufacturer", "Line of Business", "State", "Brand vs Generic", "Client Type",
+      "GPI Number", "Pharmacy Name", "Pharmacy Type", "Carrier ID", "Member Date of Birth", "Member Sex",
+      "Product Category", "Claim Status"
+    ],
+    "time_grains": ["daily", "monthly", "quarterly", "yearly"]
+  },
+  {
+    "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+    "functional_table_name": "Peoplesoft General Ledger",
+    "description": "This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.",
+    "PHI_PII_Columns": [],
+    "high_level_table": "True",
+    "useful_for": [
+      "client level revenue analysis", "volume and script analysis", "monthly actuals analysis", "high level client analysis",
+      "GAAP analysis", "actuals vs forecast vs budget comparison", "line-of-business level tracking", "rate analysis"
+    ],
+    "not_useful_for": ["drug ,therapy level analysis","client level expense (cogs) or gross margin alone", "daily granularity", "carrier level analysis"],
+    "metrics": [
+      "revenue", "expense", "rate_variance", "mix_variance", "volume_variance", "cogs", "sga", "ioi",
+      "membership", "unadjusted_scripts", "adjusted_scripts", "30_day_scripts", "90_day_scripts", "volume",
+      "Cost %", "Gross Margin %", "Operating Expenses %", "Operating Cost %", "IOI %",
+      "Utilization PMPM (Unadjusted)", "Utilization PMPM (Adjusted)", "Revenue per Script (Unadj)", "Cost per Script (Unadj)",
+      "Margin per Script (Unadj)", "IOI per Script (Unadj)", "Revenue per Script (Adj)", "Cost per Script (Adj)",
+      "Margin per Script (Adj)", "IOI per Script (Adj)", "Generic Penetration %", "Op Exp per Script (Unadjusted)",
+      "Op Cost per Script (Unadjusted)", "Op Exp per Script (Adjusted)"
+    ],
+    "attributes": [
+      "Ledger", "Mail Service", "Home Delivery", "Specialty", "Line of Business", "Transaction Date",
+      "Year", "Month", "Quarter", "Product Category", "Product Category Level 1", "Product Category Level 2",
+      "Client ID", "Client Name"
+    ],
+    "time_grains": ["monthly", "quarterly", "yearly"]
+  },
+  
+  {
+    "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_billing",
+    "functional_table_name": "CBS Billing",
+    "description": "This dataset helps to bring all the billing information at invoice level for client, carrier, account, group.",
+    "PHI_PII_Columns": [],
+    "high_level_table": "False",
+    "useful_for": ["claim-level billing analysis", "client-level billing analysis", "invoice analysis"],
+    "not_useful_for": ["expense analysis"],
+    "metrics": ["billed amount", "revenue from billing", "claim fee", "claim cost", "activity fee"],
+    "attributes": [
+      "Claim Number", "Claim Status", "Invoice Number", "Invoice Date", "Invoice GL Date", "Carrier ID",
+      "Account ID", "Group ID", "Client ID", "Client Description", "Drug Name", "Therapy Class",
+      "Drug Manufacturer", "Brand vs Generic", "GPI Number", "Billed Amount", "Revenue Source Type",
+      "Oracle Product Code", "Oracle Product Description", "Activity Category", "Billing Entity Code",
+      "Billing Entity Name", "FQA Company Code", "FQA Geography Code", "FQA Affiliate Code", "FQA Account Code",
+      "FQA LOB Code", "FQA Department Code", "FQA Product Code", "FQA Sub Account Code", "Line of Business"
+    ],
+    "time_grains": ["daily", "monthly", "quarterly", "yearly"]
+  }
+]
+
+
+
+

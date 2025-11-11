@@ -1,180 +1,58 @@
-import json
-
-def migrate_session_tracking_data():
-    """
-    Migrate data from old fdmbotsession_tracking table to new fdmbotsession_tracking_updt table.
-    Process session by session to handle multiple rows per session.
-    Uses spark.sql() for all database operations.
-    """
-    try:
-        # Table name mapping for dataset detection
-        TABLE_MAPPING = {
-            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": "Peoplesoft GL",
-            "prd_optumrx_orxfdmprdsa.rag.pbm_claims": "Rx Claims",
-            "prd_optumrx_orxfdmprdsa.rag.claim_billing": "CBS Billing",
-            "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims": "Pharmacy IRIS Claims"
-        }
-        
-        # Step 1: Get all unique session_ids from old table
-        print("🔍 Fetching unique session IDs from old table...")
-        session_query = """
-        SELECT DISTINCT session_id 
-        FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking
-        ORDER BY session_id
-        """
-        session_df = spark.sql(session_query)
-        session_ids = [row['session_id'] for row in session_df.collect()]
-        
-        if not session_ids:
-            print("⚠️ No sessions found in old table")
-            return
-        
-        total_sessions = len(session_ids)
-        print(f"📊 Found {total_sessions} unique sessions to migrate")
-        
-        # Step 2: Process each session
-        success_count = 0
-        error_count = 0
-        total_rows_migrated = 0
-        
-        for idx, session_id in enumerate(session_ids, 1):
-            print(f"\n{'='*80}")
-            print(f"🔄 Processing session {idx}/{total_sessions}: {session_id}")
-            
-            try:
-                # Fetch all rows for this session from old table
-                # Convert VARIANT to JSON string and convert timestamp to CST
-                fetch_query = f"""
-                SELECT 
-                    session_id, 
-                    user_id, 
-                    user_question, 
-                    TO_JSON(state_info) as state_info_json,
-                    CONVERT_TIMEZONE('America/Chicago', insert_ts) as insert_ts_cst
-                FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking
-                WHERE session_id = '{session_id}'
-                ORDER BY insert_ts ASC
-                """
-                
-                rows_df = spark.sql(fetch_query)
-                rows = rows_df.collect()
-                
-                if not rows:
-                    print(f"⚠️ No rows found for session {session_id}")
-                    continue
-                
-                print(f"   Found {len(rows)} rows for this session")
-                
-                # Process each row in the session
-                for row_idx, row in enumerate(rows, 1):
-                    try:
-                        session_id_val = row['session_id'] if row['session_id'] else ''
-                        user_id = row['user_id'] if row['user_id'] else ''
-                        user_question = row['user_question'] if row['user_question'] else ''
-                        state_info_json = row['state_info_json'] if row['state_info_json'] else ''
-                        insert_ts_cst = row['insert_ts_cst'] if row['insert_ts_cst'] else ''
-                        
-                        print(f"   Row {row_idx}: {user_question[:50]}...")
-                        
-                        # Skip if no state_info
-                        if not state_info_json or not str(state_info_json).strip():
-                            print(f"      ⚠️ No state_info, skipping")
-                            continue
-                        
-                        # Parse JSON to extract sql_query for dataset detection
-                        state_info_str = str(state_info_json)
-                        state_dict = None
-                        sql_query = ""
-                        
-                        try:
-                            # First parse attempt
-                            parsed = json.loads(state_info_str)
-                            
-                            # Check if it's double-encoded (parsed result is a string)
-                            if isinstance(parsed, str):
-                                print(f"      🔄 Double-encoded JSON detected, parsing again...")
-                                state_dict = json.loads(parsed)
-                            else:
-                                state_dict = parsed
-                                
-                        except json.JSONDecodeError as e:
-                            print(f"      ⚠️ JSON parse error: {e}, using empty dict")
-                            state_dict = {}
-                        
-                        # Extract sql_query for dataset detection
-                        if isinstance(state_dict, dict):
-                            sql_query = state_dict.get('sql_query', '')
-                        
-                        # Determine selected_dataset by checking sql_query
-                        selected_dataset = ""
-                        
-                        if sql_query:
-                            print(f"      🔍 SQL Query length: {len(sql_query)} chars")
-                            found_datasets = []
-                            for table_name, dataset_name in TABLE_MAPPING.items():
-                                if table_name in sql_query:
-                                    found_datasets.append(dataset_name)
-                                    print(f"      ✓ Found table: {table_name} -> {dataset_name}")
-                            
-                            selected_dataset = ', '.join(found_datasets) if found_datasets else ''
-                        else:
-                            print(f"      ⚠️ No sql_query found in state_dict")
-                        
-                        print(f"      📊 Dataset: '{selected_dataset}'")
-                        
-                        # CRITICAL: Prepare JSON for SQL insert
-                        # Remove ALL newlines and tabs, escape single quotes
-                        sql_info_clean = state_info_str.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-                        sql_info_clean = sql_info_clean.replace("'", "\\'")
-                        
-                        # Escape values for SQL insert
-                        user_question_escaped = user_question.replace("'", "\\'")
-                        selected_dataset_escaped = selected_dataset.replace("'", "\\'")
-                        
-                        # Insert into new table
-                        insert_sql = f"""
-                        INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
-                            (session_id, user_id, user_question, selected_dataset, sql_info, insert_ts)
-                        VALUES
-                            ('{session_id_val}', '{user_id}', '{user_question_escaped}', 
-                             '{selected_dataset_escaped}', '{sql_info_clean}', '{insert_ts_cst}')
-                        """
-                        
-                        spark.sql(insert_sql)
-                        print(f"      ✅ Row {row_idx} migrated successfully")
-                        total_rows_migrated += 1
-                        
-                    except Exception as row_error:
-                        print(f"      ❌ Error migrating row {row_idx}: {row_error}")
-                        import traceback
-                        traceback.print_exc()
-                        error_count += 1
-                        continue
-                
-                success_count += 1
-                print(f"✅ Session {session_id} completed")
-                
-            except Exception as session_error:
-                print(f"❌ Error processing session {session_id}: {session_error}")
-                import traceback
-                traceback.print_exc()
-                error_count += 1
-                continue
-        
-        # Summary
-        print(f"\n{'='*80}")
-        print(f"🎉 MIGRATION COMPLETE")
-        print(f"   Total sessions processed: {total_sessions}")
-        print(f"   Successful sessions: {success_count}")
-        print(f"   Failed sessions: {error_count}")
-        print(f"   Total rows migrated: {total_rows_migrated}")
-        print(f"{'='*80}")
-        
-    except Exception as e:
-        print(f"❌ Migration failed: {e}")
-        import traceback
-        traceback.print_exc()
+UPDATE prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+SET selected_dataset = ARRAY_JOIN(
+    FILTER(
+        ARRAY(
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast%' 
+                THEN 'Peoplesoft GL' ELSE NULL END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pbm_claims%' 
+                THEN 'Rx Claims' ELSE NULL END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.claim_billing%' 
+                THEN 'CBS Billing' ELSE NULL END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pharmacy_claims%' 
+                THEN 'Pharmacy IRIS Claims' ELSE NULL END
+        ),
+        x -> x IS NOT NULL
+    ),
+    ', '
+)
+WHERE selected_dataset IS NULL 
+    AND sql_info IS NOT NULL;
 
 
-# Usage in Databricks notebook:
-migrate_session_tracking_data()
+UPDATE prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+SET selected_dataset = TRIM(BOTH ', ' FROM 
+    CONCAT_WS(', ',
+        CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast%' 
+            THEN 'Peoplesoft GL' END,
+        CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pbm_claims%' 
+            THEN 'Rx Claims' END,
+        CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.claim_billing%' 
+            THEN 'CBS Billing' END,
+        CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pharmacy_claims%' 
+            THEN 'Pharmacy IRIS Claims' END
+    )
+)
+WHERE selected_dataset IS NULL 
+    AND sql_info IS NOT NULL;
+
+
+SELECT 
+    session_id,
+    user_question,
+    selected_dataset as current_value,
+    TRIM(BOTH ', ' FROM 
+        CONCAT_WS(', ',
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast%' 
+                THEN 'Peoplesoft GL' END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pbm_claims%' 
+                THEN 'Rx Claims' END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.claim_billing%' 
+                THEN 'CBS Billing' END,
+            CASE WHEN sql_info LIKE '%prd_optumrx_orxfdmprdsa.rag.pharmacy_claims%' 
+                THEN 'Pharmacy IRIS Claims' END
+        )
+    ) as new_value
+FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+WHERE selected_dataset IS NULL 
+    AND sql_info IS NOT NULL
+LIMIT 20;

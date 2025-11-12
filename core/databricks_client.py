@@ -1,224 +1,593 @@
-assessment_prompt = f"""
-You are a highly skilled Healthcare Finance SQL analyst. You have TWO sequential tasks to complete.
+import asyncio
+import aiohttp
+import json
+import time
+from typing import List, Dict, Any, Optional
+import datetime
+import os
+import requests
+from databricks.vector_search.client import VectorSearchClient
+from databricks.vector_search.reranker import DatabricksReranker
+from core.state_schema import AgentState
 
-CURRENT QUESTION: {current_question}
-MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
-MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+from dotenv import load_dotenv
+load_dotenv()
 
-FILTER VALUES EXTRACTED:
-{filter_context_text}
+class DatabricksClient:
+    """Databricks client with async support for SQL execution, vector search, and Claude API calls"""
+    
+    def __init__(self):
+        
+        # API Constants
+        self.VECTOR_TBL_INDEX = "prd_optumrx_orxfdmprdsa.rag.table_chunks"
+        self.LLM_MODEL = "databricks-claude-sonnet-4"
+        self.SESSION_TABLE = "prd_optumrx_orxfdmprdsa.rag.session_state"
+        self.ROOTCAUSE_INDEX = "prd_optumrx_orxfdmprdsa.rag.rootcause_chunks"
+        self.UHG_AUTH_URL = "https://api.uhg.com/oauth2/token"
+        self.UHG_SCOPE = "https://api.uhg.com/.default"
+        self.UHG_GRANT_TYPE = "client_credentials"
+        self.UHG_DEPLOYMENT_NAME = "gpt-4o_2024-11-20"
+        self.UHG_ENDPOINT = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
+        self.UHG_API_VERSION = "2025-01-01-preview"
+        self._vector_client: Optional[VectorSearchClient] = None
+        self._vector_indexes: Dict[str, Any] = {}  # Cache indexes by name
+        
 
-AVAILABLE METADATA: {dataset_metadata}
+        self.DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
+        self.DATABRICKS_LLM_HOST = os.getenv("DATABRICKS_LLM_HOST")
+        self.DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+        self.DATABRICKS_LLM_TOKEN = os.getenv("DATABRICKS_LLM_TOKEN")
+        self.SQL_WAREHOUSE_ID = os.getenv("SQL_WAREHOUSE_ID")
+        self.UHG_PROJECT_ID = os.getenv("UHG_PROJECT_ID")
+        self.UHG_CLIENT_ID = os.getenv("UHG_CLIENT_ID")
+        self.UHG_CLIENT_SECRET = os.getenv("UHG_CLIENT_SECRET")
+        
+        # Claude API Configuration
+        self.CLAUDE_PROJECT_ID = os.getenv("CLAUDE_PROJECT_ID")
+        self.CLAUDE_CLIENT_ID = os.getenv("CLAUDE_CLIENT_ID")
+        self.CLAUDE_CLIENT_SECRET = os.getenv("CLAUDE_CLIENT_SECRET")
 
-==============================
-TASK 1: BRIEF ASSESSMENT
-==============================
+        self.DATABRICKS_CLIENT_ID = os.getenv("DATABRICKS_CLIENT_ID")
+        self.DATABRICKS_CLIENT_SECRET = os.getenv("DATABRICKS_CLIENT_SECRET")
+        self.DATABRICKS_TENANT_ID = os.getenv("DATABRICKS_TENANT_ID")
+        self.DATABRICKS_ADB_ID = os.getenv("DATABRICKS_ADB_ID")
 
-Analyze the user's question for clarity across these areas:
-A. TEMPORAL SCOPE: Time period (year, quarter, month) specified or not
-B. METRIC DEFINITIONS: Business metrics clear or ambiguous
-C. BUSINESS CONTEXT: Filtering/grouping dimensions clear or unclear
-D. FORMULA REQUIREMENTS: Required formulas exist in metadata or not
-E. METADATA MAPPING: Columns successfully mapped from descriptions/list
-F. QUERY STRATEGY: Single query vs multiple queries needed
+        self.CLAUDE_AUTH_URL = "https://api.uhg.com/oauth2/token"
+        self.CLAUDE_SCOPE = "https://api.uhg.com/.default"
+        self.CLAUDE_GRANT_TYPE = "client_credentials"
+        self.CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        self.CLAUDE_API_URL = "https://api.uhg.com/api/cloud/api-management/ai-gateway/1.0"
 
-**MULTI-QUERY DECISION LOGIC:**
-- Multi-table: Use JOIN if related data needed together, SEPARATE queries if complementary analysis
-- Complex single-table: Multiple analytical dimensions (trends + rankings) may need separate queries
-- If uncertain whether to join or separate, default to separate queries for clarity
+        # Headers for API calls
+        self.headers = {
+            "Authorization": f"Bearer {self.DATABRICKS_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        self.llm_headers = {
+            "Authorization": f"Bearer {self.DATABRICKS_LLM_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        
+        # API URLs
+        self.sql_api_url = f"{self.DATABRICKS_HOST}/api/2.0/sql/statements/"
+        self.llm_api_url = f"{self.DATABRICKS_LLM_HOST}/serving-endpoints/{self.LLM_MODEL}/invocations"
 
-==============================
-ASSESSMENT FORMAT (BRIEF)
-==============================
+        # Runtime (non-serialized) attributes for improved async performance
+        self._http_session: Optional[aiohttp.ClientSession] = None
+        # More conservative timeouts for better network reliability
+        self._http_session_timeout = aiohttp.ClientTimeout(
+            total=180,  # Increased total timeout
+            connect=15,  # Increased connection timeout
+            sock_read=90,  # Increased read timeout
+            sock_connect=15  # Increased socket connection timeout
+        )
+        self._claude_token: Optional[str] = None
+        self._claude_token_expiry: Optional[float] = None  # epoch seconds
+        self._token_skew_seconds = 60  # refresh 1 minute before expiry
+        self._llm_semaphore = asyncio.Semaphore(3)  # limit concurrent LLM calls
 
-**ASSESSMENT**: A:✓(brief reason) B:✓(brief reason) C:✓(brief reason) D:✓(brief reason) E:✓(brief reason) F:Single/Multi
-**DECISION**: PROCEED - [One sentence reasoning]
+        # ---- Acquire Azure AD access token for Databricks ----
+        token_url = f"https://login.microsoftonline.com/{self.DATABRICKS_TENANT_ID}/oauth2/v2.0/token"
+        token_payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.DATABRICKS_CLIENT_ID,
+            "client_secret": self.DATABRICKS_CLIENT_SECRET,
+            "scope": f"{self.DATABRICKS_ADB_ID}/.default"
+        }
+        token_resp = requests.post(token_url, data=token_payload)
+        token_resp.raise_for_status()
+        self.access_token = token_resp.json()["access_token"]
+        self.token_headers = {
+            "Authorization": f"Bearer {self.access_token}"
+        }
+    
+    async def _get_vector_client(self) -> VectorSearchClient:
+        """Lazy-load and cache the VectorSearchClient"""
+        if self._vector_client is None:
+            self._vector_client = VectorSearchClient(
+                workspace_url=self.DATABRICKS_HOST,
+                service_principal_client_id=self.DATABRICKS_CLIENT_ID,
+                service_principal_client_secret=self.DATABRICKS_CLIENT_SECRET,
+                azure_tenant_id=self.DATABRICKS_TENANT_ID
+            )
+        return self._vector_client
 
-Keep ultra-brief:
-- Use ✓ or ❌ with max 10 words explanation in parentheses
-- Decision reasoning: maximum 15 words
-- No detailed explanations unless requesting follow-up
+    async def _get_vector_index(self, index_name: str, endpoint_name: str = "metadata_vectore_search_endpoint"):
+        """Get and cache vector search index with configurable endpoint"""
+        cache_key = f"{endpoint_name}::{index_name}"
+        if cache_key not in self._vector_indexes:
+            client = await self._get_vector_client()
+            index = client.get_index(
+                endpoint_name=endpoint_name,
+                index_name=index_name
+            )
+            index._get_token_for_request = lambda: self.access_token
+            self._vector_indexes[cache_key] = index
+        return self._vector_indexes[cache_key]
 
-==============================
-DECISION CRITERIA
-==============================
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Lazily create / reuse a single aiohttp session for the client lifetime."""
+        # When using asyncio.run() per request, the event loop is closed each time.
+        # If an existing session is bound to a closed loop, recreate it to avoid
+        # 'Event loop is closed' errors on follow-up questions.
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
 
-PROCEED TO TASK 2 IF:
-- All areas (A-F) sufficiently clear
-- Can map user request to columns with high confidence
-- Standard SQL can handle all calculations
-- Multi-table strategy is clear
+        recreate = False
+        if self._http_session is None:
+            recreate = True
+        else:
+            # Session object might have a _loop attribute (implementation detail)
+            session_loop = getattr(self._http_session, '_loop', None)
+            if self._http_session.closed:
+                recreate = True
+            elif session_loop is not None:
+                # If previous loop is closed or differs from current running loop, recreate
+                if session_loop.is_closed():
+                    recreate = True
+                elif current_loop is not None and session_loop is not current_loop:
+                    recreate = True
 
-REQUEST FOLLOW-UP IF:
-- ANY area has significant ambiguity
-- Metadata mapping uncertain
-- Multi-table approach unclear
+        if recreate:
+            if self._http_session and not self._http_session.closed:
+                try:
+                    await self._http_session.close()
+                except Exception:
+                    pass
+            self._http_session = aiohttp.ClientSession(timeout=self._http_session_timeout)
+        return self._http_session
 
-==============================================
-TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION 
-==============================================
+    async def close(self):
+        """Explicitly close underlying HTTP session (optional call on app shutdown)."""
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
 
-(Only execute if Task 1 says "PROCEED")
+    async def _fetch_hcp_token_async(self) -> str:
+        """Fetch a new token from HCP auth service and cache it with expiry."""
+        data = {
+            "grant_type": self.CLAUDE_GRANT_TYPE,
+            "client_id": self.CLAUDE_CLIENT_ID,
+            "client_secret": self.CLAUDE_CLIENT_SECRET,
+            "scope": self.CLAUDE_SCOPE,
+        }
+        session = await self._get_session()
+        async with session.post(self.CLAUDE_AUTH_URL, data=data) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise Exception(f"Auth token fetch failed ({resp.status}): {text[:300]}")
+            result = json.loads(text)
+            access_token = result.get("access_token")
+            expires_in = result.get("expires_in", 3000)
+            self._claude_token = access_token
+            self._claude_token_expiry = time.time() + expires_in
+            return access_token
 
-**CORE SQL GENERATION RULES:**
+    async def _get_claude_token(self) -> str:
+        """Return a cached token if still valid; otherwise fetch a new one."""
+        if self._claude_token and self._claude_token_expiry:
+            if time.time() < (self._claude_token_expiry - self._token_skew_seconds):
+                return self._claude_token
+        return await self._fetch_hcp_token_async()
 
-1. MANDATORY FILTERS - ALWAYS APPLY
-- Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
-- If user question doesn't mention an attribute but filter values exist in FILTER VALUES EXTRACTED, map those values to appropriate columns using metadata
-- If table shows "Not Applicable" for mandatory columns, skip this requirement
-- Apply mandatory filters but only include them in SELECT if relevant to the user's question
+    async def call_claude_api_endpoint_async(self, messages: list, max_tokens: int = 8000, temperature: float = 0.1, top_p: float = 0.8, system_prompt: str = "you are an AI assistant") -> str:
+        """
+        Async version of Claude API endpoint call using HCP credentials.
+        Features: token caching, session reuse, retries, concurrency limiting
+        """
+        BASE_URL = self.CLAUDE_API_URL
+        PROJECT_ID = self.CLAUDE_PROJECT_ID
+        MODEL_ID = self.CLAUDE_MODEL_ID
 
-2. CALCULATED FORMULAS HANDLING (CRITICAL)
-**When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
+        try:
+            # Concurrency guard to prevent overwhelming the gateway
+            async with self._llm_semaphore:
+                # Step 1: Get (cached) token
+                token = await self._get_claude_token()
 
-CORRECT PATTERN:
-```sql
-SELECT 
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS expense_cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS gross_margin
-FROM table
-WHERE conditions AND UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
-GROUP BY ledger, year, month  -- Group by dimensions, NOT metric_type
-```
+                # Step 2: Convert messages to API format
+                api_messages = []
+                for msg in messages:
+                    api_messages.append({
+                        "role": msg["role"],
+                        "content": [{"text": msg["content"]}]
+                    })
 
-WRONG PATTERN:
-```sql
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type, breaks formulas
-```
+                # Step 3: Prepare headers and payload
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {token}",
+                    "projectId": PROJECT_ID,
+                    "guardrail": "high_strength",
+                    "User-Agent": "agentbot-async/1.0"
+                }
+                payload = {
+                    "system": [{"text": system_prompt}],
+                    "messages": api_messages,
+                    "inferenceConfig": {
+                        "maxTokens": max_tokens,
+                        "temperature": temperature,
+                        "topP": top_p
+                    }
+                }
 
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+                url = f"{BASE_URL}/model/{MODEL_ID}/converse"
 
-3. METRICS & AGGREGATIONS
-- Always use appropriate aggregation functions for numeric metrics: SUM, COUNT, AVG, MAX, MIN
-- Even with specific entity filters (invoice #123, member ID 456), always aggregate unless user asks for "line items" or "individual records"
-- Include time dimensions (month, quarter, year) when relevant to question
-- Use business-friendly dimension names (therapeutic_class, service_type, age_group, state_name)
+                # Retry (exponential backoff) for transient gateway errors
+                transient_statuses = {502, 503, 504}
+                backoff = 1.0
+                max_retries = 3
+                session = await self._get_session()
+                last_error_text = None
+                
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with session.post(url, headers=headers, json=payload) as response:
+                            status = response.status
+                            if status == 401:
+                                # Token might be expired unexpectedly; force refresh once
+                                if attempt == 1:
+                                    print("401 received – refreshing token and retrying once")
+                                    self._claude_token = None
+                                    token = await self._get_claude_token()
+                                    headers["Authorization"] = f"Bearer {token}"
+                                    continue
+                            if status not in (200,):
+                                error_text = await response.text()
+                                last_error_text = error_text
+                                print(f"Claude call failed (status={status}) attempt={attempt}: {error_text[:400]}")
+                                if status in transient_statuses and attempt < max_retries:
+                                    await asyncio.sleep(backoff)
+                                    backoff *= 2
+                                    continue
+                                response.raise_for_status()
+                            result = await response.json()
+                            try:
+                                return result["output"]["message"]["content"][0]["text"]
+                            except KeyError as e:
+                                print(f"Response parsing KeyError: {e}; raw keys: {list(result.keys())}")
+                                return json.dumps(result)[:2000]
+                    except aiohttp.ClientError as ce:
+                        print(f"Network client error attempt={attempt}: {ce}")
+                        if attempt < max_retries:
+                            await asyncio.sleep(backoff)
+                            backoff *= 2
+                            continue
+                        raise
+                raise Exception(f"Claude API endpoint call failed after retries. Last error: {last_error_text[:400] if last_error_text else 'No body'}")
 
-4. SELECT CLAUSE STRATEGY
+        except aiohttp.ClientError as e:
+            print(f"HTTP Error: {e}")
+            raise Exception(f"Claude API endpoint call failed: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Claude API endpoint call failed: {str(e)}")
 
-**Simple Aggregates (no breakdown requested):**
-- Show only the aggregated metric and essential time dimensions if specified
-- Example: "What is total revenue?" → SELECT SUM(revenue) AS total_revenue
-- Do NOT include unnecessary business dimensions or filter columns
+    # Also convert SQL execution to async with session reuse and enhanced retry logic
+    async def execute_sql_async(self, sql_query: str, timeout: int = 300) -> List[Dict]:
+        """Async version of SQL execution with enhanced network retry logic and session reuse"""
+        
+        payload = {
+            "warehouse_id": self.SQL_WAREHOUSE_ID,
+            "statement": sql_query,
+            "disposition": "INLINE",
+            "wait_timeout": "10s"
+        }
+        
+        # Retry configuration for network issues
+        max_retries = 3
+        base_delay = 2.0  # Start with 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_session()
+                
+                print(f"SQL execution attempt {attempt + 1}/{max_retries}")
+                
+                async with session.post(
+                    self.sql_api_url,
+                    headers=self.headers,
+                    json=payload
+                ) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                
+                # Debug: Print response structure
+                print(f"Databricks response keys: {result.keys()}")
+                
+                # Check if query completed immediately
+                status = result.get('status', {})
+                state = status.get('state', '')
+                
+                print(f"Initial query state: {state}")
+                
+                if state == 'SUCCEEDED':
+                    return self._extract_results(result)
+                elif state in ['PENDING', 'RUNNING']:
+                    statement_id = result.get('statement_id')
+                    if statement_id:
+                        print(f"Query still running, polling for results (timeout: {timeout}s)")
+                        return await self._poll_for_results_async(statement_id, timeout)
+                    else:
+                        raise Exception("Query is running but no statement_id provided")
+                elif state == 'FAILED':
+                    error_message = status.get('error', {}).get('message', 'Unknown error')
+                    raise Exception(f"Query failed: {error_message}")
+                elif state == 'CANCELED':
+                    raise Exception("Query was canceled")
+                else:
+                    return self._extract_results(result)
+                    
+            except aiohttp.ClientError as e:
+                error_str = str(e)
+                print(f"Network error on attempt {attempt + 1}: {error_str}")
+                
+                # Check if this is a connection-related error that we should retry
+                is_connection_error = any(err_pattern in error_str.lower() for err_pattern in [
+                    'connection was forcibly closed',
+                    'connection reset',
+                    'connection aborted',
+                    'connection timeout',
+                    'connection refused',
+                    'winerror 10054',
+                    'winerror 10053',
+                    'winerror 10060'
+                ])
+                
+                if is_connection_error and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"Connection error detected, retrying in {delay}s...")
+                    
+                    # Force recreate session on connection errors
+                    if self._http_session and not self._http_session.closed:
+                        try:
+                            await self._http_session.close()
+                        except Exception:
+                            pass
+                        self._http_session = None
+                    
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Not a connection error or max retries reached
+                    raise Exception(f"SQL execution failed: {str(e)}")
+                    
+            except Exception as e:
+                error_str = str(e)
+                print(f"Unexpected error on attempt {attempt + 1}: {error_str}")
+                
+                # Don't retry non-network errors unless it's the last attempt
+                if attempt < max_retries - 1 and 'connection' in error_str.lower():
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Connection-related error, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise Exception(f"Unexpected error in SQL execution: {str(e)}")
+        
+        # This should not be reached due to the raise statements above
+        raise Exception("SQL execution failed after all retry attempts")
+    
+        # Also convert SQL execution to async with session reuse and enhanced retry logic
+    async def execute_sql_async_audit(self, sql_query: str, timeout: int = 300) -> List[Dict]:
+        """Async version of SQL execution with enhanced network retry logic and session reuse"""
+        
+        payload = {
+            "warehouse_id": self.SQL_WAREHOUSE_ID,
+            "statement": sql_query,
+            "disposition": "INLINE",
+            "wait_timeout": "10s"
+        }
+        
+        # Retry configuration for network issues
+        max_retries = 3
+        base_delay = 2.0  # Start with 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_session()
+                
+                print(f"SQL execution attempt {attempt + 1}/{max_retries}")
+                
+                async with session.post(
+                    self.sql_api_url,
+                    headers=self.headers,
+                    json=payload
+                ) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                
+                # Debug: Print response structure
+                print(f"Databricks response keys: {result.keys()}")
+                
+                # Check if query completed immediately
+                status = result.get('status', {})
+                state = status.get('state', '')
+                
+                print(f"Initial query state: {state}")
+                
+                if state == 'SUCCEEDED':
+                    return self._extract_results(result)
+                elif state in ['PENDING', 'RUNNING']:
+                    statement_id = result.get('statement_id')
+                    if statement_id:
+                        print(f"Query still running, polling for results (timeout: {timeout}s)")
+                        return await self._poll_for_results_async(statement_id, timeout)
+                    else:
+                        raise Exception("Query is running but no statement_id provided")
+                elif state == 'FAILED':
+                    error_message = status.get('error', {}).get('message', 'Unknown error')
+                    raise Exception(f"Query failed: {error_message}")
+                elif state == 'CANCELED':
+                    raise Exception("Query was canceled")
+                else:
+                    return self._extract_results(result)
+                    
+            except aiohttp.ClientError as e:
+                error_str = str(e)
+                print(f"Network error on attempt {attempt + 1}: {error_str}")
+                
+                # Check if this is a connection-related error that we should retry
+                is_connection_error = any(err_pattern in error_str.lower() for err_pattern in [
+                    'connection was forcibly closed',
+                    'connection reset',
+                    'connection aborted',
+                    'connection timeout',
+                    'connection refused',
+                    'winerror 10054',
+                    'winerror 10053',
+                    'winerror 10060'
+                ])
+                
+                if is_connection_error and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"Connection error detected, retrying in {delay}s...")
+                    
+                    # Force recreate session on connection errors
+                    if self._http_session and not self._http_session.closed:
+                        try:
+                            await self._http_session.close()
+                        except Exception:
+                            pass
+                        self._http_session = None
+                    
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    # Not a connection error or max retries reached
+                    raise Exception(f"SQL execution failed: {str(e)}")
+                    
+            except Exception as e:
+                error_str = str(e)
+                print(f"Unexpected error on attempt {attempt + 1}: {error_str}")
+                
+                # Don't retry non-network errors unless it's the last attempt
+                if attempt < max_retries - 1 and 'connection' in error_str.lower():
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Connection-related error, retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise Exception(f"Unexpected error in SQL execution: {str(e)}")
+        
+        # This should not be reached due to the raise statements above
+        raise Exception("SQL execution failed after all retry attempts")
 
-**Calculations & Breakdowns (analysis BY dimensions):**
-- Include ALL columns used in WHERE, GROUP BY, and calculations when relevant to question
-- For calculations, show all components for transparency:
-  * Percentage: Include numerator + denominator + percentage
-  * Variance: Include original values + variance
-  * Ratios: Include both components + ratio
-- Example: "Cost per member by state" → SELECT state_name, total_cost, member_count, cost_per_member
+    async def _poll_for_results_async(self, statement_id: str, timeout: int = 300) -> List[Dict]:
+        """Async version of polling for query results with 2-second intervals and session reuse"""
+        
+        print(f"🔄 Polling for results of statement {statement_id} (max {timeout}s)")
+        
+        start_time = time.time()
+        poll_interval = 2  # Fixed 2-second polling interval
+        session = await self._get_session()
+        
+        while time.time() - start_time < timeout:
+            try:
+                elapsed = time.time() - start_time
+                print(f"  ⏱️ Elapsed: {elapsed:.1f}s, checking status...")
+                
+                status_url = f"{self.sql_api_url}{statement_id}"
+                
+                async with session.get(status_url, headers=self.headers) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                
+                status = result.get('status', {})
+                state = status.get('state', '')
+                
+                print(f"    Status: {state}")
+                
+                if state == 'SUCCEEDED':
+                    print(f"  Query completed successfully after {elapsed:.1f}s")
+                    return self._extract_results(result)
+                elif state == 'FAILED':
+                    error_message = status.get('error', {}).get('message', 'Unknown error')
+                    raise Exception(f"Query failed after {elapsed:.1f}s: {error_message}")
+                elif state == 'CANCELED':
+                    raise Exception(f"Query was canceled after {elapsed:.1f}s")
+                elif state in ['PENDING', 'RUNNING']:
+                    print(f"    📊 Still running, waiting {poll_interval}s before next check...")
+                    await asyncio.sleep(poll_interval)  # Non-blocking sleep - fixed 2 seconds
+                    continue
+                else:
+                    print(f"    ❓ Unknown state: {state}, continuing to poll...")
+                    await asyncio.sleep(poll_interval)
+                    continue
+                    
+            except aiohttp.ClientError as e:
+                error_str = str(e)
+                print(f"    ⚠️ Network error while polling: {error_str}")
+                
+                # Check if this is a connection error - if so, recreate session
+                is_connection_error = any(err_pattern in error_str.lower() for err_pattern in [
+                    'connection was forcibly closed',
+                    'connection reset',
+                    'connection aborted',
+                    'winerror 10054',
+                    'winerror 10053'
+                ])
+                
+                if is_connection_error:
+                    print(f"    🔄 Connection error detected, recreating session...")
+                    # Force recreate session on connection errors
+                    if self._http_session and not self._http_session.closed:
+                        try:
+                            await self._http_session.close()
+                        except Exception:
+                            pass
+                        self._http_session = None
+                    session = await self._get_session()
+                
+                print(f"    ⏱️ Retrying in {poll_interval}s...")
+                await asyncio.sleep(poll_interval)
+                continue
+        
+        raise Exception(f"Query timed out after {timeout} seconds")
 
-5. MULTI-TABLE JOIN SYNTAX (when applicable)
-- Use provided join clause exactly as specified
-- Qualify all columns with table aliases
-- Include all necessary tables in FROM/JOIN clauses
-- Only join if question requires related data together; otherwise use separate queries
+    # Keep your existing _extract_results method unchanged
+    def _extract_results(self, result: Dict) -> List[Dict]:
+        """Extract results from Databricks response (unchanged)"""
+        result_data = result.get("result", {})
+        if "data_array" not in result_data:
+            return []
+        
+        if "manifest" not in result:
+            return []
+            
+        cols = [c["name"] for c in result["manifest"]["schema"]["columns"]]
+        return [dict(zip(cols, row)) for row in result_data["data_array"]]
 
-6. ATTRIBUTE-ONLY QUERIES
-- If question asks only about attributes (age, name, type) without metrics, return relevant columns without aggregation
+    def _extract_json_from_response(self, response: str) -> str:
+        """Extract JSON content from XML tags or return the response if no tags found"""
+        import re
+        
+        # Try to extract content between <json> tags
+        json_match = re.search(r'<json>(.*?)</json>', response, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+        
+        # If no XML tags found, assume the entire response is JSON
+        return response.strip()
 
-7. STRING FILTERING - CASE INSENSITIVE
-- Always use UPPER() on both sides for text/string comparisons
-- Example: WHERE UPPER(product_category) = UPPER('Specialty')
-
-8. TOP N/BOTTOM N QUERIES WITH CONTEXT
-- Show requested top/bottom N records with individual values
-- Include overall totals with these rules:
-  * ✅ Include totals for summable metrics: revenue, cost, expense, amount, count, volume, scripts, quantity, spend
-  * ❌ Exclude totals for derived metrics: margin %, ratios, rates, per-unit calculations, averages
-- Show percentage contribution of top/bottom N to overall total when totals are included
-- ALWAYS filter out blank/null records: WHERE column_name NOT IN ('-', 'BL')
-
-9. COMPARISON QUERIES - SIDE-BY-SIDE FORMAT
-- When comparing two related metrics (actual vs forecast, budget vs actual), use side-by-side columns
-- For time-based comparisons (month-over-month, year-over-year), display time periods as adjacent columns with clear month/period names
-- Example: Display "January_Revenue", "February_Revenue", "March_Revenue" side by side for easy comparison
-- Include variance/difference columns when comparing metrics
-- Prevents users from manually comparing separate rows
-
-10. DATABRICKS SQL COMPATIBILITY
-- Standard SQL functions: SUM, COUNT, AVG, MAX, MIN
-- Date functions: date_trunc(), year(), month(), quarter()
-- Conditional logic: CASE WHEN
-- CTEs: WITH clauses for complex logic
-
-11. FORMATTING & ORDERING
-- Show whole numbers for metrics, round percentages to 4 decimal places
-- Use ORDER BY only for date columns in descending order
-- Use meaningful, business-relevant column names aligned with user's question
-
-==============================
-OUTPUT FORMATS
-==============================
-
-Return ONLY the result in XML tags with no additional text or explanations.
-
-**SINGLE SQL QUERY:**
-<sql>
-[Your complete SQL query here with proper formatting]
-</sql>
-
-**MULTIPLE SQL QUERIES:**
-<multiple_sql>
-<query1_title>
-[Brief descriptive title - max 8 words]
-</query1_title>
-<query1>
-[First SQL query]
-</query1>
-<query2_title>
-[Brief descriptive title - max 8 words]
-</query2_title>
-<query2>
-[Second SQL query]
-</query2>
-</multiple_sql>
-
-**FOLLOW-UP REQUEST:**
-<followup>
-I need clarification to generate accurate SQL:
-
-**[Specific issue from unclear area]**: [Direct question]
-- Available data: [specific column names from metadata]
-- Suggested approach: [concrete calculation option]
-
-[Include second issue only if multiple critical areas are unclear]
-
-Please clarify these points.
-</followup>
-
-==============================
-FOLLOW-UP RULES
-==============================
-
-STEP 1: Identify which areas (A-F) from assessment were marked "❌"
-
-STEP 2: Generate questions ONLY for those unclear areas
-
-CONSTRAINTS:
-- Ask questions only for areas marked "❌ Needs Clarification"
-- If only 1 area unclear → ask 1 question
-- If 2+ areas unclear → maximum 2 questions for most critical areas
-- Never ask about areas marked "✓"
-- Each question gets 2 sub-bullets: available data + suggestion
-- Use actual column names from metadata
-- Keep all bullets short and actionable
-
-You get ONE opportunity for follow-up, so be decisive.
-
-==============================
-EXECUTION INSTRUCTION
-==============================
-
-1. Complete brief TASK 1 assessment (A-F checkmarks)
-2. Make clear PROCEED/FOLLOW-UP decision in one sentence
-3. If PROCEED: Execute TASK 2 with SQL generation
-4. If FOLLOW-UP: Ask targeted questions for unclear areas only
-
-Show your assessment first, then provide SQL or follow-up.
-"""

@@ -1,77 +1,148 @@
-[
-  {
-    "table_name": "prd_optumrx_orxfdmprdsa.rag.pbm_claims",
-    "functional_table_name": "Rx Claims",
-    "description": "Claim-level dataset supporting financial and utilization analysis across client, pharmacy, and drug dimensions. Enables variance tracking by therapy class, manufacturer, and other attributes, with daily granularity and derived metrics like revenue per script and GDR.",
-    "PHI_PII_Columns": ["member_id", "member_date_of_birth"],
-    "high_level_table": "False",
-    "useful_for": [
-      "claim-level financial analysis", "client-level analysis", "drug and therapy class performance", "manufacturer-level insights",
-      "revenue per script and GDR metrics", "line-of-business tracking", "daily and monthly trend analysis", "rate analysis"
-    ],
-    "not_useful_for": ["budget-level summaries", "forecast comparisons", "aggregated financial reporting without claim-level detail"],
-    "metrics": [
-      "revenue amount", "client due amount", "app due amount", "expense amount", "cogs", "Gross Margin %", "wac", "awp",
-      "unadjusted_scripts", "adjusted_scripts", "30_day_scripts", "90_day_scripts", "revenue_per_script", "generic_dispensing_ratio",
-      "volume", "rate_variance", "mix_variance", "volume_variance", "gross margin"
-    ],
-    "attributes": [
-      "Claim Number", "Submit Date", "Client ID", "Client Name", "Pharmacy NPI", "Drug Name",
-      "Therapy Class", "Drug Manufacturer", "Line of Business", "State", "Brand vs Generic", "Client Type",
-      "GPI Number", "Pharmacy Name", "Pharmacy Type", "Carrier ID", "Member Date of Birth", "Member Sex",
-      "Product Category", "Claim Status"
-    ],
-    "time_grains": ["daily", "monthly", "quarterly", "yearly"]
-  },
-  {
-    "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
-    "functional_table_name": "Peoplesoft General Ledger",
-    "description": "This table contains ledger-level financial data including actuals, forecasts, and budget figures. It supports comparative analysis across time periods and tracks performance at the line-of-business level.",
-    "PHI_PII_Columns": [],
-    "high_level_table": "True",
-    "useful_for": [
-      "client level revenue analysis", "volume and script analysis", "monthly actuals analysis", "high level client analysis",
-      "GAAP analysis", "actuals vs forecast vs budget comparison", "line-of-business level tracking", "rate analysis"
-    ],
-    "not_useful_for": ["drug ,therapy level analysis","client level expense (cogs) or gross margin alone", "daily granularity", "carrier level analysis"],
-    "metrics": [
-      "revenue", "expense", "rate_variance", "mix_variance", "volume_variance", "cogs", "sga", "ioi",
-      "membership", "unadjusted_scripts", "adjusted_scripts", "30_day_scripts", "90_day_scripts", "volume",
-      "Cost %", "Gross Margin %", "Operating Expenses %", "Operating Cost %", "IOI %",
-      "Utilization PMPM (Unadjusted)", "Utilization PMPM (Adjusted)", "Revenue per Script (Unadj)", "Cost per Script (Unadj)",
-      "Margin per Script (Unadj)", "IOI per Script (Unadj)", "Revenue per Script (Adj)", "Cost per Script (Adj)",
-      "Margin per Script (Adj)", "IOI per Script (Adj)", "Generic Penetration %", "Op Exp per Script (Unadjusted)",
-      "Op Cost per Script (Unadjusted)", "Op Exp per Script (Adjusted)"
-    ],
-    "attributes": [
-      "Ledger", "Mail Service", "Home Delivery", "Specialty", "Line of Business", "Transaction Date",
-      "Year", "Month", "Quarter", "Product Category", "Product Category Level 1", "Product Category Level 2",
-      "Client ID", "Client Name"
-    ],
-    "time_grains": ["monthly", "quarterly", "yearly"]
-  },
-  
-  {
-    "table_name": "prd_optumrx_orxfdmprdsa.rag.claim_billing",
-    "functional_table_name": "CBS Billing",
-    "description": "This dataset helps to bring all the billing information at invoice level for client, carrier, account, group.",
-    "PHI_PII_Columns": [],
-    "high_level_table": "False",
-    "useful_for": ["claim-level billing analysis", "client-level billing analysis", "invoice analysis"],
-    "not_useful_for": ["expense analysis"],
-    "metrics": ["billed amount", "revenue from billing", "claim fee", "claim cost", "activity fee"],
-    "attributes": [
-      "Claim Number", "Claim Status", "Invoice Number", "Invoice Date", "Invoice GL Date", "Carrier ID",
-      "Account ID", "Group ID", "Client ID", "Client Description", "Drug Name", "Therapy Class",
-      "Drug Manufacturer", "Brand vs Generic", "GPI Number", "Billed Amount", "Revenue Source Type",
-      "Oracle Product Code", "Oracle Product Description", "Activity Category", "Billing Entity Code",
-      "Billing Entity Name", "FQA Company Code", "FQA Geography Code", "FQA Affiliate Code", "FQA Account Code",
-      "FQA LOB Code", "FQA Department Code", "FQA Product Code", "FQA Sub Account Code", "Line of Business"
-    ],
-    "time_grains": ["daily", "monthly", "quarterly", "yearly"]
-  }
-]
+===============================================================================
+🎬 WORKFLOW STARTING - Event stream beginning
+================================================================================
 
+🔧 Using fallback astream approach for reliable events
+Routing entry to: navigation_controller
+📦 Astream step: ['entry_router']
+✅ Node completed: entry_router - state keys: ['current_question', 'session_id', 'user_id', 'domain_selection', 'conversation_memory', 'errors', 'user_questions_history', 'session_context', 'nav_error_msg', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'strategy_planner_err_msg', 'user_friendly_message', 'next_agent', 'next_agent_disp']
+📦 Event: type=node_end, name=entry_router
+✅ Node completed: entry_router
+🎨 STATUS UPDATE: Showing status for navigation_controller
+Navigation Controller starting: 2025-11-13T01:52:33.597849
+Navigation Input - Current: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+Current Timestamp before question validator call: 2025-11-13 01:52:33
+🔄 Prompt caching ENABLED - system prompt will be cached
+⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
+Current Timestamp after Question validator call: 2025-11-13 01:52:53
+⏱️  Call Duration: 19.66 seconds
 
+============================================================
+📊 PROMPT CACHING PERFORMANCE METRICS
+============================================================
+Input tokens:        5,739
+Output tokens:       250
+Cache write tokens:  0
+Cache read tokens:   0
+Total tokens:        5,989
 
+⚠️  STATUS: No cache metrics detected
+   → Gateway may not support caching OR this is the first attempt
+   → If this persists on 2nd+ calls, caching is not enabled by gateway
+============================================================
 
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "new question",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "NEW",
+        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for decision. Clean question 'compare PBM Revenue between Q3 2025 vs Q3 2024' contains metric (Revenue), filters (PBM), and complete time periods (Q3 2025 vs Q3 2024). Question is self-contained with all necessary components. No inheritance needed since this is explicitly marked as a new question and contains all required elements."
+    },
+    "rewrite": {
+        "rewritten_question": "What is PBM Revenue for Q3 2025 vs Q3 2024",
+        "question_type": "what",
+        "user_message": ""
+    },
+    "filters": {
+        "filter_values": ["PBM"]
+    }
+}
+Added business question to history: 'What is PBM Revenue for Q3 2025 vs Q3 2024'
+Navigation Controller ending: 2025-11-13T01:52:53.270446
+📦 Astream step: ['navigation_controller']
+✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'next_agent', 'next_agent_disp', 'domain_selection', 'conversation_memory', 'nav_error_msg', 'errors', 'user_friendly_message', 'user_questions_history', 'session_context', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'strategy_planner_err_msg', 'question_type', 'filter_values', 'current_agent', 'topic_drift', 'missing_dataset_items', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'matched_sql', 'matched_table_name', 'history_question_match', 'history_sql_used', 'llm_retry_count', 'pending_business_question', 'rewritten_question', 'greeting_response', 'user_question_history']
+📦 Event: type=node_end, name=navigation_controller
+✅ Node completed: navigation_controller
+🎨 STATUS UPDATE: Showing status for router_agent
+⚠️ No final state captured from workflow
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🔄 Resetting question_type to 'Follow-up' for next turn.
+🗂️ Displaying 7 cached sessions
+INIT: Subsequent question, setting radio to 'Follow-up'
+RENDERED: Radio shows 'Follow-up' | first_question_asked=True
+✅ Radio button rendered (not in clarification mode)
+CALLBACK: Radio changed to: New Question
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🗂️ Displaying 7 cached sessions
+RENDERED: Radio shows 'New Question' | first_question_asked=True
+✅ Radio button rendered (not in clarification mode)
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🔄 Resetting question_type to 'Follow-up' for next turn.
+🗂️ Displaying 7 cached sessions
+RENDERED: Radio shows 'New Question' | first_question_asked=True
+✅ Radio button rendered (not in clarification mode)
+🎯 Starting processing for: compare PBM Revenue between Q3 2025 vs Q3 2024
+🚀 Question type: 'New Question' | Workflow query: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024' | First Q asked: True
+📝 STORED: Saving 'New Question' as last_radio_selection for next question
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🗂️ Displaying 7 cached sessions
+⚠️ domain_selection came as list ['PBM Network']; normalizing to first item
+🔍 Using domain selection (string) in chat workflow: PBM Network (type=str)
+🎨 STATUS UPDATE: Showing status for entry_router
+
+================================================================================
+🎬 WORKFLOW STARTING - Event stream beginning
+================================================================================
+
+🔧 Using fallback astream approach for reliable events
+Routing entry to: navigation_controller
+📦 Astream step: ['entry_router']
+✅ Node completed: entry_router - state keys: ['current_question', 'session_id', 'user_id', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'conversation_memory', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'user_friendly_message', 'matched_sql', 'history_question_match', 'matched_table_name', 'history_sql_used', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'strategy_planner_err_msg']     
+📦 Event: type=node_end, name=entry_router
+✅ Node completed: entry_router
+🎨 STATUS UPDATE: Showing status for navigation_controller
+Navigation Controller starting: 2025-11-13T01:54:45.587771
+Navigation Input - Current: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+Current Timestamp before question validator call: 2025-11-13 01:54:45
+🔄 Prompt caching ENABLED - system prompt will be cached
+⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
+Current Timestamp after Question validator call: 2025-11-13 01:55:05
+⏱️  Call Duration: 19.86 seconds
+
+============================================================
+📊 PROMPT CACHING PERFORMANCE METRICS
+============================================================
+Input tokens:        5,777
+Output tokens:       258
+Cache write tokens:  0
+Cache read tokens:   0
+Total tokens:        6,035
+
+⚠️  STATUS: No cache metrics detected
+   → Gateway may not support caching OR this is the first attempt
+   → If this persists on 2nd+ calls, caching is not enabled by gateway
+============================================================
+
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "new question",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "NEW",
+        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for decision making. Clean question after stripping prefix: 'compare PBM Revenue between Q3 2025 vs Q3 2024'. Current question has all required components: metric (Revenue), filters (PBM), and time (Q3 2025 vs Q3 2024). Since prefix 'new question' was detected, this overrides any other signals and makes this a NEW question regardless of previous context."
+    },
+    "rewrite": {
+        "rewritten_question": "Compare PBM Revenue between Q3 2025 vs Q3 2024",
+        "question_type": "what",
+        "user_message": ""
+    },
+    "filters": {
+        "filter_values": ["PBM"]
+    }
+}
+Added business question to history: 'Compare PBM Revenue between Q3 2025 vs Q3 2024'

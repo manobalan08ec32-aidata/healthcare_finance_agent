@@ -7,7 +7,7 @@ from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
 
 class LLMNavigationController:
-    """Single-prompt navigation controller with complete analysis, rewriting, and filter extraction"""
+    """Single-prompt navigation controller with complete analysis, rewriting, and filter extraction + PROMPT CACHING"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
@@ -54,7 +54,7 @@ class LLMNavigationController:
     
     async def _single_step_processing(self, current_question: str, existing_domain_selection: List[str], 
                                      total_retry_count: int, state: AgentState) -> Dict[str, any]:
-        """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt"""
+        """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt WITH CACHING"""
         
         print("Starting single-step processing...")
         questions_history = state.get('user_question_history', [])
@@ -78,26 +78,33 @@ class LLMNavigationController:
         while retry_count < max_retries:
             try:
                 # ═══════════════════════════════════════════════════════════════
-                # SINGLE STEP: COMBINED PROMPT
+                # PROMPT CACHING ARCHITECTURE: SPLIT STATIC VS DYNAMIC
                 # ═══════════════════════════════════════════════════════════════
                 
-                prompt = self._build_combined_prompt(
+                # Get static system prompt (cached - ~5,500 tokens)
+                # This contains all SQL rules, instructions, examples that NEVER change
+                static_system_prompt = self._get_static_system_prompt()
+                
+                # Build dynamic user message (fresh - ~200 tokens)
+                # This contains only the parts that change: question, history, memory
+                dynamic_user_message = self._build_dynamic_user_message(
                     current_question, 
                     previous_question,
                     history_context,
                     current_forecast_cycle,
                     conversation_memory
                 )
-                # print('question prompt', prompt)
+                
                 print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 
                 # ═══════════════════════════════════════════════════════════
-                # CALL CLAUDE API WITH CACHING ENABLED
+                # CALL CLAUDE API WITH SEPARATED PROMPTS (CACHING ENABLED)
                 # ═══════════════════════════════════════════════════════════
                 start_time = time.time()
                 
                 result = await self.db_client.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt=static_system_prompt,  # ← CACHED (5,500 tokens)
+                    messages=[{"role": "user", "content": dynamic_user_message}],  # ← FRESH (200 tokens)
                     max_tokens=3000,
                     temperature=0.0,  # Deterministic rewriting
                     top_p=0.1,  # Focused sampling
@@ -297,39 +304,16 @@ class LLMNavigationController:
                         'user_friendly_message': "Service temporarily unavailable."
                     }
     
-    def _build_combined_prompt(self, current_question: str, previous_question: str,
-                               history_context: List, current_forecast_cycle: str, 
-                               conversation_memory: Dict = None) -> str:
+    def _get_static_system_prompt(self) -> str:
         """
-        Combined Prompt: Analyze → Rewrite → Extract in single call
+        Static system prompt for caching - contains all rules and instructions.
+        This should RARELY change (only when you update SQL rules/logic).
+        
+        Returns ~5,500 tokens that will be cached by Bedrock.
+        
+        THIS IS THE CACHEABLE PART - IT CONTAINS ALL YOUR SQL VALIDATION RULES
         """
-        
-        # Get current year dynamically
-        from datetime import datetime
-        current_year = datetime.now().year
-        
-        # Special filters that are important for context inheritance
-        special_filters = ["PBM", "HDP", "Specialty", "Mail", "Retail", "8+4", "5+7", "9+3", "10+2", "2+10"]
-        
-        # Initialize conversation memory if not provided
-        if conversation_memory is None:
-            conversation_memory = {
-                'dimensions': {},
-                'analysis_context': {
-                    'current_analysis_type': None,
-                    'analysis_history': []
-                }
-            }
-        
-        # Build memory context for prompt - keep as JSON for dimension key extraction
-        memory_dimensions = conversation_memory.get('dimensions', {})
-        memory_context_json = ""
-        
-        if memory_dimensions:
-            memory_context_json = f"\n**CONVERSATION MEMORY (Recent Analysis Context)**:\n```json\n{json.dumps(memory_dimensions)}\n```\n"
-            print('memory_context_json', memory_context_json)
-        
-        prompt = f"""⚠️ CRITICAL ROLE - READ THIS FIRST
+        return """⚠️ CRITICAL ROLE - READ THIS FIRST
 
 You are a QUESTION REWRITER and ANALYZER - NOT an assistant that answers questions.
 Your ONLY job is to:
@@ -343,16 +327,6 @@ You ONLY rewrite questions into a complete format.
 Think of yourself as: analyze(question) → rewrite(question) → extract(filters) → JSON output
 
 ⚠️ REMEMBER: You are NOT answering the question. You are ONLY rewriting it.
-
-**INPUT INFORMATION**
-
-User Current Input: "{current_question}"
-Previous Question: "{previous_question if previous_question else 'None'}"
-History: {history_context}
-Current Year: {current_year}
-Current Forecast Cycle: {current_forecast_cycle}
-
-{memory_context_json}
 
 **SECTION 1: ANALYZE & CLASSIFY**
 
@@ -588,7 +562,7 @@ Now use your analysis from Section 1 to rewrite the question.
 
 ⚠️ CRITICAL: Check conversation memory BEFORE rewriting - Extract dimension KEYS only
 
-If conversation memory exists (shown in JSON format above):
+If conversation memory exists (shown in user message):
 
 1. **Extract values mentioned in question** (entity names, drug names, client codes, multi-word phrases)
 
@@ -622,15 +596,15 @@ User: "revenue for bcbsm"
 
 ⚠️ MANDATORY - Apply Forecast Cycle Rules (DO NOT SKIP!)
 
-**Current cycle:** {current_forecast_cycle} | **Valid cycles:** 2+10, 5+7, 8+4, 9+3
+The user will provide the current forecast cycle value in their message.
 
 **CRITICAL RULES - CHECK EVERY REWRITTEN QUESTION:**
 
-1. **"forecast" alone (without cycle)** → Add current cycle: "forecast {current_forecast_cycle}"
-   - "show forecast revenue" → "show forecast {current_forecast_cycle} revenue" ✅
+1. **"forecast" alone (without cycle)** → Add current cycle provided by user
+   - "show forecast revenue" → "show forecast [current_cycle] revenue" ✅
    
-2. **"actuals vs forecast" (without cycle)** → Add current cycle after "forecast": "actuals vs forecast {current_forecast_cycle}"
-   - "actuals vs forecast revenue" → "actuals vs forecast {current_forecast_cycle} revenue" ✅
+2. **"actuals vs forecast" (without cycle)** → Add current cycle after "forecast"
+   - "actuals vs forecast revenue" → "actuals vs forecast [current_cycle] revenue" ✅
    
 3. **Cycle pattern alone (8+4, 5+7, 2+10, 9+3) without "forecast"** → Prepend "forecast"
    - "show 8+4 revenue" → "show forecast 8+4 revenue" ✅
@@ -639,7 +613,7 @@ User: "revenue for bcbsm"
    - "forecast 8+4 revenue" → Keep as-is ✅
    - "actuals vs forecast 8+4 revenue" → Keep as-is ✅
 
-**WHY THIS MATTERS:** Forecast queries REQUIRE a cycle. Current cycle is {current_forecast_cycle}.
+**WHY THIS MATTERS:** Forecast queries REQUIRE a cycle.
 
 **STEP 3: Build Rewritten Question**
 
@@ -647,14 +621,14 @@ User: "revenue for bcbsm"
 → Use clean_question components as-is
 → Apply metric inheritance (Step 0) + forecast cycle rules (Step 2) + memory dimension detection (Step 1)
 → Format: "What is [metric] for [filters] for [time]"
-→ If time_is_partial, add current year: "for [time] {current_year}"
+→ If time_is_partial, add current year (provided in user message)
 → user_message: "" (empty unless forecast cycle added)
 
 **IF FOLLOW_UP:**
 → Start with clean_question components
 → Apply metric inheritance (Step 0) + forecast cycle rules (Step 2) + memory dimension detection (Step 1)
 → For missing components, extract from previous_question
-→ If time_is_partial, add {current_year}
+→ If time_is_partial, add current year (provided in user message)
 → Create user_message: "I'm using [specific inherited components] from your last question."
 
 **IF VALIDATION:**
@@ -712,8 +686,8 @@ Rewritten: "What is revenue for client BCBS for drug name Ozempic?"
 → filter_values: ["BCBS", "Ozempic"]
 
 Rewritten: "What is revenue for External LOB and carrier MDOVA for July 2025?"
-→ "carrier MDOVA" ,External LOB → Extract "MDOVA","External"
-→ filter_values: ["MDOVA","External"]
+→ "carrier MDOVA", External LOB → Extract "MDOVA", "External"
+→ filter_values: ["MDOVA", "External"]
 
 Rewritten: "What is actuals vs forecast 8+4 for diabetes for Q3 2025"
 → "8+4" → Extract "8+4", "diabetes" → Extract "diabetes"
@@ -755,6 +729,49 @@ Rewritten: "What is revenue for GLP-1 drug for July 2025"
 ```json
 {{ ... }}
 ```
-
 """
-        return prompt
+
+    def _build_dynamic_user_message(self, current_question: str, previous_question: str, 
+                                     history_context: list, current_forecast_cycle: str,
+                                     conversation_memory: dict) -> str:
+        """
+        Build dynamic user message - only the parts that change per query.
+        
+        This contains:
+        - Current question (changes every query)
+        - Previous question (changes)
+        - History context (changes)
+        - Current forecast cycle value (changes per month)
+        - Conversation memory JSON (changes)
+        
+        Returns ~200-300 tokens that are sent fresh each time.
+        
+        THIS IS THE DYNAMIC PART - IT CHANGES WITH EVERY USER QUERY
+        """
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        # Build memory context for prompt - keep as JSON for dimension key extraction
+        memory_dimensions = conversation_memory.get('dimensions', {})
+        memory_context_json = ""
+        
+        if memory_dimensions:
+            memory_context_json = f"\n**CONVERSATION MEMORY (Recent Analysis Context)**:\n```json\n{json.dumps(memory_dimensions)}\n```\n"
+            print('memory_context_json', memory_context_json)
+        
+        # Build compact user message with only dynamic content
+        user_message = f"""**INPUT INFORMATION FOR THIS SPECIFIC QUERY**
+
+User Current Input: "{current_question}"
+Previous Question: "{previous_question if previous_question else 'None'}"
+History: {history_context}
+Current Year: {current_year}
+Current Forecast Cycle: {current_forecast_cycle}
+
+{memory_context_json}
+
+**YOUR TASK:**
+Follow the system instructions to analyze this specific query and return the JSON response.
+"""
+        
+        return user_message

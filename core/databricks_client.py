@@ -191,10 +191,21 @@ class DatabricksClient:
                 return self._claude_token
         return await self._fetch_hcp_token_async()
 
-    async def call_claude_api_endpoint_async(self, messages: list, max_tokens: int = 8000, temperature: float = 0.1, top_p: float = 0.8, system_prompt: str = "you are an AI assistant") -> str:
+    async def call_claude_api_endpoint_async(self, messages: list, max_tokens: int = 8000, temperature: float = 0.1, top_p: float = 0.8, system_prompt: str = "you are an AI assistant", enable_caching: bool = True) -> Dict[str, Any]:
         """
         Async version of Claude API endpoint call using HCP credentials.
-        Features: token caching, session reuse, retries, concurrency limiting
+        Features: token caching, session reuse, retries, concurrency limiting, prompt caching support
+        
+        Args:
+            messages: List of message dicts with role and content
+            max_tokens: Max tokens for response
+            temperature: Sampling temperature
+            top_p: Top-p sampling
+            system_prompt: System prompt (will be cached if enable_caching=True)
+            enable_caching: Whether to enable prompt caching (default: True)
+            
+        Returns:
+            Dict with 'response' (text) and 'cache_metrics' (usage stats)
         """
         BASE_URL = self.CLAUDE_API_URL
         PROJECT_ID = self.CLAUDE_PROJECT_ID
@@ -223,8 +234,22 @@ class DatabricksClient:
                     "guardrail": "high_strength",
                     "User-Agent": "agentbot-async/1.0"
                 }
+                
+                # ═══════════════════════════════════════════════════════════
+                # PROMPT CACHING IMPLEMENTATION (AWS Bedrock Format)
+                # ═══════════════════════════════════════════════════════════
+                # Add cacheControl to system prompt if caching is enabled
+                # This tells Bedrock to cache the system prompt for reuse
+                system_config = [{"text": system_prompt}]
+                if enable_caching:
+                    system_config = [{
+                        "text": system_prompt,
+                        "cacheControl": {"type": "ephemeral"}  # Cache with 5-min TTL
+                    }]
+                    print("🔄 Prompt caching ENABLED - system prompt will be cached")
+                
                 payload = {
-                    "system": [{"text": system_prompt}],
+                    "system": system_config,  # Now includes cacheControl if enabled
                     "messages": api_messages,
                     "inferenceConfig": {
                         "maxTokens": max_tokens,
@@ -264,11 +289,52 @@ class DatabricksClient:
                                     continue
                                 response.raise_for_status()
                             result = await response.json()
+                            
+                            # ═══════════════════════════════════════════════════════════
+                            # EXTRACT CACHE METRICS (AWS Bedrock Response Format)
+                            # ═══════════════════════════════════════════════════════════
+                            cache_metrics = {}
+                            usage = result.get("usage", {})
+                            
+                            # Extract token usage metrics
+                            input_tokens = usage.get("inputTokens", 0)
+                            output_tokens = usage.get("outputTokens", 0)
+                            
+                            # Cache-specific metrics (Bedrock format)
+                            cache_write_tokens = usage.get("cacheWriteTokens", 0)
+                            cache_read_tokens = usage.get("cacheReadTokens", 0)
+                            
+                            cache_metrics = {
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                                "cache_write_tokens": cache_write_tokens,
+                                "cache_read_tokens": cache_read_tokens,
+                                "cache_creation": cache_write_tokens > 0,
+                                "cache_hit": cache_read_tokens > 0,
+                                "total_tokens": input_tokens + output_tokens
+                            }
+                            
+                            # Print cache performance info
+                            if cache_write_tokens > 0:
+                                print(f"📝 CACHE CREATION: {cache_write_tokens} tokens written to cache")
+                            if cache_read_tokens > 0:
+                                savings_pct = (cache_read_tokens / (cache_read_tokens + input_tokens)) * 100 if (cache_read_tokens + input_tokens) > 0 else 0
+                                print(f"✅ CACHE HIT: {cache_read_tokens} tokens read from cache ({savings_pct:.1f}% of prompt)")
+                            if cache_write_tokens == 0 and cache_read_tokens == 0:
+                                print(f"⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled")
+                            
                             try:
-                                return result["output"]["message"]["content"][0]["text"]
+                                response_text = result["output"]["message"]["content"][0]["text"]
+                                return {
+                                    "response": response_text,
+                                    "cache_metrics": cache_metrics
+                                }
                             except KeyError as e:
                                 print(f"Response parsing KeyError: {e}; raw keys: {list(result.keys())}")
-                                return json.dumps(result)[:2000]
+                                return {
+                                    "response": json.dumps(result)[:2000],
+                                    "cache_metrics": cache_metrics
+                                }
                     except aiohttp.ClientError as ce:
                         print(f"Network client error attempt={attempt}: {ce}")
                         if attempt < max_retries:
@@ -590,4 +656,3 @@ class DatabricksClient:
         
         # If no XML tags found, assume the entire response is JSON
         return response.strip()
-

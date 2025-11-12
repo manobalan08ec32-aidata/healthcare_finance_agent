@@ -90,13 +90,60 @@ class LLMNavigationController:
                 )
                 # print('question prompt', prompt)
                 print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                response = await self.db_client.call_claude_api_endpoint_async(
+                
+                # ═══════════════════════════════════════════════════════════
+                # CALL CLAUDE API WITH CACHING ENABLED
+                # ═══════════════════════════════════════════════════════════
+                start_time = time.time()
+                
+                result = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=3000,
                     temperature=0.0,  # Deterministic rewriting
-                    top_p=0.1  # Focused sampling
+                    top_p=0.1,  # Focused sampling
+                    enable_caching=True  # Enable prompt caching
                 )
+                
+                end_time = time.time()
+                call_duration = end_time - start_time
+                
+                # Extract response and cache metrics
+                response = result.get("response", "")
+                cache_metrics = result.get("cache_metrics", {})
+                
                 print("Current Timestamp after Question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print(f"⏱️  Call Duration: {call_duration:.2f} seconds")
+                
+                # ═══════════════════════════════════════════════════════════
+                # DISPLAY CACHE PERFORMANCE METRICS
+                # ═══════════════════════════════════════════════════════════
+                print("\n" + "="*60)
+                print("📊 PROMPT CACHING PERFORMANCE METRICS")
+                print("="*60)
+                print(f"Input tokens:        {cache_metrics.get('input_tokens', 0):,}")
+                print(f"Output tokens:       {cache_metrics.get('output_tokens', 0):,}")
+                print(f"Cache write tokens:  {cache_metrics.get('cache_write_tokens', 0):,}")
+                print(f"Cache read tokens:   {cache_metrics.get('cache_read_tokens', 0):,}")
+                print(f"Total tokens:        {cache_metrics.get('total_tokens', 0):,}")
+                
+                if cache_metrics.get('cache_creation'):
+                    print("\n🔄 STATUS: Cache CREATED (first call with this prompt)")
+                    print("   → Next calls with same prompt should be ~70-80% faster")
+                elif cache_metrics.get('cache_hit'):
+                    savings_tokens = cache_metrics.get('cache_read_tokens', 0)
+                    total_prompt = savings_tokens + cache_metrics.get('input_tokens', 0)
+                    if total_prompt > 0:
+                        savings_pct = (savings_tokens / total_prompt) * 100
+                        print(f"\n✅ STATUS: Cache HIT - {savings_pct:.1f}% of prompt served from cache!")
+                        print(f"   → Token savings: {savings_tokens:,} tokens")
+                        print(f"   → Estimated cost savings: ~90% on cached portion")
+                else:
+                    print("\n⚠️  STATUS: No cache metrics detected")
+                    print("   → Gateway may not support caching OR this is the first attempt")
+                    print("   → If this persists on 2nd+ calls, caching is not enabled by gateway")
+                
+                print("="*60 + "\n")
+                
                 print("LLM Response:", response)
                 
                 # Check if LLM cannot answer - trigger retry

@@ -1,4 +1,288 @@
-prompt = f"""⚠️ CRITICAL ROLE - READ THIS FIRST
+import asyncio
+import json
+import time
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from core.state_schema import AgentState
+from core.databricks_client import DatabricksClient
+
+class LLMNavigationController:
+    """Single-prompt navigation controller with complete analysis, rewriting, and filter extraction"""
+    
+    def __init__(self, databricks_client: DatabricksClient):
+        self.db_client = databricks_client
+    
+    def _calculate_forecast_cycle(self) -> str:
+        """
+        Calculate current forecast cycle based on month:
+        - Feb to May: 2+10
+        - Jun to Aug: 5+7
+        - Sep to Oct: 8+4
+        - Nov to Jan: 9+3
+        """
+        from datetime import datetime
+        current_month = datetime.now().month
+        
+        if 2 <= current_month <= 5:  # February to May
+            return "2+10"
+        elif 6 <= current_month <= 8:  # June to August
+            return "5+7"
+        elif 9 <= current_month <= 11:  # September to October
+            return "8+4"
+        else:  # November (11), December (12), January (1)
+            return "9+3"
+    
+    async def process_user_query(self, state: AgentState) -> Dict[str, any]:
+        """
+        Main entry point: Single-step LLM processing
+        
+        Args:
+            state: Agent state containing question and history
+        """
+        
+        current_question = state.get('current_question', state.get('original_question', ''))
+        existing_domain_selection = state.get('domain_selection', [])
+        total_retry_count = state.get('llm_retry_count', 0)
+        
+        print(f"Navigation Input - Current: '{current_question}'")
+        print(f"Navigation Input - Existing Domain: {existing_domain_selection}")
+        
+        # Single-step processing: Analyze → Rewrite → Extract in one call
+        return await self._single_step_processing(
+            current_question, existing_domain_selection, total_retry_count, state
+        )
+    
+    async def _single_step_processing(self, current_question: str, existing_domain_selection: List[str], 
+                                     total_retry_count: int, state: AgentState) -> Dict[str, any]:
+        """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt"""
+        
+        print("Starting single-step processing...")
+        questions_history = state.get('user_question_history', [])
+        previous_question = state.get('rewritten_question', '') 
+        conversation_memory = state.get('conversation_memory', {
+            'dimensions': {},
+            'analysis_context': {
+                'current_analysis_type': None,
+                'analysis_history': []
+            }
+        })
+        history_context = questions_history[-2:] if questions_history else []
+        print('conversation_memory',conversation_memory)
+        # Calculate current forecast cycle based on current month
+        current_forecast_cycle = self._calculate_forecast_cycle()
+        print(f"📊 Current forecast cycle: {current_forecast_cycle}")
+        
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # ═══════════════════════════════════════════════════════════════
+                # SINGLE STEP: COMBINED PROMPT
+                # ═══════════════════════════════════════════════════════════════
+                
+                prompt = self._build_combined_prompt(
+                    current_question, 
+                    previous_question,
+                    history_context,
+                    current_forecast_cycle,
+                    conversation_memory
+                )
+                # print('question prompt', prompt)
+                print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=3000,
+                    temperature=0.0,  # Deterministic rewriting
+                    top_p=0.1  # Focused sampling
+                )
+                print("Current Timestamp after Question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print("LLM Response:", response)
+                
+                # Check if LLM cannot answer - trigger retry
+                if "Sorry, the model cannot answer this question" in response:
+                    retry_count += 1
+                    print(f"⚠️ LLM cannot answer - retrying ({retry_count}/{max_retries})")
+                    if retry_count < max_retries:
+                        await asyncio.sleep(2 ** retry_count)
+                        continue
+                    else:
+                        print(f"Failed after {max_retries} retries - returning error response")
+                        return {
+                            'rewritten_question': current_question,
+                            'question_type': 'what',
+                            'next_agent': 'END',
+                            'next_agent_disp': 'Model serving endpoint failed',
+                            'requires_domain_clarification': False,
+                            'domain_followup_question': None,
+                            'domain_selection': existing_domain_selection,
+                            'greeting_response': "Model serving endpoint failed. Please try again after some time.",
+                            'llm_retry_count': total_retry_count + retry_count,
+                            'pending_business_question': '',
+                            'error': True,
+                            'error_message': f"Model serving endpoint failed after {max_retries} attempts",
+                            'filter_values': [],
+                            'user_friendly_message': "Service temporarily unavailable."
+                        }
+                
+                # Strip markdown code blocks if present
+                cleaned_response = response.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[7:]  # Remove ```json
+                if cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[3:]  # Remove ```
+                if cleaned_response.endswith("```"):
+                    cleaned_response = cleaned_response[:-3]  # Remove trailing ```
+                cleaned_response = cleaned_response.strip()
+                
+                try:
+                    result = json.loads(cleaned_response)
+                except json.JSONDecodeError as json_error:
+                    print(f"LLM response is not valid JSON: {json_error}")
+                    print(f"Cleaned response: {cleaned_response[:200]}")
+                    # Treat as greeting
+                    result = {
+                        'analysis': {
+                            'input_type': 'greeting',
+                            'is_valid_business_question': False,
+                            'response_message': response.strip()
+                        }
+                    }
+                
+                # Handle non-business questions (greeting, DML, invalid)
+                analysis = result.get('analysis', {})
+                input_type = analysis.get('input_type', 'business_question')
+                is_valid_business_question = analysis.get('is_valid_business_question', False)
+                response_message = analysis.get('response_message', '')
+                
+                if input_type in ['greeting', 'dml_ddl', 'invalid_business']:
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': f'{input_type.replace("_", " ").title()} response',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'greeting_response': response_message,
+                        'is_dml_ddl': input_type == 'dml_ddl',
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': [],
+                        'user_friendly_message': response_message
+                    }
+                
+                # Handle business questions
+                if input_type == 'business_question' and is_valid_business_question:
+                    
+                    rewrite = result.get('rewrite', {})
+                    filters = result.get('filters', {})
+                    
+                    rewritten_question = rewrite.get('rewritten_question', current_question)
+                    question_type = rewrite.get('question_type', 'what')
+                    user_message = rewrite.get('user_message', '')
+                    filter_values = filters.get('filter_values', [])
+                    
+                    # Determine next agent based on question type
+                    next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
+                    
+                    # Return complete result
+                    return {
+                        'rewritten_question': rewritten_question,
+                        'question_type': question_type,
+                        'context_type': analysis.get('context_decision', 'NEW'),
+                        'inherited_context': user_message,
+                        'next_agent': next_agent,
+                        'next_agent_disp': next_agent.replace('_', ' ').title(),
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': filter_values,
+                        'user_friendly_message': user_message,
+                        'decision_from_analysis': analysis.get('context_decision', ''),
+                        'detected_prefix': analysis.get('detected_prefix', 'none'),
+                        'clean_question': analysis.get('clean_question', current_question),
+                        'reasoning': analysis.get('reasoning', '')
+                    }
+                
+                # Fallback - invalid business question
+                return {
+                    'rewritten_question': current_question,
+                    'question_type': 'what',
+                    'next_agent': 'END',
+                    'next_agent_disp': 'Invalid business question',
+                    'requires_domain_clarification': False,
+                    'domain_followup_question': None,
+                    'domain_selection': existing_domain_selection,
+                    'greeting_response': "I specialize in healthcare finance analytics. Please ask about claims, ledgers, payments, or other healthcare data.",
+                    'llm_retry_count': total_retry_count + retry_count,
+                    'pending_business_question': '',
+                    'filter_values': [],
+                    'user_friendly_message': "I specialize in healthcare finance analytics."
+                }
+                        
+            except Exception as e:
+                retry_count += 1
+                print(f"Single-step processing attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"Retrying... ({retry_count}/{max_retries})")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"All retries failed: {str(e)}")
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'next_agent': 'END',
+                        'next_agent_disp': 'Model serving endpoint failed',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'greeting_response': "Model serving endpoint failed. Please try again after some time.",
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'error': True,
+                        'error_message': f"Model serving endpoint failed after {max_retries} attempts",
+                        'filter_values': [],
+                        'user_friendly_message': "Service temporarily unavailable."
+                    }
+    
+    def _build_combined_prompt(self, current_question: str, previous_question: str,
+                               history_context: List, current_forecast_cycle: str, 
+                               conversation_memory: Dict = None) -> str:
+        """
+        Combined Prompt: Analyze → Rewrite → Extract in single call
+        """
+        
+        # Get current year dynamically
+        from datetime import datetime
+        current_year = datetime.now().year
+        
+        # Special filters that are important for context inheritance
+        special_filters = ["PBM", "HDP", "Specialty", "Mail", "Retail", "8+4", "5+7", "9+3", "10+2", "2+10"]
+        
+        # Initialize conversation memory if not provided
+        if conversation_memory is None:
+            conversation_memory = {
+                'dimensions': {},
+                'analysis_context': {
+                    'current_analysis_type': None,
+                    'analysis_history': []
+                }
+            }
+        
+        # Build memory context for prompt - keep as JSON for dimension key extraction
+        memory_dimensions = conversation_memory.get('dimensions', {})
+        memory_context_json = ""
+        
+        if memory_dimensions:
+            memory_context_json = f"\n**CONVERSATION MEMORY (Recent Analysis Context)**:\n```json\n{json.dumps(memory_dimensions)}\n```\n"
+            print('memory_context_json', memory_context_json)
+        
+        prompt = f"""⚠️ CRITICAL ROLE - READ THIS FIRST
 
 You are a QUESTION REWRITER and ANALYZER - NOT an assistant that answers questions.
 Your ONLY job is to:
@@ -13,7 +297,6 @@ Think of yourself as: analyze(question) → rewrite(question) → extract(filter
 
 ⚠️ REMEMBER: You are NOT answering the question. You are ONLY rewriting it.
 
-
 **INPUT INFORMATION**
 
 User Current Input: "{current_question}"
@@ -22,8 +305,7 @@ History: {history_context}
 Current Year: {current_year}
 Current Forecast Cycle: {current_forecast_cycle}
 
-{memory_context_str}
-
+{memory_context_json}
 
 **SECTION 1: ANALYZE & CLASSIFY**
 
@@ -45,7 +327,6 @@ If no prefix: detected_prefix = "none", clean_question = user input
 - "follow-up - show me expense" → prefix: "follow-up", clean: "show me expense"
 - "new question - revenue for PBM" → prefix: "new question", clean: "revenue for PBM"
 - "show me expense" (no prefix) → prefix: "none", clean: "show me expense"
-
 
 **Step 2: Classify Input Type**
 
@@ -74,7 +355,6 @@ Examples: "INSERT", "UPDATE", "DELETE", "CREATE table"
 - "Show me sports scores" → INVALID (not healthcare/finance)
 - "Calculate 2+2" → INVALID (not business related)
 
-
 **Step 3: Component Detection (For business questions only)**
 
 Analyze the CLEAN question for components:
@@ -102,7 +382,6 @@ Examples:
 **Signals**
 - Pronouns: "that", "it", "this", "those"
 - Continuation verbs: "compare", "show me", "breakdown"
-
 
 **Step 4: Make Decision**
 
@@ -145,20 +424,29 @@ For each component type, compare current vs previous:
 
 **General Filter Inheritance:**
 - If current has NO filters AND previous has filters → inherit previous filters that EXIST
-- If current has filters AND previous has filters → **KEEP BOTH** (accumulate)
-  - Exception: Replace only if current filter is MORE SPECIFIC version of previous filter
-    * "GLP-1" → "Wegovy" (Wegovy replaces GLP-1, both are drug-related)
-    * "diabetes" → "Metformin" (Metformin replaces diabetes, both are drug-related)
-  - Otherwise: KEEP BOTH (different categories)
-    * "Mail" + "MPDOVA" → KEEP BOTH (channel + carrier)
-    * "Mail" + "Mounjaro" → KEEP BOTH (channel + drug)
-    * "PBM" + "GLP-1" → KEEP BOTH (domain + therapy class)
+- If current has filters AND previous has filters → Apply these rules:
+  
+  **MUTUALLY EXCLUSIVE CATEGORIES (Replace, don't accumulate):**
+  * **Domain filters**: PBM, HDP, Specialty → If current has any, REPLACE previous domain filter
+    - Example: Previous "HDP" + Current "PBM" → Use ONLY "PBM" ✅ (domains are mutually exclusive)
+  * **Channel filters**: Mail, Home Delivery, Specialty (as channel) → If current has any, REPLACE previous channel filter
+    - Example: Previous "Mail" + Current "Specialty" → Use ONLY "Specialty" ✅
+  * **Drug hierarchy**: If current filter is MORE SPECIFIC version of previous
+    - Example: Previous "GLP-1" + Current "Wegovy" → Use ONLY "Wegovy" ✅ (Wegovy replaces GLP-1)
+    - Example: Previous "diabetes" + Current "Metformin" → Use ONLY "Metformin" ✅
+  
+  **ACCUMULATE (Keep both):**
+  * **Different categories**: Domain + Drug, Channel + Carrier, Domain + Therapy, etc.
+    - Example: Previous "Mail" + Current "MPDOVA" → KEEP BOTH ✅ (channel + carrier)
+    - Example: Previous "PBM" + Current "GLP-1" → KEEP BOTH ✅ (domain + therapy class)
+    - Example: Previous "HDP" + Current "Mounjaro" → KEEP BOTH ✅ (domain + drug)
+
 - **If previous question has NO filters** → Don't inherit or add any filters
 
 **Quick Filter Check:**
-- Does previous question contain this filter? → If YES, inherit it
-- Is it PBM/HDP/Home Delivery/Specialty/Mail/Retail in previous? → If YES, keep it
-- Are they same category (both drugs, both carriers)? → Replace with more specific
+- Does previous question contain this filter? → If YES, check if same category
+- Is it same category (both domains, both channels, both drugs)? → REPLACE with current
+- Is it PBM/HDP replacing other domain filter? → REPLACE, don't accumulate
 - Are they different categories? → Keep both (accumulate)
 - **Previous has NO filters?** → Don't add any filters
 
@@ -189,14 +477,6 @@ Ex4: Current: "follow-up - compare drug Wegovy decline" | Prev: "revenue increas
 → Prefix: "follow-up" → FOLLOW_UP | Change: "increase" → "decline", missing metric → inherit "revenue"
 → Current: Wegovy replaces GLP-1 | Inherits: PBM, time
 
-Ex5: Current: "follow-up - What lines of business contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
-→ Current adds: attributes (lines of business) | Inherits: Wegovy, PBM, time
-
-Ex6: Current: "follow-up - What Clients in External LOB contributed to the decline" | Prev: "revenue decline for Wegovy for PBM Q3 2025 vs Q3 2024"
-→ Prefix: "follow-up" → FOLLOW_UP | "decline" missing metric → inherit "revenue"
-→ Current adds: attributes (Clients), filter (External LOB) | Inherits: Wegovy, PBM, time
-
 **Edge Cases:**
 
 Ex7: Current: "validation - revenue was wrong" | Prev: any
@@ -208,7 +488,6 @@ Ex8: Current: "why is that high" (no prefix) | Prev: "revenue for PBM for Q3 202
 Ex9: Current: "actuals for PBM for September" (no prefix) | Prev: "revenue by LOB for Q3 2025"
 → No prefix, auto-detect | Has metric+filters+partial time → FOLLOW_UP (add year)
 
-
 **Step 5: Extract Components from Previous Question**
 
 If previous_question exists, analyze it to extract ALL components:
@@ -218,7 +497,6 @@ If previous_question exists, analyze it to extract ALL components:
 - Previous time (look for time periods like "July 2025", "Q3 2025")
 
 These will be used for inheritance if current question is FOLLOW_UP and is missing any of these components.
-
 
 **Step 6: Write Reasoning**
 
@@ -232,13 +510,11 @@ Clearly explain:
 **Reasoning Example for Metric Inheritance:**
 "Question contains 'decline' but no metric before it ('the decline in Wegovy'). Previous question had 'revenue decline'. Will inherit 'revenue' and rewrite as 'revenue decline in Wegovy'."
 
-
 **SECTION 2: REWRITE QUESTION**
 
 Now use your analysis from Section 1 to rewrite the question.
 
 **CRITICAL: Read your own reasoning - it tells you exactly what to do**
-
 
 **STEP 0: METRIC INHERITANCE (Apply FIRST - MANDATORY CHECK)**
 
@@ -261,38 +537,39 @@ Now use your analysis from Section 1 to rewrite the question.
 - Previous: "revenue decline for Wegovy" → User: "decline in Wegovy" → Rewritten: "revenue decline in Wegovy"
 - Previous: "expense by LOB" → User: "impacted by the decline" → Rewritten: "impacted by the expense decline"
 
-
 **STEP 1: MEMORY-BASED DIMENSION DETECTION (Apply After Metric Inheritance)**
 
-⚠️ CRITICAL: Check conversation memory BEFORE rewriting
+⚠️ CRITICAL: Check conversation memory BEFORE rewriting - Extract dimension KEYS only
 
-If conversation memory exists:
+If conversation memory exists (shown in JSON format above):
 
 1. **Extract values mentioned in question** (entity names, drug names, client codes, multi-word phrases)
 
-2. **Check if each value exists in memory dimensions** (case-insensitive fuzzy match)
-   - If found: Identify dimension key
-   - If in MULTIPLE dimensions: Use LATEST (last) dimension
-   - **Use EXACT dimension key from memory** (e.g., client_id, client_name, drug_name - do NOT simplify)
-     * If memory has `client_id` → Use "client_id" (NOT "client")
-     * If memory has `client_name` → Use "client_name" (NOT "client")
-   - **⚠️ CRITICAL: ONLY add dimension prefix - NEVER replace user's value**
-     * Keep user's EXACT spelling/case from their question
-     * Only add "for [dimension_key]" prefix if missing
+2. **Check if each value exists in memory dimensions** (case-insensitive fuzzy match against VALUES in memory JSON)
+   - If found: Extract the dimension KEY (not the value)
+   - If in MULTIPLE dimensions: Use LATEST (last) dimension KEY
+   - **Use EXACT dimension key from memory** (e.g., client_id, client_name, drug_name - do NOT convert or simplify)
 
-3. **If NOT found in memory**: Keep as-is (will be extracted as filter)
+3. **Add dimension prefix in rewritten question** using the extracted KEY:
+   - Keep user's EXACT value spelling/case from their question
+   - Only add "for [dimension_key]" prefix if missing
+   - Format: "for [dimension_key] [user_value]"
+
+4. **If NOT found in memory**: Keep as-is (will be extracted as filter without dimension prefix)
 
 **EXAMPLES:**
 
-Memory: {{"client_id": ["57760", "57096"]}}
-User: "revenue for 57760" → "revenue for client_id 57760" (add prefix, keep "57760")
+Memory JSON: {{"client_id": ["57760", "57096"]}}
+User: "revenue for 57760" 
+→ Check: "57760" exists in client_id values
+→ Extract dimension KEY: "client_id"
+→ Rewrite: "revenue for client_id 57760" ✅
 
-Memory: {{"client_name": ["BCBSM"]}}
-User: "revenue for bcbsm" → "revenue for client_name bcbsm" (add prefix, keep user's "bcbsm")
-
-Memory: {{"drug_name": ["WEGOVY"]}}
-User: "revenue for Wegovy" → "revenue for drug_name Wegovy" (add prefix, keep user's "Wegovy")
-
+Memory JSON: {{"client_name": ["BCBSM", "AETNA"]}}
+User: "revenue for bcbsm"
+→ Check: "bcbsm" matches "BCBSM" (case-insensitive)
+→ Extract dimension KEY: "client_name"
+→ Rewrite: "revenue for client_name bcbsm" ✅ (keep user's case)
 
 **STEP 2: Apply Forecast Cycle Rules (if applicable)**
 
@@ -316,7 +593,6 @@ User: "revenue for Wegovy" → "revenue for drug_name Wegovy" (add prefix, keep 
    - "actuals vs forecast 8+4 revenue" → Keep as-is ✅
 
 **WHY THIS MATTERS:** Forecast queries REQUIRE a cycle. Current cycle is {current_forecast_cycle}.
-
 
 **STEP 3: Build Rewritten Question**
 
@@ -380,12 +656,6 @@ User: "revenue for Wegovy" → "revenue for drug_name Wegovy" (add prefix, keep 
 
 **EXAMPLES:**
 
-Rewritten: "What lines of business contributed to the decline for drug name Wegovy between Q3 2025 vs Q3 2024?"
-→ "drug name Wegovy" → Extract "Wegovy" → filter_values: ["Wegovy"]
-
-Rewritten: "What is revenue for diabetes?"
-→ "diabetes" → Extract "diabetes" → filter_values: ["diabetes"]
-
 Rewritten: "What is revenue for drug name Wegovy and diabetes?"
 → "drug name Wegovy" → Extract "Wegovy", "diabetes" → Extract "diabetes"
 → filter_values: ["Wegovy", "diabetes"]
@@ -406,7 +676,6 @@ Rewritten: "What is revenue for GLP-1 drug for July 2025"
 → "GLP-1 drug" → Strip "drug" → Extract "GLP-1"
 → filter_values: ["GLP-1"]
 
-
 **OUTPUT FORMAT - PURE JSON ONLY**
 
 **CRITICAL REQUIREMENTS:**
@@ -419,7 +688,6 @@ Rewritten: "What is revenue for GLP-1 drug for July 2025"
 {{
     "analysis": {{
         "detected_prefix": "new question|follow-up|validation|none",
-        "clean_question": "the question after removing prefix",
         "input_type": "greeting|dml_ddl|business_question",
         "is_valid_business_question": true|false,
         "response_message": "message if greeting/dml, empty otherwise",
@@ -442,3 +710,4 @@ Rewritten: "What is revenue for GLP-1 drug for July 2025"
 ```
 
 """
+        return prompt

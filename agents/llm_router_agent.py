@@ -16,6 +16,45 @@ class LLMRouterAgent:
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
         self.max_retries = 3
+    
+    def _format_json_compact(self, data: Any) -> str:
+        """Format JSON with compact arrays (keep arrays on single lines)"""
+        def format_value(obj, indent_level=0):
+            indent = "  " * indent_level
+            next_indent = "  " * (indent_level + 1)
+            
+            if isinstance(obj, dict):
+                lines = ["{"]
+                items = list(obj.items())
+                for i, (key, value) in enumerate(items):
+                    comma = "," if i < len(items) - 1 else ""
+                    if isinstance(value, (list, dict)):
+                        lines.append(f'{next_indent}"{key}": {format_value(value, indent_level + 1)}{comma}')
+                    else:
+                        lines.append(f'{next_indent}"{key}": {json.dumps(value)}{comma}')
+                lines.append(f"{indent}}}")
+                return "\n".join(lines)
+            
+            elif isinstance(obj, list):
+                if not obj:
+                    return "[]"
+                # Check if all items are simple types (strings, numbers, booleans)
+                if all(isinstance(item, (str, int, float, bool, type(None))) for item in obj):
+                    # Keep array on single line
+                    return json.dumps(obj)
+                else:
+                    # If array contains objects, format each on new line
+                    lines = ["["]
+                    for i, item in enumerate(obj):
+                        comma = "," if i < len(obj) - 1 else ""
+                        lines.append(f"{next_indent}{format_value(item, indent_level + 1)}{comma}")
+                    lines.append(f"{indent}]")
+                    return "\n".join(lines)
+            
+            else:
+                return json.dumps(obj)
+        
+        return format_value(data)
         
     async def select_dataset(self, state: AgentState) -> Dict[str, any]:
         """Enhanced dataset selection with complete workflow handling"""
@@ -97,7 +136,7 @@ class LLMRouterAgent:
             
             # 2. Call search_metadata_sql if filter values exist
             # FILTER OUT common categorical values (case-insensitive), pass only meaningful values
-            common_categorical_values = {'pbm', 'hdp', 'home delivery', 'mail', 'specialty','retail','claim fee','claim cost','admin fee','claimfee','claimcost','adminfee','8+4','9+3','2+10','5+7'}
+            common_categorical_values = {'pbm', 'hdp', 'home delivery', 'mail', 'specialty','claim fee','claim cost','admin fee','claimfee','claimcost','adminfee','8+4','9+3','2+10','5+7','optum','retail'}
             
             # Filter out common categorical values
             meaningful_filter_values = []
@@ -283,6 +322,38 @@ class LLMRouterAgent:
                 print(f"  ⚡ Executing single SQL query...")
                 final_result = await self._execute_single_sql_query_async(sql_result, context, create_sql_after_followup)
             
+            # ========================================
+            # CHECK IF SQL RESULTS HAVE DATA
+            # ========================================
+            history_sql_used_flag = sql_result.get('history_sql_used', False)
+            
+            if final_result.get('success', False):
+                has_data = False
+                
+                # Check for multiple results
+                if final_result.get('multiple_results', False):
+                    query_results = final_result.get('query_results', [])
+                    # Check if any query has data
+                    has_data = any(
+                        result.get('data') and len(result.get('data', [])) > 0 
+                        for result in query_results
+                    )
+                    if not has_data:
+                        print(f"⚠️ Multiple SQL queries executed but no data returned")
+                else:
+                    # Check for single result
+                    query_results = final_result.get('query_results')
+                    if query_results and len(query_results) > 0:
+                        has_data = True
+                    else:
+                        print(f"⚠️ SQL query executed but no data returned")
+                
+                # Mark success as false if no data found
+                if not has_data:
+                    history_sql_used_flag = False  # Set history_sql_used to False when no data
+                    print(f"❌ Marking success as False due to empty result set")
+
+            
             # Return comprehensive results
             return {
                 'sql_result': final_result,
@@ -293,7 +364,7 @@ class LLMRouterAgent:
                 'functional_names': functional_names or state.get('functional_names', []),
                 'requires_clarification': False,
                 'filter_metadata_results': filter_metadata_results,
-                'history_sql_used': sql_result.get('history_sql_used', False)
+                'history_sql_used': history_sql_used_flag
             }
         
         # Should not reach here, but handle gracefully
@@ -397,7 +468,9 @@ You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
 
     AVAILABLE DATASETS (JSON FORMAT): 
 
-    {search_results}
+```json
+{self._format_json_compact(search_results)}
+```
 
     A. **PHI/PII SECURITY CHECK**:
 - First, examine each dataset's "PHI_PII_Columns" field (if present)
@@ -423,7 +496,7 @@ B. **METRICS & ATTRIBUTES CHECK**:
     * "percentage/rate" → ratio calculations
 
 **TIER 4 - Skip Common Filter Values**: 
-    * Skip validation for: "external", "internal", "retail", "mail order", "commercial", "medicare", "brand", "generic"
+    * Skip validation for: "external","PBM","HDP", "optum", "mail", "Specialty", "Home Delivery", "brand", "generic","retail"
     * These appear to be filter values, not missing attributes
 
 **BLOCK - Creative Substitutions**:
@@ -464,9 +537,9 @@ C. **KEYWORD & SUITABILITY ANALYSIS**:
 D. **COMPLEMENTARY ANALYSIS CHECK**:
 - **PURPOSE**: Identify if multiple datasets together provide more complete analysis than any single dataset
 - **LOOK FOR THESE PATTERNS**:
-* Primary metric in one dataset + dimensional attributes in another (e.g., "ledger revenue" + "therapy breakdown")
-* Different analytical perspectives on same business question (e.g., actuals view + claims view)
-* One dataset provides core data, another provides breakdown/segmentation
+* Primary metric in one dataset + dimensional attributes in another 
+* Different analytical perspectives on same business question 
+* One dataset provides core data, another provides breakdown/segmentation (claims + billing)
 * Cross-dataset comparison needs (e.g., budget vs actual vs claims)
 * **BREAKDOWN ANALYSIS**: When question asks for metric breakdown by dimensions not available in the primary dataset
 
@@ -563,26 +636,23 @@ DECISION CRITERIA
 * NOTE: If user explicitly mentions attribute (e.g., "Carrier MPDOVA"), NO follow-up needed regardless of multiple matches
 
 ==============================
-ASSESSMENT FORMAT (BRIEF)
+ASSESSMENT FORMAT - Brief reasoning
 ==============================
 
-**ASSESSMENT**: A:✓(no PHI) B:✓(metrics found) B-ATTR:✓(explicit attr OR single column) C:✓(suitability passed) D:✓(complementary) F:✓(clear selection)
-**DECISION**: PROCEED - [One sentence reasoning]
+**MAPPING:** Metrics: [m→col (T1/2/3)] | Attrs: [a→col (T1/2/3)] | Explicit attr: [Y/N]
+**SUIT:** [tbl]: ✓/❌ | [tbl2]: ✓/❌
+**STRATEGY:** [Single/Complementary/Disambiguation]
+**COVERAGE:** [tbl]: [X/Y]m, [A/B]a → [OK/MISS]
 
-Keep assessment ultra-brief:
-- Use checkmarks (✓) or X marks (❌) with 10 words max explanation in parentheses
-- **NEW B-ATTR**: ✓ means explicit attribute mentioned OR only 1 column match (no ambiguity), ❌ means no explicit attr AND multiple columns (disambiguation needed)
-- **CRITICAL for C (suitability)**: ✓ means no "not_useful_for" conflicts, ❌ means blocked by suitability constraints
-- Each area gets: "A:✓(brief reason)" or "A:❌(brief issue)"
-- Decision reasoning maximum 15 words
-- No detailed explanations or bullet points in assessment
-- Save detailed analysis for JSON selection_reasoning field
+**DECISION:** [PROCEED/MISSING_ITEMS/NEEDS_DISAMBIGUATION]
+**SELECTED:** [table(s)]
+**REASON:** [1 sentence with key column refs]
 
 =======================
 RESPONSE FORMAT
 =======================
 
-IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSON wrapped in <json> tags.
+Provide assessment above, then JSON in <json> tags.
 
 "status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
 "final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
@@ -609,7 +679,8 @@ IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSO
         
         while retry_count < max_retries:
             try:
-                print("Sending selection prompt to LLM...",selection_prompt)
+                # print("Sending selection prompt to LLM...",selection_prompt)
+                print("Current Timestamp before dataset selector call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": selection_prompt}],
                     max_tokens=2500,
@@ -619,7 +690,8 @@ IMPORTANT: Keep assessment ultra-brief (1-2 lines max), then output ONLY the JSO
                 )
                 
                 print("Raw LLM response:", llm_response)
-                
+                print("Current Timestamp after dataset selector call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
                 # Extract JSON from the response using the existing helper method
                 json_content = self._extract_json_from_response(llm_response)
                 
@@ -1091,6 +1163,8 @@ CRITICAL: Be decisive about response type to avoid processing loops.
         mandatory_column_mapping = {
             "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
                 "Ledger"
+            ],"prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
+                "product_category"
             ]
         }
         
@@ -1269,136 +1343,77 @@ AVAILABLE METADATA: {dataset_metadata}
 {history_section}
 
 ==============================
-PRE-ASSESSMENT VALIDATION
+COMPREHENSIVE ASSESSMENT
 ==============================
 
-Before starting Task 1, perform these mandatory checks:
+Perform complete validation covering ALL aspects (metadata, filters, context, rules). Each check must pass for SQL generation.
 
-**CHECK 1: Extract ALL user-mentioned terms**
-Identify every attribute, metric, filter, and dimension term in the question.
-List: [term1, term2, term3...]
+**1. TERM EXTRACTION & METADATA MAPPING**
+- Extract ALL terms (metrics, attributes, filters, dimensions) from question
+- Validate each against AVAILABLE METADATA:
+  * Exact match: "carrier_id" → carrier_id → ✓Found(carrier_id)
+  * Fuzzy match: "carrier" → carrier_id → ✓Found(carrier_id)
+  * No match: "xyz" → ❌NotFound
+  * Ambiguous: "region" → state/territory/district → ⚠️Ambiguous(col1,col2)
 
-**CHECK 2: Validate against metadata**
-For EACH term, check if it maps to columns in AVAILABLE METADATA:
-- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
-- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name). Note carrier is not client_id
-- No match: "xyz" with no similar column → ❌ Not Found
-- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
+**2. FILTER CONTEXT VALIDATION**
+If question has filter value WITHOUT attribute name (e.g., "MPDOVA" not "carrier_id MPDOVA"), check FILTER VALUES EXTRACTED:
+- Exact match in question + column in metadata → ✓Valid(column_name)
+- Partial match OR missing column → ❌Invalid
 
-Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
+**3. CLARIFICATION RULES CHECK**
+If metadata has "clarification_rules", evaluate question against each rule:
+- Rule triggered → ❌Blocked(rule)
+- No rules triggered → ✓Clear
 
-**CHECK 3: Filter context validation**
-Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
-If yes, check FILTER VALUES EXTRACTED:
-a) Does the filter value EXACTLY match (not partial) what's in the user's question?
-b) Does the column name exist in AVAILABLE METADATA?
-- If BOTH pass → ✓Valid (use this column for filtering)
-- If ONLY partial match → ❌Mark for follow-up
-- If exact match but column not in metadata → ❌Mark for follow-up
-- If filter value not mentioned in question → Skip (don't use this filter)
+**4. TEMPORAL SCOPE**
+- Past/current dates (≤Oct 2025) → ✓Valid
+- Near-future (≤12 months) → ✓Valid
+- Far-future (>Nov 2026) → ❌NeedsClarify
 
-**CHECK 4: Clarification rules validation**
-Check if selected dataset has "clarification_rules" field in metadata.
-If present, evaluate user's question against each rule:
-- Does question trigger any rule? → ❌ Rule triggered (needs clarification)
-- No rules triggered? → ✓ No rules apply
+**5. METRIC DEFINITIONS**
+- Standard aggregations (SUM/COUNT/AVG) → ✓Clear
+- Custom formulas not specified → ❌Unclear
 
-Output: ✓ No rules | ❌ Rule: [brief rule description]
+**6. BUSINESS CONTEXT**
+- Filtering AND grouping explicit → ✓Clear
+- Missing critical context ("top by what?") → ❌Unclear
+
+**7. QUERY STRATEGY**
+- Single/multi/join approach clear → ✓Clear
+- Multi-table approach unclear → ❌Unclear
 
 {check_5_text}
 
-**Output Format:**
-Terms: [list]
-Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
-Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
-Clarification Rules: [status from CHECK 4]
-Historical SQL: [status from CHECK 5]
+⚠️ IMPORTANT: Perform all checks above internally, but DO NOT display the detailed step-by-step assessment. Only output the compact ASSESSMENT OUTPUT format below.
 
-==============================
-TASK 1: STRICT ASSESSMENT
-==============================
+===================
+ASSESSMENT OUTPUT
+===================
 
-Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
+**MAPPING:** Metrics:[m→col(agg)] | Attrs:[a→col] | Filters:[f:WHERE]
+**VALIDATION:** term1(✓col) | term2(❌) | term3(⚠️col1,col2)
+**FILTER CTX:** ✓Valid(col) | ❌Invalid | N/A
+**RULES:** ✓Clear | ❌Blocked(rule)
+**CHECKS:** 1:✓/❌ | 2:✓/❌ | 3:✓/❌ | 4:✓/❌ | 5:✓/❌ | 6:✓/❌ | 7:✓/❌
+**STRATEGY:** [Single/Multi/Join] - [why]
+**HISTORY:** (if avail) Learned:[pattern] | Preserved:[dims] | Adapted:[changes]
 
-**A. TEMPORAL SCOPE**
-If question mentions specific dates/periods:
-- Past dates (before Oct 2025) → ✓ Valid
-- Current/recent dates (2025 year-to-date) → ✓ Valid  
-- Near-future dates (within 12 months) → ✓ Valid (forecast context)
-- Far-future dates (beyond Nov 2026) → ❌ Clarify intent
+**DECISION:** PROCEED | FOLLOW-UP
+**REASON:** [1 sentence]
 
-**B. METRIC DEFINITIONS** - Calculation Method Clarity
-Scope: Only numeric metrics requiring aggregation/calculation
-✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
-❌ = Any metric requires custom formula not specified OR calculation method ambiguous
-⚠️ = Metric exists but needs confirmation
-N/A = No metrics/calculations needed
+======================
+DECISION CRITERIA
+======================
 
-**C. BUSINESS CONTEXT**
-✓ = Filtering criteria clear AND grouping dimensions explicit
-❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
-⚠️ = Partially clear but confirmation recommended
+**PROCEED if:** ALL checks (1-7) = ✓ or N/A, NO ❌, NO blocking ⚠️
+**FOLLOW-UP if:** ANY check = ❌ OR any ⚠️ affecting SQL accuracy
 
-**D. FORMULA & CALCULATION REQUIREMENTS**
-✓ = Standard SQL aggregations sufficient
-❌ = Requires custom formulas without clear definition
-N/A = No calculations needed
-
-**E. METADATA MAPPING** - Column Existence Validation
-✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
-❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
-
-Use CHECK 2 validation results directly. No additional examples needed.
-
-**F. QUERY STRATEGY**
-✓ = Clear if single/multi query or join needed
-❌ = Multi-table approach unclear
-
-**G. DATASET CLARIFICATION RULES**
-✓ = No clarification rules triggered OR rules don't apply to question
-❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
-
-Use CHECK 4 validation result directly.
-
-==============================
-ASSESSMENT OUTPUT FORMAT
-==============================
-
-**PRE-VALIDATION:**
-Terms: [list]
-Validation: [statuses]
-Filter Context: [status]
-Clarification Rules: [status]
-Historical SQL: [status]
-
-**ASSESSMENT**: 
-A: ✓/❌/N/A (max 5 words)
-B: ✓/❌/⚠️/N/A (max 5 words)
-C: ✓/❌/⚠️ (max 5 words)
-D: ✓/❌/N/A (max 5 words)
-E: ✓/❌ (list failed mappings if any)
-F: ✓/❌ (max 5 words)
-G: ✓/❌ (rule description if triggered)
-
-**DECISION**: PROCEED | FOLLOW-UP
-
-==============================
-STRICT DECISION CRITERIA
-==============================
-
-**MUST PROCEED only if:**
-ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
-
-**MUST FOLLOW-UP if:**
-ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
-
-**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
+**Rule: ONE failure = STOP. No SQL with uncertainty.**
 
 ====================================
 FOLLOW-UP GENERATION (If DECISION = FOLLOW-UP)
-====================================
-
-⚠️ REMEMBER: You are generating clarification questions for SQL generation, NOT answering the business question.
+===================================
 
 Generate follow-up questions to gather missing metadata/context needed for SQL generation.
 
@@ -1426,12 +1441,12 @@ TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
 1. MANDATORY FILTERS - ALWAYS APPLY
 - Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
 
-2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
-**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
+2. VALIDATED FILTERS - APPLY FROM CHECK 2
+**Rule**: If COMPREHENSIVE ASSESSMENT Check 2 marked filters as ✓Valid:
 - Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
 - For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
 
-The validation was already done in CHECK 3. Only use filters marked as ✓Valid
+Only use filters validated in Check 2 (Filter Context Validation)
 
 3. CALCULATED FORMULAS HANDLING (CRITICAL)
 **When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
@@ -1553,22 +1568,20 @@ Return ONLY the result in XML tags with no additional text.
 - If historical SQL was available BUT you generated from scratch → false
 - If historical SQL was not available → false
 
-
 ==============================
 EXECUTION INSTRUCTION
 ==============================
 
 ⚠️ FINAL REMINDER: You are generating SQL CODE, not answering the business question.
 
-1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules + check historical SQL)
-2. Complete TASK 1 strict assessment (A-G with clear marks)
-3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
-4. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
-5. Must preserve the mandatory filter value in the SQL generation
-6. If FOLLOW-UP: Ask targeted questions
-7. Always include history_sql_used flag in output (true/false)
+1. Complete TASK 1 strict assessment (A-G with clear marks)
+2. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
+3. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
+4. Must preserve the mandatory filter value in the SQL generation
+5. If FOLLOW-UP: Ask targeted questions
+6. Always include history_sql_used flag in output (true/false)
 
-**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
+**Show your work**: assessment, then SQL or follow-up.
 **Remember**: ONE failure = STOP.
 **Critical**: You are a SQL code generator, NOT a business question answerer.
     """
@@ -1576,6 +1589,8 @@ EXECUTION INSTRUCTION
         for attempt in range(self.max_retries):
             try:
                 # print('sql llm prompt', assessment_prompt)
+                print("Current Timestamp before SQL writer:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": assessment_prompt}],
                     max_tokens=3000,
@@ -1583,7 +1598,9 @@ EXECUTION INSTRUCTION
                     top_p=0.1,
                     system_prompt="DATABRICKS SQL GENERATOR SYSTEM: You are an automated SQL query generation system for Databricks analytics infrastructure. Your ONLY job is to generate high-quality, syntactically correct SQL queries based on metadata and user requirements. You do NOT answer business questions, provide data analysis, or interpret results. You ONLY generate SQL code. This is a technical code generation task, not business analysis."
                 )
+            
                 print('sql llm response', llm_response)
+                print("Current Timestamp after SQL write call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 
                 # NEW: Extract history_sql_used flag
                 history_sql_used = False

@@ -1,4 +1,4 @@
-
+RULES BASED APPROACH
 1.Attributes contains PHI/PII column then stop and return the output like member_id,ssn number.
 2.if the question contains key word about the table then pick that like ledger,claims,billing
 3.extract the attributes , metrics ignore mathemetrical terms such as variance,growth,performance

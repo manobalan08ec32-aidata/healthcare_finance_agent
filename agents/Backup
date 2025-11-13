@@ -1,45 +1,35 @@
-Hi [Gateway Team],
 
-We're testing AWS Bedrock prompt caching for our OptumRx healthcare 
-finance analytics chatbot. We've confirmed our code is correct, but 
-caching metrics are showing zero.
+1.Attributes contains PHI/PII column then stop and return the output like member_id,ssn number.
+2.if the question contains key word about the table then pick that like ledger,claims,billing
+3.extract the attributes , metrics ignore mathemetrical terms such as variance,growth,performance
+apply the rtules -
+attribute and metric must match with table metadata and at least attribute must match 100% even metric doesnt match , give priority to table whetre attribute exists 
+skip the common filter such as     * Skip validation for: "external","PBM","HDP", "optum", "mail", "Specialty", "Home Delivery", "brand", "generic","retail"
+check if the table is marked for not useful then reject that table straightaway
+incase of the otet filter values check the meta data filter context and check if the full value exists then pick that column and map if multiple column exists then mark it as followup
+if same attribute and metric exists in multiple tables then mark it as follow up .
+do not match creatitive substituition , like ingedient fee with expense ask for followup incase of confusion or missing items 
+in case of tie check the table useful for 
+incase of tie ask for follow up
+if the metrics only exists in the query and attributes not available then go for table amrked for high level
 
-EVIDENCE FROM OUR TESTING:
+have two output format with json tags.
+for follow up 
+"status": "phi_found" | "missing_items" | "needs_disambiguation",
+"tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
+"functional_table_name_identified_for_clarification": ["functional_name_1", "functional_name_2"] if status = needs_disambiguation else [],
+"requires_clarification": true if status = needs_disambiguation else false,
+"clarification_question": "The column exists in multiple table.Please tell me which [functional table name1] , [functional table name 2] to select" if status = needs_disambiguation else null,
+"selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
+"user_message": "message to user" if status = phi_found or missing_items else null,
 
-1. Gateway Response Structure (we can see cache fields):
-   - cacheReadInputTokenCount: 0
-   - cacheReadInputTokens: 0
-   - cacheWriteInputTokenCount: 0
-   - cacheWriteInputTokens: 0
 
-2. Our Configuration:
-   - System prompt size: 5,713 tokens (above 1,024 minimum)
-   - Model: us.anthropic.claude-sonnet-4-20250514-v1:0
-   - Parameter sent: cacheControl: {type: "ephemeral"}
-   - No errors returned
+incase of match 
+"status": "success",
+"final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
+"functional_names": ["functional_name"] if status = success else [],
+"selection_reasoning": "2-3 lines max explanation",
+"high_level_table_selected": true/false if status = success else null,
+"selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
 
-3. Test Results:
-   - Query 1: 7.5 sec, cache write = 0 (expected ~5,500)
-   - Query 2: 9.0 sec, cache read = 0 (expected ~5,500)
-   
-QUESTIONS:
 
-1. Is prompt caching enabled for our Bedrock endpoint?
-2. Is the cacheControl parameter being passed through to Bedrock?
-3. Are there subscription/permission requirements for caching?
-4. Can you check gateway logs to see if cacheControl is present?
-5. What configuration changes are needed to enable caching?
-
-BUSINESS IMPACT:
-
-Current latency: 7-10 seconds per query
-Expected with caching: 2-3 seconds (70% faster)
-Query volume: High (finance team uses system extensively)
-
-We have clear evidence caching should work but metrics show zero.
-Can you help us understand what's blocking it?
-
-Attached: Debug logs showing cache field structure
-
-Thanks,
-[Your Name]

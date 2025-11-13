@@ -1,4 +1,4 @@
-===============================================================================
+================================================================================
 🎬 WORKFLOW STARTING - Event stream beginning
 ================================================================================
 
@@ -9,26 +9,42 @@ Routing entry to: navigation_controller
 📦 Event: type=node_end, name=entry_router
 ✅ Node completed: entry_router
 🎨 STATUS UPDATE: Showing status for navigation_controller
-Navigation Controller starting: 2025-11-13T01:52:33.597849
-Navigation Input - Current: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024'
+Navigation Controller starting: 2025-11-13T02:43:09.243514
+Navigation Input - Current: 'new question - what is the revenue for july 2025'
 Navigation Input - Existing Domain: PBM Network
 Starting single-step processing...
 conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
 📊 Current forecast cycle: 8+4
-Current Timestamp before question validator call: 2025-11-13 01:52:33
+Current Timestamp before question validator call: 2025-11-13 02:43:09
 🔄 Prompt caching ENABLED - system prompt will be cached
-⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
-Current Timestamp after Question validator call: 2025-11-13 01:52:53
-⏱️  Call Duration: 19.66 seconds
+   System prompt length: 18788 characters (~4697 tokens)
+   ⚠️  NOTE: Gateway returns cache fields but values are 0
+   ⚠️  This indicates caching may not be enabled for your project
+   ⚠️  Contact UHG support to enable prompt caching feature
+
+📊 Token Usage Breakdown:
+   Input tokens:  5,713
+   Output tokens: 237
+   Total tokens:  5,950
+
+⚠️  NO CACHING DETECTED:
+   Gateway returned cache fields but all values are 0
+   Possible causes:
+   1. Gateway doesn't recognize cacheControl parameter
+   2. Prompt is too short to cache (< 1024 tokens minimum)
+   3. Caching not enabled for this project ID
+   4. Need to contact UHG to enable caching feature
+Current Timestamp after Question validator call: 2025-11-13 02:43:15
+⏱️  Call Duration: 6.58 seconds
 
 ============================================================
 📊 PROMPT CACHING PERFORMANCE METRICS
 ============================================================
-Input tokens:        5,739
-Output tokens:       250
+Input tokens:        5,713
+Output tokens:       237
 Cache write tokens:  0
 Cache read tokens:   0
-Total tokens:        5,989
+Total tokens:        5,950
 
 ⚠️  STATUS: No cache metrics detected
    → Gateway may not support caching OR this is the first attempt
@@ -42,19 +58,19 @@ LLM Response: {
         "is_valid_business_question": true,
         "response_message": "",
         "context_decision": "NEW",
-        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for decision. Clean question 'compare PBM Revenue between Q3 2025 vs Q3 2024' contains metric (Revenue), filters (PBM), and complete time periods (Q3 2025 vs Q3 2024). Question is self-contained with all necessary components. No inheritance needed since this is explicitly marked as a new question and contains all required elements."
+        "reasoning": "Detected prefix 'new question' which takes highest priority for decision making. Clean question after stripping prefix is 'what is the revenue for july 2025'. Current question contains: metric (revenue), filters (none), attributes (none), time (July 2025 - partial time that needs year completion). Since detected_prefix is 'new question', decision is automatically NEW regardless of other factors. No inheritance needed as this is a new question with complete components."
     },
     "rewrite": {
-        "rewritten_question": "What is PBM Revenue for Q3 2025 vs Q3 2024",
+        "rewritten_question": "What is the revenue for July 2025",
         "question_type": "what",
         "user_message": ""
     },
     "filters": {
-        "filter_values": ["PBM"]
+        "filter_values": []
     }
 }
-Added business question to history: 'What is PBM Revenue for Q3 2025 vs Q3 2024'
-Navigation Controller ending: 2025-11-13T01:52:53.270446
+Added business question to history: 'What is the revenue for July 2025'
+Navigation Controller ending: 2025-11-13T02:43:15.830077
 📦 Astream step: ['navigation_controller']
 ✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'next_agent', 'next_agent_disp', 'domain_selection', 'conversation_memory', 'nav_error_msg', 'errors', 'user_friendly_message', 'user_questions_history', 'session_context', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'strategy_planner_err_msg', 'question_type', 'filter_values', 'current_agent', 'topic_drift', 'missing_dataset_items', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'matched_sql', 'matched_table_name', 'history_question_match', 'history_sql_used', 'llm_retry_count', 'pending_business_question', 'rewritten_question', 'greeting_response', 'user_question_history']
 📦 Event: type=node_end, name=navigation_controller
@@ -80,8 +96,8 @@ Current authenticated user name: Unknown User
 🗂️ Displaying 7 cached sessions
 RENDERED: Radio shows 'New Question' | first_question_asked=True
 ✅ Radio button rendered (not in clarification mode)
-🎯 Starting processing for: compare PBM Revenue between Q3 2025 vs Q3 2024
-🚀 Question type: 'New Question' | Workflow query: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024' | First Q asked: True
+🎯 Starting processing for: what is the revenue for july 2025
+🚀 Question type: 'New Question' | Workflow query: 'new question - what is the revenue for july 2025' | First Q asked: True
 📝 STORED: Saving 'New Question' as last_radio_selection for next question
 Current authenticated user: Unknown User
 Current authenticated user name: Unknown User
@@ -101,26 +117,42 @@ Routing entry to: navigation_controller
 📦 Event: type=node_end, name=entry_router
 ✅ Node completed: entry_router
 🎨 STATUS UPDATE: Showing status for navigation_controller
-Navigation Controller starting: 2025-11-13T01:54:45.587771
-Navigation Input - Current: 'new question - compare PBM Revenue between Q3 2025 vs Q3 2024'
+Navigation Controller starting: 2025-11-13T02:43:32.245146
+Navigation Input - Current: 'new question - what is the revenue for july 2025'
 Navigation Input - Existing Domain: PBM Network
 Starting single-step processing...
 conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
 📊 Current forecast cycle: 8+4
-Current Timestamp before question validator call: 2025-11-13 01:54:45
+Current Timestamp before question validator call: 2025-11-13 02:43:32
 🔄 Prompt caching ENABLED - system prompt will be cached
-⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
-Current Timestamp after Question validator call: 2025-11-13 01:55:05
-⏱️  Call Duration: 19.86 seconds
+   System prompt length: 18788 characters (~4697 tokens)
+   ⚠️  NOTE: Gateway returns cache fields but values are 0
+   ⚠️  This indicates caching may not be enabled for your project
+   ⚠️  Contact UHG support to enable prompt caching feature
+
+📊 Token Usage Breakdown:
+   Input tokens:  5,731
+   Output tokens: 231
+   Total tokens:  5,962
+
+⚠️  NO CACHING DETECTED:
+   Gateway returned cache fields but all values are 0
+   Possible causes:
+   1. Gateway doesn't recognize cacheControl parameter
+   2. Prompt is too short to cache (< 1024 tokens minimum)
+   3. Caching not enabled for this project ID
+   4. Need to contact UHG to enable caching feature
+Current Timestamp after Question validator call: 2025-11-13 02:43:39
+⏱️  Call Duration: 7.04 seconds
 
 ============================================================
 📊 PROMPT CACHING PERFORMANCE METRICS
 ============================================================
-Input tokens:        5,777
-Output tokens:       258
+Input tokens:        5,731
+Output tokens:       231
 Cache write tokens:  0
 Cache read tokens:   0
-Total tokens:        6,035
+Total tokens:        5,962
 
 ⚠️  STATUS: No cache metrics detected
    → Gateway may not support caching OR this is the first attempt
@@ -134,15 +166,15 @@ LLM Response: {
         "is_valid_business_question": true,
         "response_message": "",
         "context_decision": "NEW",
-        "reasoning": "Detected prefix 'new question -' which is the PRIMARY signal for decision making. Clean question after stripping prefix: 'compare PBM Revenue between Q3 2025 vs Q3 2024'. Current question has all required components: metric (Revenue), filters (PBM), and time (Q3 2025 vs Q3 2024). Since prefix 'new question' was detected, this overrides any other signals and makes this a NEW question regardless of previous context."
+        "reasoning": "Detected prefix 'new question' which takes highest priority for decision making. Clean question after stripping prefix is 'what is the revenue for july 2025'. Current question contains: metric (revenue), filters (none), attributes (none), time (july 2025 - partial time). No growth/decline terms present so no metric inheritance needed. Since prefix explicitly indicates 'new question', decision is NEW regardless of previous question content."
     },
     "rewrite": {
-        "rewritten_question": "Compare PBM Revenue between Q3 2025 vs Q3 2024",
+        "rewritten_question": "What is the revenue for July 2025",
         "question_type": "what",
         "user_message": ""
     },
     "filters": {
-        "filter_values": ["PBM"]
+        "filter_values": []
     }
 }
-Added business question to history: 'Compare PBM Revenue between Q3 2025 vs Q3 2024'
+Added business question to history: 'What is the revenue for July 2025'

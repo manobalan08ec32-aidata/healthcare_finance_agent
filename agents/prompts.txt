@@ -9,6 +9,169 @@ Routing entry to: navigation_controller
 📦 Event: type=node_end, name=entry_router
 ✅ Node completed: entry_router
 🎨 STATUS UPDATE: Showing status for navigation_controller
+Navigation Controller starting: 2025-11-13T02:31:15.596183
+Navigation Input - Current: 'new question - what is the revenue for july 2025'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+Current Timestamp before question validator call: 2025-11-13 02:31:15
+🔄 Prompt caching ENABLED - system prompt will be cached
+
+======================================================================
+🔍 DEBUG: Full API Response Structure
+======================================================================
+Response keys: ['metrics', 'output', 'stopReason', 'usage', 'request_id']
+Usage object keys: ['cacheReadInputTokenCount', 'cacheReadInputTokens', 'cacheWriteInputTokenCount', 'cacheWriteInputTokens', 'inputTokens', 'outputTokens', 'serverToolUsage', 'totalTokens']
+Usage object content: {'cacheReadInputTokenCount': 0, 'cacheReadInputTokens': 0, 'cacheWriteInputTokenCount': 0, 'cacheWriteInputTokens': 0, 'inputTokens': 5713, 'outputTokens': 234, 'serverToolUsage': {}, 'totalTokens': 5947}
+======================================================================
+
+⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
+Current Timestamp after Question validator call: 2025-11-13 02:31:23
+⏱️  Call Duration: 7.54 seconds
+
+============================================================
+📊 PROMPT CACHING PERFORMANCE METRICS
+============================================================
+Input tokens:        5,713
+Output tokens:       234
+Cache write tokens:  0
+Cache read tokens:   0
+Total tokens:        5,947
+
+⚠️  STATUS: No cache metrics detected
+   → Gateway may not support caching OR this is the first attempt
+   → If this persists on 2nd+ calls, caching is not enabled by gateway
+============================================================
+
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "new question",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "NEW",
+        "reasoning": "Detected prefix 'new question' which takes highest priority for decision making. Clean question after stripping prefix is 'what is the revenue for july 2025'. Current question contains: metric (revenue), filters (none), attributes (none), time (July 2025 - partial time that needs year completion). Since prefix is 'new question', decision is NEW regardless of other factors. No inheritance needed as this is a new question with explicit prefix."
+    },
+    "rewrite": {
+        "rewritten_question": "What is the revenue for July 2025",
+        "question_type": "what",
+        "user_message": ""
+    },
+    "filters": {
+        "filter_values": []
+    }
+}
+Added business question to history: 'What is the revenue for July 2025'
+Navigation Controller ending: 2025-11-13T02:31:23.165441
+📦 Astream step: ['navigation_controller']
+✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'next_agent', 'next_agent_disp', 'domain_selection', 'conversation_memory', 'nav_error_msg', 'errors', 'user_friendly_message', 'user_questions_history', 'session_context', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'strategy_planner_err_msg', 'question_type', 'filter_values', 'current_agent', 'topic_drift', 'missing_dataset_items', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'matched_sql', 'matched_table_name', 'history_question_match', 'history_sql_used', 'llm_retry_count', 'pending_business_question', 'rewritten_question', 'greeting_response', 'user_question_history']
+📦 Event: type=node_end, name=navigation_controller
+✅ Node completed: navigation_controller
+🎨 STATUS UPDATE: Showing status for router_agent
+⚠️ No final state captured from workflow
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🔄 Resetting question_type to 'Follow-up' for next turn.
+🗂️ Displaying 7 cached sessions
+INIT: Subsequent question, setting radio to 'Follow-up'
+RENDERED: Radio shows 'Follow-up' | first_question_asked=True
+✅ Radio button rendered (not in clarification mode)
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🗂️ Displaying 7 cached sessions
+RENDERED: Radio shows 'Follow-up' | first_question_asked=True
+✅ Radio button rendered (not in clarification mode)
+🎯 Starting processing for: i need for expense
+🚀 Question type: 'Follow-up' | Workflow query: 'follow-up - i need for expense' | First Q asked: True
+📝 STORED: Saving 'Follow-up' as last_radio_selection for next question
+Current authenticated user: Unknown User
+Current authenticated user name: Unknown User
+🗂️ Displaying 7 cached sessions
+⚠️ domain_selection came as list ['PBM Network']; normalizing to first item
+🔍 Using domain selection (string) in chat workflow: PBM Network (type=str)
+🎨 STATUS UPDATE: Showing status for entry_router
+
+================================================================================
+🎬 WORKFLOW STARTING - Event stream beginning
+================================================================================
+
+🔧 Using fallback astream approach for reliable events
+Routing entry to: navigation_controller
+📦 Astream step: ['entry_router']
+✅ Node completed: entry_router - state keys: ['current_question', 'session_id', 'user_id', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'conversation_memory', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'user_friendly_message', 'matched_sql', 'history_question_match', 'matched_table_name', 'history_sql_used', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'strategy_planner_err_msg']     
+📦 Event: type=node_end, name=entry_router
+✅ Node completed: entry_router
+🎨 STATUS UPDATE: Showing status for navigation_controller
+Navigation Controller starting: 2025-11-13T02:31:45.613335
+Navigation Input - Current: 'follow-up - i need for expense'
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+Current Timestamp before question validator call: 2025-11-13 02:31:45
+🔄 Prompt caching ENABLED - system prompt will be cached
+
+======================================================================
+🔍 DEBUG: Full API Response Structure
+======================================================================
+Response keys: ['metrics', 'output', 'stopReason', 'usage', 'request_id']
+Usage object keys: ['cacheReadInputTokenCount', 'cacheReadInputTokens', 'cacheWriteInputTokenCount', 'cacheWriteInputTokens', 'inputTokens', 'outputTokens', 'serverToolUsage', 'totalTokens']
+Usage object content: {'cacheReadInputTokenCount': 0, 'cacheReadInputTokens': 0, 'cacheWriteInputTokenCount': 0, 'cacheWriteInputTokens': 0, 'inputTokens': 5727, 'outputTokens': 251, 'serverToolUsage': {}, 'totalTokens': 5978}
+======================================================================
+
+⚠️ NO CACHE METRICS - Gateway may not support caching or caching not enabled
+Current Timestamp after Question validator call: 2025-11-13 02:31:54
+⏱️  Call Duration: 9.01 seconds
+
+============================================================
+📊 PROMPT CACHING PERFORMANCE METRICS
+============================================================
+Input tokens:        5,727
+Output tokens:       251
+Cache write tokens:  0
+Cache read tokens:   0
+Total tokens:        5,978
+
+⚠️  STATUS: No cache metrics detected
+   → Gateway may not support caching OR this is the first attempt
+   → If this persists on 2nd+ calls, caching is not enabled by gateway
+============================================================
+
+LLM Response: {
+    "analysis": {
+        "detected_prefix": "follow-up",
+        "input_type": "business_question",
+        "is_valid_business_question": true,
+        "response_message": "",
+        "context_decision": "FOLLOW_UP",
+        "reasoning": "Detected prefix 'follow-up' which is the PRIMARY signal for decision. Clean question is 'i need for expense'. Current question has metric 'expense' but is missing time period. Previous question had 'revenue for July 2025'. Since this is a FOLLOW_UP, should inherit time 'July 2025' from previous question. The metric changes from 'revenue' to 'expense' so we use the current metric."
+    },
+    "rewrite": {
+        "rewritten_question": "What is expense for July 2025",
+        "question_type": "what",
+        "user_message": "I'm using July 2025 from your last question."
+    },
+    "filters": {
+        "filter_values": []
+    }
+}
+Added business question to history: 'What is expense for July 2025'
+Navigation Controller ending: 2025-11-13T02:31:54.624493
+📦 Astream step: ['navigation_controller']
+✅ Node completed: navigation_controller - state keys: ['current_question', 'session_id', 'user_id', 'rewritten_question', 'question_type', 'next_agent', 'next_agent_disp', 'current_agent', 'domain_selection', 'pending_business_question', 'user_question_history', 'conversation_memory', 'greeting_response', 'nav_error_msg', 'errors', 'llm_retry_count', 'filter_values', 'user_friendly_message', 'matched_sql', 'history_question_match', 'matched_table_name', 'history_sql_used', 'user_questions_history', 'session_context', 'topic_drift', 'missing_dataset_items', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'sql_followup_topic_drift', 'sql_followup_but_new_question', 'strategy_planner_err_msg']
+
+================================================================================
+🎬 WORKFLOW STARTING - Event stream beginning
+================================================================================
+
+🔧 Using fallback astream approach for reliable events
+Routing entry to: navigation_controller
+📦 Astream step: ['entry_router']
+✅ Node completed: entry_router - state keys: ['current_question', 'session_id', 'user_id', 'domain_selection', 'conversation_memory', 'errors', 'user_questions_history', 'session_context', 'nav_error_msg', 'router_error_msg', 'follow_up_error_msg', 'sql_gen_error_msg', 'strategy_planner_err_msg', 'user_friendly_message', 'next_agent', 'next_agent_disp']
+📦 Event: type=node_end, name=entry_router
+✅ Node completed: entry_router
+🎨 STATUS UPDATE: Showing status for navigation_controller
 Navigation Controller starting: 2025-11-13T02:43:09.243514
 Navigation Input - Current: 'new question - what is the revenue for july 2025'
 Navigation Input - Existing Domain: PBM Network

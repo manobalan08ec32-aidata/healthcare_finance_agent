@@ -1,326 +1,105 @@
-"""
-Async version for chatbot with DYNAMIC ranking (NO HARDCODING):
-1. Tier 1A/1B split (pure vs mixed exact matches)
-2. Tier 3 intelligent ranking based on:
-   - Word match count (how many search words in values)
-   - Match completeness ratio (% of search words found)
-   - Token boundary quality (full word vs substring)
-   - Column name relevance (dynamic semantic matching)
-"""
-from typing import List
-import re
+            check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (using as learning template)"
+            history_section = f"""
+=== HISTORICAL SUCCESSFUL SQL (LEARNING REFERENCE) ===
 
+A similar question was successfully answered with this SQL:
+- Previous Question: "{history_question_match}"
+- Table Used: {matched_table_name}
 
-async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
-    """
-    Search metadata with enhanced cascading priority:
-    1A. EXACT MATCH (Pure) - ALL values are exact matches
-    1B. EXACT MATCH (Mixed) - SOME values are exact, others partial
-    2. STARTS-WITH MATCH - Value starts with the full term
-    3. CONTAINS MATCH - Individual words found (with dynamic intelligent ranking)
-    """
-    try:
-        if not filter_list:
-            return []
-        
-        print(f"🔍 Starting enhanced search for filters: {filter_list}")
-        
-        # Build all match conditions for a SINGLE query
-        exact_conditions = []
-        starts_conditions = []
-        contains_conditions = []
-        
-        for term in filter_list:
-            term_clean = term.strip().lower()
-            escaped_exact = term_clean.replace("'", "\\'")
-            escaped_regex = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
-            
-            # TIER 1: Exact match condition
-            exact_conditions.append(f"lower(trim(exploded_value)) = '{escaped_exact}'")
-            
-            # TIER 2: Starts-with condition
-            starts_conditions.append(f"lower(trim(exploded_value)) RLIKE '^{escaped_regex}\\\\b'")
-            
-            # TIER 3: Individual words
-            words = term_clean.split()
-            for word in words:
-                if len(word) > 2:
-                    escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
-                    contains_conditions.append(f"lower(trim(exploded_value)) RLIKE '(?i)\\\\b{escaped_word}'")
-        
-        # Build tier scoring logic
-        exact_clause = ' OR '.join(exact_conditions)
-        starts_clause = ' OR '.join(starts_conditions)
-        contains_clause = ' OR '.join(contains_conditions)
-        
-        # Combine all conditions for WHERE clause
-        all_conditions = f"({exact_clause}) OR ({starts_clause}) OR ({contains_clause})"
-        
-        # Tier assignment with tier tracking per value
-        tier_assignment = f"""
-            CASE 
-                WHEN {exact_clause} THEN 1
-                WHEN {starts_clause} THEN 2
-                ELSE 3
-            END
-        """
-        
-        query = f"""
-        WITH matched_data AS (
-            SELECT
-                column_name,
-                trim(exploded_value) AS individual_value,
-                {tier_assignment} AS match_tier
-            FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
-            LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-            WHERE {all_conditions}
-        ),
-        scored_aggregated AS (
-            SELECT
-                column_name,
-                collect_list(individual_value) AS all_matched_values,
-                collect_list(match_tier) AS all_match_tiers,
-                MIN(match_tier) AS best_tier
-            FROM matched_data
-            GROUP BY column_name
-        )
-        SELECT
-            column_name,
-            concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
-            all_match_tiers,
-            best_tier
-        FROM scored_aggregated
-        ORDER BY best_tier ASC, column_name
-        """
-        
-        print(f"📊 Enhanced Query (First 500 chars): {query[:500]}...")
-        
-        # Execute ONCE using async method
-        result_data = await self.execute_sql_async_audit(query)
-        print('results_data_filter', result_data)
-        
-        # Convert DataFrame to list if needed
-        if hasattr(result_data, 'collect'):
-            # It's a Spark DataFrame - convert to list of dicts
-            result_list = [row.asDict() for row in result_data.collect()]
-            print(f"✅ Converted DataFrame to list: {len(result_list)} rows")
-        elif isinstance(result_data, list):
-            result_list = result_data
-        else:
-            print(f"❌ Unexpected result type: {type(result_data)}")
-            return []
-        
-        if not result_list:
-            print(f"❌ No matches found")
-            return []
-        
-        # Python filtering: Return ONLY the highest priority tier
-        return self._filter_by_priority_enhanced(result_list, filter_list)
-        
-    except Exception as e:
-        print(f"❌ Error in search_metadata_sql: {str(e)}")
-        return []
+<historical_sql>
+{matched_sql}
+</historical_sql>
 
+**CRITICAL - HOW TO USE THIS REFERENCE:**
 
-def _filter_by_priority_enhanced(self, result_data: list, filter_list: List[str]) -> List[str]:
-    """
-    Enhanced filtering with:
-    - Tier 1A/1B split (purity check)
-    - Tier 3 dynamic intelligent ranking (NO HARDCODING)
-    """
-    if not result_data:
-        return []
-    
-    import json
-    
-    # Group results by tier with purity check for Tier 1
-    tier_1a_results = []  # Pure exact matches
-    tier_1b_results = []  # Mixed exact matches
-    tier_2_results = []
-    tier_3_results = []
-    
-    for row in result_data:
-        best_tier = int(row.get('best_tier', 3))
-        column_name = row.get('column_name', '')
-        matched_values = row.get('matched_values', '')
-        all_match_tiers_raw = row.get('all_match_tiers', [])
-        
-        # Parse all_match_tiers if it's a JSON string
-        if isinstance(all_match_tiers_raw, str):
-            try:
-                all_match_tiers = json.loads(all_match_tiers_raw)
-                # Convert string numbers to integers
-                all_match_tiers = [int(tier) for tier in all_match_tiers]
-            except:
-                all_match_tiers = []
-        elif isinstance(all_match_tiers_raw, list):
-            all_match_tiers = [int(tier) for tier in all_match_tiers_raw]
-        else:
-            all_match_tiers = []
-        
-        result_entry = {
-            'column_name': column_name,
-            'matched_values': matched_values,
-            'tier': best_tier,
-            'all_tiers': all_match_tiers
-        }
-        
-        if best_tier == 1:
-            # Check purity: Are ALL matched values exact matches?
-            if all_match_tiers and all(tier == 1 for tier in all_match_tiers):
-                result_entry['sub_tier'] = '1A'
-                tier_1a_results.append(result_entry)
-            else:
-                result_entry['sub_tier'] = '1B'
-                tier_1b_results.append(result_entry)
-        elif best_tier == 2:
-            tier_2_results.append(result_entry)
-        else:
-            tier_3_results.append(result_entry)
-    
-    print(f"\n📊 Results breakdown:")
-    print(f"   Tier 1A (PURE EXACT): {len(tier_1a_results)} columns")
-    print(f"   Tier 1B (MIXED EXACT): {len(tier_1b_results)} columns")
-    print(f"   Tier 2 (STARTS-WITH): {len(tier_2_results)} columns")
-    print(f"   Tier 3 (CONTAINS): {len(tier_3_results)} columns")
-    
-    # Return ONLY highest priority tier with results
-    if tier_1a_results:
-        print(f"✅ TIER 1A (PURE EXACT): Found {len(tier_1a_results)} matches - Returning only these")
-        return self._format_results(tier_1a_results[:7], "EXACT-PURE")
-    
-    if tier_1b_results:
-        print(f"✅ TIER 1B (MIXED EXACT): Found {len(tier_1b_results)} matches - Returning only these")
-        return self._format_results(tier_1b_results[:7], "EXACT-MIXED")
-    
-    if tier_2_results:
-        print(f"✅ TIER 2 (STARTS-WITH): Found {len(tier_2_results)} matches - Returning only these")
-        return self._format_results(tier_2_results[:7], "STARTS-WITH")
-    
-    if tier_3_results:
-        print(f"✅ TIER 3 (CONTAINS): Found {len(tier_3_results)} matches - Applying dynamic intelligent ranking...")
-        # Apply dynamic intelligent ranking for Tier 3
-        ranked_tier_3 = self._rank_tier_3_dynamic(tier_3_results, filter_list)
-        return self._format_results(ranked_tier_3[:7], "CONTAINS")
-    
-    print(f"❌ No results after filtering")
-    return []
+✅ LEARN FROM (Structure & Logic):
+1. **Query Structure**: 
+- Observe GROUP BY strategy (dimensions used)
+- Study CASE WHEN patterns (side-by-side columns) and must keep side by side comparison pattern
+- Note aggregation logic (SUM, COUNT, AVG placement)
+- Review calculation methods (ROUND, NULLIF usage)
 
+2. **Column Selection**:
+- See which business dimensions are included
+- Understand metric aggregations used
+- Notice naming conventions (e.g., august_revenue_amount)
 
-def _rank_tier_3_dynamic(self, tier_3_results: list, filter_list: List[str]) -> list:
-    """
-    Dynamic intelligent ranking for Tier 3 results (NO HARDCODING)
-    
-    Scoring factors:
-    1. Word match count (50 points per word) - How many search words appear in values
-    2. Match completeness ratio (30 points) - % of search words found
-    3. Token boundary bonus (20 points) - Full word vs substring match
-    4. Column name relevance (15 points) - Column name semantic matching
-    """
-    # Extract all search words
-    search_words = []
-    for term in filter_list:
-        words = term.strip().lower().split()
-        search_words.extend([w for w in words if len(w) > 2])
-    
-    total_search_words = len(search_words)
-    print(f"   🔍 Search words for dynamic ranking: {search_words} (total: {total_search_words})")
-    
-    # Calculate dynamic composite score for each result
-    for result in tier_3_results:
-        column_name = result['column_name']
-        matched_values = result['matched_values'].lower()
-        
-        # SCORE 1: Word match count (50 points per unique word found)
-        words_found = set()
-        for word in search_words:
-            if word in matched_values:
-                words_found.add(word)
-        word_match_count = len(words_found)
-        word_match_score = word_match_count * 50
-        
-        # SCORE 2: Match completeness ratio (30 points max)
-        if total_search_words > 0:
-            completeness_ratio = word_match_count / total_search_words
-            completeness_score = completeness_ratio * 30
-        else:
-            completeness_score = 0
-        
-        # SCORE 3: Token boundary quality (20 points max)
-        token_boundary_score = 0
-        for word in words_found:
-            # Check if word appears as full token (with word boundaries)
-            if re.search(r'\b' + re.escape(word) + r'\b', matched_values):
-                token_boundary_score += 20 / len(words_found) if words_found else 0
-        
-        # SCORE 4: Column name relevance (15 points max)
-        column_name_lower = column_name.lower()
-        column_relevance_score = 0
-        
-        # Check if any search word appears in column name
-        for word in search_words:
-            if word in column_name_lower:
-                column_relevance_score += 5
-        
-        # Semantic column name matching (medical/pharma related terms)
-        medical_terms = ['therapy', 'drug', 'medication', 'treatment', 'disease', 'diagnosis', 
-                        'class', 'category', 'type', 'vaccine', 'pharmaceutical']
-        for med_term in medical_terms:
-            if med_term in column_name_lower and any(word in matched_values for word in search_words):
-                column_relevance_score += 10
-                break
-        
-        # Cap at 15 points
-        column_relevance_score = min(column_relevance_score, 15)
-        
-        # COMPOSITE SCORE
-        composite_score = (
-            word_match_score + 
-            completeness_score + 
-            token_boundary_score + 
-            column_relevance_score
-        )
-        
-        # Store all scoring details
-        result['word_match_count'] = word_match_count
-        result['completeness_ratio'] = round(completeness_ratio * 100, 1) if total_search_words > 0 else 0
-        result['token_boundary_score'] = round(token_boundary_score, 1)
-        result['column_relevance_score'] = round(column_relevance_score, 1)
-        result['composite_score'] = round(composite_score, 1)
-        
-        print(f"   📊 {column_name}: Score={result['composite_score']} "
-              f"[Words:{word_match_count}/{total_search_words}, "
-              f"Complete:{result['completeness_ratio']}%, "
-              f"Token:{result['token_boundary_score']}, "
-              f"ColRel:{result['column_relevance_score']}]")
-    
-    # Sort by composite score (descending)
-    tier_3_results.sort(key=lambda x: x['composite_score'], reverse=True)
-    
-    print(f"   ✅ Dynamically ranked {len(tier_3_results)} Tier 3 results")
-    return tier_3_results
+3. **Best Practices**:
+- UPPER() for case-insensitive filters
+- ROUND(x, 0) for amounts, ROUND(x, 3) for percentages
+- NULLIF for division safety
+- Clean, descriptive column aliases
 
+4. **STRUCTURAL PATTERNS - MUST PRESERVE**:
+- **UNION/UNION ALL**: If historical uses UNION → replicate this exact pattern (e.g., detail rows + OVERALL_TOTAL)
+- **CTEs/Subqueries**: Preserve WITH clauses, nested queries, and subquery structure
+- **Window Functions**: Keep PARTITION BY and ORDER BY logic intact
+- **Dimension Columns**: Use EXACT column names (e.g., product_sub_category_lvl_2, not lvl_1) unless current question explicitly specifies different level
+- **COPY the complete structure; ONLY change WHERE clause filter values to match current question**
 
-def _format_results(self, result_data: list, match_type: str) -> List[str]:
-    """
-    Format the query results into a list of strings
-    """
-    concatenated_results = []
-    
-    for row in result_data:
-        column_name = row.get('column_name', '')
-        matched_values = row.get('matched_values', '')
-        tier = row.get('tier', '')
-        sub_tier = row.get('sub_tier', '')
-        
-        # Additional info for Tier 3
-        extra_info = ""
-        if 'composite_score' in row:
-            extra_info = (f", Score:{row['composite_score']}")
-        
-        tier_label = sub_tier if sub_tier else tier
-        table_summary = f"Column: {column_name} (Tier: {tier_label}, Type: {match_type}{extra_info})\n  - Values: {matched_values}"
-        concatenated_results.append(table_summary)
-    
-    print(f"📋 Formatted {len(concatenated_results)} results for {match_type} matches")
-    return concatenated_results
+5. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
+- Observe ALL dimension columns in SELECT and GROUP BY clauses
+- These represent the level of detail that was SUCCESSFUL and USEFUL to users
+- **DEFAULT BEHAVIOR: PRESERVE all dimensions from historical SQL**
+- Example: Historical has [product_category, product_sub_category_lvl_2, year, month]
+    → Keep ALL of these in your SELECT and GROUP BY
+- This is USER FEEDBACK in action - they found this granularity valuable
+
+**Only REMOVE a dimension if:**
+* Current question EXPLICITLY asks for higher-level aggregation (e.g., "total PBM revenue" without any breakdown)
+* Dimension column doesn't exist in current AVAILABLE METADATA
+* Current question specifies DIFFERENT grouping dimensions (e.g., "by line_of_business" when historical was "by product_sub_category")
+
+**When in doubt: KEEP the historical dimensions**
+
+❌ DO NOT COPY DIRECTLY (Adapt These):
+1. **Filter Values**: 
+- Historical may have <parameter> placeholders or specific values
+- ALWAYS extract filters from CURRENT question
+- Example: Historical has carrier_id = 'MPDOVA' → Use carrier_id from current question
+
+2. **Date/Time Values**:
+- Historical may have specific dates/periods
+- ALWAYS use dates from CURRENT question
+- Example: Historical has "year = 2024" → Use year from current question
+
+3. **Entity Names**:
+- Client names, carrier IDs, product categories, etc.
+- ALWAYS use entities from CURRENT question
+
+⚠️ MANDATORY VALIDATIONS:
+1. **Add Mandatory Filters**: 
+- Check MANDATORY FILTER COLUMNS section above
+- Historical SQL may not have these (different requirements)
+- YOU MUST ADD any mandatory filters listed
+
+2. **Verify Column Availability**:
+- Confirm all columns exist in AVAILABLE METADATA
+- If historical column missing, use equivalent from metadata
+
+3. **Apply Current Filters**:
+- Use FILTER VALUES EXTRACTED section (marked ✓Valid)
+- Apply filters from CURRENT question, not historical
+
+4. **Update Time Logic**:
+- Match time structure to CURRENT question
+- Monthly trend? YoY comparison? Date range? Use current requirement
+
+5. **PRESERVE Historical Dimensions**:
+- Keep ALL GROUP BY columns from historical SQL in your SELECT and GROUP BY
+- These dimensions represent proven user value from feedback
+- Only remove if current question explicitly asks for higher aggregation
+- Example: Historical has "product_sub_category_lvl_2" → Keep it unless user says "total" or "overall"
+
+**ADAPTATION PRIORITY:**
+Content from CURRENT question > Historical structure > Metadata defaults
+
+**DIMENSION PRESERVATION PRIORITY:**
+Keep historical GROUP BY dimensions > Only remove if explicitly contradicted
+
+This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question while PRESERVING the dimensional granularity that made the historical query successful.
+
+**IMPORTANT**: 
+- If you use historical SQL's structure AND preserve its dimensions → set history_sql_used = true
+- If you generate from scratch without using historical patterns → set history_sql_used = false
+- Preserving dimensions is CRITICAL - it represents user feedback on useful granularity

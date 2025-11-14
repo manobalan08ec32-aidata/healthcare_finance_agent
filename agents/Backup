@@ -1,68 +1,21 @@
-async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
-    """
-    Search metadata with cascading priority (returns ONLY highest priority matches):
-    1. EXACT MATCH - Full term matches exactly
-    2. STARTS-WITH MATCH - Value starts with the full term
-    3. CONTAINS MATCH - Individual words found anywhere
-    
-    OPTIMIZED: Single database query, Python-based filtering
-    """
-    try:
-        if not filter_list:
-            return []
-        
-        print(f"🔍 Starting single-query cascading search for filters: {filter_list}")
-        
-        # Build all match conditions for a SINGLE query
-        exact_conditions = []
-        starts_conditions = []
-        contains_conditions = []
-        tier_score_cases = []
-        
-        for term in filter_list:
-            term_clean = term.strip().lower()
-            escaped_exact = term_clean.replace("'", "\\'")
-            escaped_regex = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
-            
-            # TIER 1: Exact match condition
-            exact_conditions.append(f"lower(trim(exploded_value)) = '{escaped_exact}'")
-            
-            # TIER 2: Starts-with condition
-            starts_conditions.append(f"lower(trim(exploded_value)) RLIKE '^{escaped_regex}\\\\b'")
-            
-            # TIER 3: Individual words
-            words = term_clean.split()
-            for word in words:
-                if len(word) > 2:
-                    escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
-                    contains_conditions.append(f"lower(trim(exploded_value)) RLIKE '(?i)\\\\b{escaped_word}'")
-        
-        # Build tier scoring logic
-        exact_clause = ' OR '.join(exact_conditions)
-        starts_clause = ' OR '.join(starts_conditions)
-        contains_clause = ' OR '.join(contains_conditions)
-        
-        # Combine all conditions for WHERE clause
-        all_conditions = f"({exact_clause}) OR ({starts_clause}) OR ({contains_clause})"
-        
-        # Tier assignment: highest tier wins for each row
-        tier_assignment = f"""
-            CASE 
-                WHEN {exact_clause} THEN 1
-                WHEN {starts_clause} THEN 2
-                ELSE 3
-            END
-        """
-        
-        query = f"""
+
+search_metadata_sql(['External'])
+🔍 Starting single-query cascading search for filters: ['External']
+📊 Single Query (All Tiers): 
         WITH matched_data AS (
             SELECT
                 column_name,
                 trim(exploded_value) AS individual_value,
-                {tier_assignment} AS match_tier
+                
+            CASE 
+                WHEN lower(trim(exploded_value)) = 'external' THEN 1
+                WHEN lower(trim(exploded_value)) RLIKE '^external\\b' THEN 2
+                ELSE 3
+            END
+         AS match_tier
             FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
             LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
-            WHERE {all_conditions}
+            WHERE (lower(trim(exploded_value)) = 'external') OR (lower(trim(exploded_value)) RLIKE '^external\\b') OR (lower(trim(exploded_value)) RLIKE '(?i)\\bexternal')
         ),
         scored_aggregated AS (
             SELECT
@@ -78,87 +31,7 @@ async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
             best_tier
         FROM scored_aggregated
         ORDER BY best_tier ASC, column_name
-        """
         
-        print(f"📊 Single Query (All Tiers): {query}")
-        
-        # Execute ONCE
-        result_data = await self.execute_sql_async_audit(query)
-        print('results_data_filter', result_data)
-        
-        if not isinstance(result_data, list) or not result_data:
-            print(f"❌ No matches found")
-            return []
-        
-        # Python filtering: Return ONLY the highest priority tier
-        return self._filter_by_priority(result_data)
-        
-    except Exception as e:
-        print(f"❌ Error in search_metadata_sql: {str(e)}")
-        return []
-
-
-def _filter_by_priority(self, result_data: list) -> List[str]:
-    """
-    Filter results to return ONLY the highest priority tier found
-    Tier 1 (Exact) > Tier 2 (Starts-With) > Tier 3 (Contains)
-    """
-    if not result_data:
-        return []
-    
-    # Group results by tier
-    tier_1_results = []
-    tier_2_results = []
-    tier_3_results = []
-    
-    for row in result_data:
-        tier = int(row.get('best_tier', 3))  # Convert to int for proper comparison
-        column_name = row.get('column_name', '')
-        matched_values = row.get('matched_values', '')
-        
-        result_entry = {
-            'column_name': column_name,
-            'matched_values': matched_values,
-            'tier': tier
-        }
-        
-        if tier == 1:
-            tier_1_results.append(result_entry)
-        elif tier == 2:
-            tier_2_results.append(result_entry)
-        else:
-            tier_3_results.append(result_entry)
-    
-    # Return ONLY highest priority tier with results
-    if tier_1_results:
-        print(f"✅ TIER 1 (EXACT): Found {len(tier_1_results)} matches - Returning only these")
-        return self._format_results(tier_1_results[:7], "EXACT")  # Limit to 7
-    
-    if tier_2_results:
-        print(f"✅ TIER 2 (STARTS-WITH): Found {len(tier_2_results)} matches - Returning only these")
-        return self._format_results(tier_2_results[:7], "STARTS-WITH")
-    
-    if tier_3_results:
-        print(f"✅ TIER 3 (CONTAINS): Found {len(tier_3_results)} matches - Returning these")
-        return self._format_results(tier_3_results[:7], "CONTAINS")
-    
-    print(f"❌ No results after filtering")
-    return []
-
-
-def _format_results(self, result_data: list, match_type: str) -> List[str]:
-    """
-    Format the query results into a list of strings
-    """
-    concatenated_results = []
-    
-    for row in result_data:
-        column_name = row.get('column_name', '')
-        matched_values = row.get('matched_values', '')
-        tier = row.get('tier', '')
-        
-        table_summary = f"Column: {column_name} (Tier: {tier}, Type: {match_type})\n  - Values: {matched_values}"
-        concatenated_results.append(table_summary)
-    
-    print(f"📋 Formatted {len(concatenated_results)} results for {match_type} matches")
-    return concatenated_results
+results_data_filter DataFrame[column_name: string, matched_values: string, best_tier: int]
+❌ No matches found
+[]

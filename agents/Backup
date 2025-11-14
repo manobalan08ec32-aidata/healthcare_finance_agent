@@ -1,3 +1,20 @@
+✅ Converted DataFrame to list: 5 rows
+
+📊 Results breakdown:
+   Tier 1 (EXACT): 2 columns
+   Tier 2 (STARTS-WITH): 1 columns
+   Tier 3 (CONTAINS): 2 columns
+
+✅ TIER 1 (EXACT): Found 2 matches - Returning only these
+
+📋 Formatted 2 results for EXACT matches
+
+🎯 FINAL RESULTS:
+Column: client_name (Tier: 1, Type: EXACT)
+  - Values: EXTERNAL, TEXAS ERS-EXTERNAL
+Column: line_of_business (Tier: 1, Type: EXACT)
+  - Values: External
+
 """
 Standalone synchronous version for direct Databricks testing
 No async, no self, uses spark.sql() directly

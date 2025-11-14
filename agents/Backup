@@ -1,105 +1,60 @@
-            check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (using as learning template)"
-            history_section = f"""
-=== HISTORICAL SUCCESSFUL SQL (LEARNING REFERENCE) ===
-
-A similar question was successfully answered with this SQL:
-- Previous Question: "{history_question_match}"
-- Table Used: {matched_table_name}
+check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (learning template)"
+history_section = f"""
+=== HISTORICAL SQL REFERENCE ===
+Previous: "{history_question_match}" | Table: {matched_table_name}
 
 <historical_sql>
 {matched_sql}
 </historical_sql>
 
-**CRITICAL - HOW TO USE THIS REFERENCE:**
+**STEP 1: QUESTION ALIGNMENT CHECK**
+Current asks for: [Interpret current question's grouping needs]
+Historical had: [Observe historical GROUP BY dimensions]
 
-✅ LEARN FROM (Structure & Logic):
-1. **Query Structure**: 
-- Observe GROUP BY strategy (dimensions used)
-- Study CASE WHEN patterns (side-by-side columns) and must keep side by side comparison pattern
-- Note aggregation logic (SUM, COUNT, AVG placement)
-- Review calculation methods (ROUND, NULLIF usage)
+**INHERIT DECISIONS:**
+A. **DIMENSIONS/GROUP BY**: 
+   ✅ INHERIT if: Questions ask for same analysis type (e.g., both ask "by product category")
+   ❌ DON'T INHERIT if: Different analysis requested (e.g., current asks "by carrier" vs historical "by product")
+   
+B. **STRUCTURAL PATTERNS** (ALWAYS PRESERVE):
+   - Side-by-side comparisons (CASE WHEN for periods)
+   - UNION/UNION ALL patterns (detail + OVERALL_TOTAL rows)
+   - CTE/subquery architecture
+   - Calculation methods (ROUND, NULLIF, percentages)
+   - Window functions structure
 
-2. **Column Selection**:
-- See which business dimensions are included
-- Understand metric aggregations used
-- Notice naming conventions (e.g., august_revenue_amount)
+**STEP 2: SELECTIVE LEARNING**
 
-3. **Best Practices**:
+✅ **ALWAYS LEARN** (Universal Patterns):
+- CASE WHEN for side-by-side columns (august_revenue, september_revenue)
+- Aggregation placement (SUM/COUNT/AVG)
+- Division safety (NULLIF patterns)
 - UPPER() for case-insensitive filters
-- ROUND(x, 0) for amounts, ROUND(x, 3) for percentages
-- NULLIF for division safety
-- Clean, descriptive column aliases
+- ROUND(amounts,0), ROUND(percentages,3)
 
-4. **STRUCTURAL PATTERNS - MUST PRESERVE**:
-- **UNION/UNION ALL**: If historical uses UNION → replicate this exact pattern (e.g., detail rows + OVERALL_TOTAL)
-- **CTEs/Subqueries**: Preserve WITH clauses, nested queries, and subquery structure
-- **Window Functions**: Keep PARTITION BY and ORDER BY logic intact
-- **Dimension Columns**: Use EXACT column names (e.g., product_sub_category_lvl_2, not lvl_1) unless current question explicitly specifies different level
-- **COPY the complete structure; ONLY change WHERE clause filter values to match current question**
+⚡ **CONDITIONALLY INHERIT** (Check Alignment First):
+- GROUP BY dimensions → Only if questions ask same granularity
+- SELECT columns → Match if same analysis type
+- JOIN patterns → Use if same tables needed
 
-5. **DIMENSION COLUMNS - CRITICAL FOR FEEDBACK LEARNING**:
-- Observe ALL dimension columns in SELECT and GROUP BY clauses
-- These represent the level of detail that was SUCCESSFUL and USEFUL to users
-- **DEFAULT BEHAVIOR: PRESERVE all dimensions from historical SQL**
-- Example: Historical has [product_category, product_sub_category_lvl_2, year, month]
-    → Keep ALL of these in your SELECT and GROUP BY
-- This is USER FEEDBACK in action - they found this granularity valuable
+❌ **NEVER COPY** (Always From Current):
+- Filter values (dates, carrier_id, entities)
+- <parameter> placeholders → use actual values
+- Specific time periods → use current question's dates
 
-**Only REMOVE a dimension if:**
-* Current question EXPLICITLY asks for higher-level aggregation (e.g., "total PBM revenue" without any breakdown)
-* Dimension column doesn't exist in current AVAILABLE METADATA
-* Current question specifies DIFFERENT grouping dimensions (e.g., "by line_of_business" when historical was "by product_sub_category")
+**STEP 3: VALIDATION**
+1. Verify columns exist in AVAILABLE METADATA
+2. Add MANDATORY FILTER COLUMNS if missing
+3. Apply ✓Valid filters from current question
 
-**When in doubt: KEEP the historical dimensions**
+**DECISION LOGIC:**
+IF current_question_pattern == historical_pattern:
+    → Inherit dimensions + structure
+    → Set history_sql_used = true
+ELSE:
+    → Learn only structural patterns (CASE WHEN, UNION)
+    → Build GROUP BY from current question
+    → Set history_sql_used = false
 
-❌ DO NOT COPY DIRECTLY (Adapt These):
-1. **Filter Values**: 
-- Historical may have <parameter> placeholders or specific values
-- ALWAYS extract filters from CURRENT question
-- Example: Historical has carrier_id = 'MPDOVA' → Use carrier_id from current question
-
-2. **Date/Time Values**:
-- Historical may have specific dates/periods
-- ALWAYS use dates from CURRENT question
-- Example: Historical has "year = 2024" → Use year from current question
-
-3. **Entity Names**:
-- Client names, carrier IDs, product categories, etc.
-- ALWAYS use entities from CURRENT question
-
-⚠️ MANDATORY VALIDATIONS:
-1. **Add Mandatory Filters**: 
-- Check MANDATORY FILTER COLUMNS section above
-- Historical SQL may not have these (different requirements)
-- YOU MUST ADD any mandatory filters listed
-
-2. **Verify Column Availability**:
-- Confirm all columns exist in AVAILABLE METADATA
-- If historical column missing, use equivalent from metadata
-
-3. **Apply Current Filters**:
-- Use FILTER VALUES EXTRACTED section (marked ✓Valid)
-- Apply filters from CURRENT question, not historical
-
-4. **Update Time Logic**:
-- Match time structure to CURRENT question
-- Monthly trend? YoY comparison? Date range? Use current requirement
-
-5. **PRESERVE Historical Dimensions**:
-- Keep ALL GROUP BY columns from historical SQL in your SELECT and GROUP BY
-- These dimensions represent proven user value from feedback
-- Only remove if current question explicitly asks for higher aggregation
-- Example: Historical has "product_sub_category_lvl_2" → Keep it unless user says "total" or "overall"
-
-**ADAPTATION PRIORITY:**
-Content from CURRENT question > Historical structure > Metadata defaults
-
-**DIMENSION PRESERVATION PRIORITY:**
-Keep historical GROUP BY dimensions > Only remove if explicitly contradicted
-
-This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for current question while PRESERVING the dimensional granularity that made the historical query successful.
-
-**IMPORTANT**: 
-- If you use historical SQL's structure AND preserve its dimensions → set history_sql_used = true
-- If you generate from scratch without using historical patterns → set history_sql_used = false
-- Preserving dimensions is CRITICAL - it represents user feedback on useful granularity
+**CRITICAL**: Structural patterns (side-by-side) are proven UX patterns - preserve these even when dimensions differ.
+"""

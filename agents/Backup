@@ -15,6 +15,21 @@ Column: client_name (Tier: 1, Type: EXACT)
 Column: line_of_business (Tier: 1, Type: EXACT)
   - Values: External
 
+
+
+Column: DRUG_MANUFCTR_NM (Tier: 3, Type: CONTAINS)
+  - Values: COVIDIEN M
+Column: drug_name (Tier: 3, Type: CONTAINS)
+  - Values: PFIZER-BIONTECH COVID-19 VACCINE/ADULT RTU, SPIKEVAX COVID-19 VACCINE/2025-26, PFIZER-BIONTECH COVID-19 VACCINE/BIVALENT/5-11Y, EVERLYWELL COVID-19 TEST HOME COLLECTION KIT DTC, PFIZER-BIONTECH COVID-19 VACCINE/BIVALENT/BA.4/BA.5
+Column: orcl_prod_desc (Tier: 3, Type: CONTAINS)
+  - Values: Covid Antiviral Fee, Covid Test Kit Admin Fee
+Column: pharmacy_name (Tier: 3, Type: CONTAINS)
+  - Values: KP ALAMEDA VACCINE, KP BELLFLOWER VACCINE, KP LOS ANGELES VACCINES, KP WEST LOS ANGELES VACCINE, KP RIVERSIDE VACCINE
+Column: therapy_class_name (Tier: 3, Type: CONTAINS)
+  - Values: COVID-19 and Flu Testing, COVID-19 Vaccines, Vaccines, COVID-19 Testing
+
+
+
 """
 Standalone synchronous version for direct Databricks testing
 No async, no self, uses spark.sql() directly

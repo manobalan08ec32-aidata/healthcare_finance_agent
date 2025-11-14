@@ -1,11 +1,3 @@
-column_name	matched_values	best_tier
-client_name	EXTERNAL, TEXAS ERS-EXTERNAL	1
-line_of_business	External	1
-therapy_class_name	External Vehicles, External Vehicle Ingredients	2
-drug_name	INVIEW STANDARD EXTERNAL 25MM, REPLENS EXTERNAL COMFORT, SYRINGE WITH NEEDLE FOR EXTERNAL INSULIN PUMP	3
-pharmacy_name	MVH PHARMACY (EXTERNAL NON VA BUSINESS)	3
-
-
 async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
     """
     Search metadata with cascading priority (returns ONLY highest priority matches):
@@ -120,7 +112,7 @@ def _filter_by_priority(self, result_data: list) -> List[str]:
     tier_3_results = []
     
     for row in result_data:
-        tier = row.get('best_tier', 3)
+        tier = int(row.get('best_tier', 3))  # Convert to int for proper comparison
         column_name = row.get('column_name', '')
         matched_values = row.get('matched_values', '')
         

@@ -1,10 +1,60 @@
-D. **Multiple Value Intent**
-When user lists multiple specific values (HDP, SP or drug1, drug2):
-- Multiple values mentioned → Need breakdown by each → ✓Show individually
-- "total for HDP and SP" → Aggregate together → ✓Clear intent
-- "compare HDP vs SP" → Show side-by-side → ✓Clear intent
+check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (learning template)"
+history_section = f"""
+=== HISTORICAL SQL REFERENCE ===
+Previous: "{history_question_match}" | Table: {matched_table_name}
 
-Examples:
-- "revenue for HDP, SP" → SELECT category, SUM(revenue) GROUP BY category
-- "total revenue for HDP and SP" → WHERE category IN ('HDP','SP') [no GROUP BY category]
-- "HDP vs SP comparison" → Separate columns for each
+<historical_sql>
+{matched_sql}
+</historical_sql>
+
+**STEP 1: QUESTION ALIGNMENT CHECK**
+Current asks for: [Interpret current question's grouping needs]
+Historical had: [Observe historical GROUP BY dimensions]
+
+**INHERIT DECISIONS:**
+A. **DIMENSIONS/GROUP BY**: 
+   ✅ INHERIT if: Questions ask for same analysis type (e.g., both ask "by product category")
+   ❌ DON'T INHERIT if: Different analysis requested (e.g., current asks "by carrier" vs historical "by product")
+   
+B. **STRUCTURAL PATTERNS** (ALWAYS PRESERVE):
+   - Side-by-side comparisons (CASE WHEN for periods)
+   - UNION/UNION ALL patterns (detail + OVERALL_TOTAL rows)
+   - CTE/subquery architecture
+   - Calculation methods (ROUND, NULLIF, percentages)
+   - Window functions structure
+
+**STEP 2: SELECTIVE LEARNING**
+
+✅ **ALWAYS LEARN** (Universal Patterns):
+- CASE WHEN for side-by-side columns (august_revenue, september_revenue)
+- Aggregation placement (SUM/COUNT/AVG)
+- Division safety (NULLIF patterns)
+- UPPER() for case-insensitive filters
+- ROUND(amounts,0), ROUND(percentages,3)
+
+⚡ **CONDITIONALLY INHERIT** (Check Alignment First):
+- GROUP BY dimensions → Only if questions ask same granularity
+- SELECT columns → Match if same analysis type
+- JOIN patterns → Use if same tables needed
+
+❌ **NEVER COPY** (Always From Current):
+- Filter values (dates, carrier_id, entities)
+- <parameter> placeholders → use actual values
+- Specific time periods → use current question's dates
+
+**STEP 3: VALIDATION**
+1. Verify columns exist in AVAILABLE METADATA
+2. Add MANDATORY FILTER COLUMNS if missing
+3. Apply ✓Valid filters from current question
+
+**DECISION LOGIC:**
+IF current_question_pattern == historical_pattern:
+    → Inherit dimensions + structure
+    → Set history_sql_used = true
+ELSE:
+    → Learn only structural patterns (CASE WHEN, UNION)
+    → Build GROUP BY from current question
+    → Set history_sql_used = partial
+
+**CRITICAL**: Structural patterns (side-by-side) are proven UX patterns - preserve these even when dimensions differ.
+"""

@@ -136,7 +136,7 @@ class LLMRouterAgent:
             
             # 2. Call search_metadata_sql if filter values exist
             # FILTER OUT common categorical values (case-insensitive), pass only meaningful values
-            common_categorical_values = {'pbm', 'hdp', 'home delivery', 'mail', 'specialty','claim fee','claim cost','admin fee','claimfee','claimcost','adminfee','8+4','9+3','2+10','5+7','optum','retail'}
+            common_categorical_values = {'pbm','pbm retail', 'hdp', 'home delivery', 'mail', 'specialty','sp','claim fee','claim cost','admin fee','claimfee','claimcost','adminfee','8+4','9+3','2+10','5+7','optum','retail'}
             
             # Filter out common categorical values
             meaningful_filter_values = []
@@ -162,9 +162,12 @@ class LLMRouterAgent:
                 try:
                     filter_metadata_results = await metadata_search_task
                     print(f"📊 Found {len(filter_metadata_results)} filter metadata matches")
+                    # Store in state for persistence
+                    state['filter_metadata_results'] = filter_metadata_results
                 except Exception as e:
                     print(f"⚠️ Filter metadata search failed: {e}")
                     filter_metadata_results = []
+                    state['filter_metadata_results'] = []
             
             # 4. Load domain-specific dataset config
             domain_selection = state.get('domain_selection', '')
@@ -255,8 +258,9 @@ class LLMRouterAgent:
 
         # SQL Generation and Execution Phase
         if create_sql or create_sql_after_followup:
+
             print(f"🔧 Starting SQL generation and execution phase")
-            
+
             # Generate SQL based on the flow type
             if create_sql_after_followup:
                 # SQL follow-up flow
@@ -453,225 +457,213 @@ class LLMRouterAgent:
     """
 
         selection_prompt = f"""
-⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
+You are a DATABASE TABLE SELECTION SYSTEM. Your ONLY function is to select the correct database table(s) for query routing based on strict rules.
 
-You are a DATABASE TABLE SELECTION SYSTEM - NOT an AI assistant that answers business questions.
-Your ONLY function is to analyze metadata and select the right database table(s) for query routing.
+IMPORTANT: You have ONE opportunity to ask for clarification if genuinely ambiguous. Use it wisely.
+
+====================================================
+INPUTS
+====================================================
+QUESTION: {user_question}
+EXTRACTED FILTER VALUES: {filter_values}
+FILTER METADATA: {filter_metadata_text}
+AVAILABLE DATASETS: 
+{search_results}
+
+====================================================
+SELECTION RULES - APPLY IN STRICT SEQUENCE
 ====================================================
 
-You are a Dataset Identifier Agent. You have FIVE sequential tasks to complete.
+**RULE 1: PHI/PII SECURITY CHECK (IMMEDIATE STOP)**
+- Check if user requests PHI/PII columns (SSN, member_id, patient names, addresses)
+- Compare with each dataset's "PHI_PII_Columns" field
+- IF found → STOP → Return status="phi_found" with appropriate message
+- IF not found → Continue to Rule 2
 
-    CURRENT QUESTION: {user_question}
+**RULE 2: DIRECT TABLE KEYWORD MATCH**
+- Check for explicit table references in question:
+  * "ledger" → actuals_vs_forecast table
+  * "claims" or "claim" → claim_transaction table  
+  * "billing" → billing_extract table
+- IF keyword found AND that table has required columns → Return status="success"
+- IF keyword found BUT table lacks columns → Continue to Rule 3
+- IF no keyword → Continue to Rule 3
 
-    EXTRACTED COLUMNS WITH FILTER VALUES: {filter_values}
-    {filter_metadata_text}
+**RULE 3: EXTRACT COMPONENTS FROM QUESTION**
+Extract three types of components:
 
-    AVAILABLE DATASETS (JSON FORMAT): 
+A. METRICS (measurable values):
+   - Direct matches: revenue, expense, cost, cogs, billed amount, allowed amount, scripts, volume, margin
+   - Fuzzy matches for metrics:
+     * "scripts/prescriptions" → unadjusted_scripts, adjusted_scripts, 30_day_scripts, 90_day_scripts
+     * "cost/costs" → expense, cogs, cost per script
+     * "margin" → gross margin, Gross Margin %, margin per script
+     * "billing/billed" → billed amount, revenue from billing
+   - Skip mathematical operations: variance, growth, change, percentage, performance
 
-```json
-{self._format_json_compact(search_results)}
-```
+B. ATTRIBUTES (dimensions for breakdown):
+   - Direct matches: Client Name, Drug Name, Therapy Class, Carrier ID, Client ID
+   - Apply fuzzy matching for readable names:
+     * "therapy/therapies" → Therapy Class
+     * "client/clients" → Client Name, Client ID
+     * "pharmacy/pharmacies" → Pharmacy Name, Pharmacy NPI
+     * "lob/line of business" → Line of Business
+     * "invoice" → Invoice Number, Invoice Date
+     * "member/patient" → Member ID (PHI check required)
+   - BLOCK creative substitutions (Product Category ≠ drug, ingredient_fee ≠ expense)
 
-    A. **PHI/PII SECURITY CHECK**:
-- First, examine each dataset's "PHI_PII_Columns" field (if present)
-- Analyze the user's question to identify if they are requesting any PHI/PII information
-- PHI/PII includes: SSN, member IDs, personal identifiers, patient names, addresses, etc.
-- Check if the user's question mentions or implies access to columns listed in "PHI_PII_Columns"
-- If PHI/PII columns are requested, IMMEDIATELY return phi_found status (do not proceed to other checks)
+C. FILTERS (specific values to filter by):
+   - Extract actual values from question
+   - SKIP these common filters: external,SP,PBM, HDP, optum, mail, specialty, home delivery,PBM retail.These exists in all tables
 
-B. **METRICS & ATTRIBUTES CHECK**:
-- Extract requested metrics/measures and attributes/dimensions
-- Apply smart mapping with these rules:
+**RULE 4: ELIMINATE UNSUITABLE TABLES (MANDATORY CHECK)**
+For each available dataset, perform TWO checks:
 
-**TIER 1 - Direct Matches**: Exact column names
-**TIER 2 - Standard Healthcare Mapping**: 
-    * "therapies" → "therapy_class_name"
-    * "scripts" → "unadjusted_scripts/adjusted_scripts"  
-    * "drugs" → "drug_name"
-    * "clients" → "client_id/client_name"
+A. Check "not_useful_for" field:
+   - IF question pattern matches "not_useful_for" → ELIMINATE immediately
+   - Ex-1: Q:"top 10 clients by expense" + Ledger has not_useful_for:["client expense/margin alone"] → ELIMINATE Ledger
+   - Ex-2: Q:"top 10 drugs,therapy class by revenue" + Ledger has not_useful_for:["drug/therapy analysis"] → ELIMINATE Ledger
+   - **CRITICAL**: Any question with drug/therapy/vaccine/medication filters OR breakdowns → Check "not_useful_for" for "drug/therapy analysis"
 
-**TIER 3 - Mathematical Operations**: 
-    * "variance/variances" → calculated from existing metrics over time periods
-    * "growth/change" → period-over-period calculations
-    * "percentage/rate" → ratio calculations
+B. Check "attrs" field for exact attribute match:
+   - Extract ALL attributes from the dataset's "attrs" list
+   - Compare question's required attributes with this EXACT list
+   - **DO NOT assume a table has attributes if they're not explicitly listed in "attrs"**
+   - IF question needs attributes NOT IN "attrs" list → ELIMINATE immediately
+   - Examples:
+     * Q: "revenue by therapy class, drug name"
+     * Ledger attrs: ["Ledger", "Mail Service", "Home Delivery", "Specialty", "Line of Business", "Transaction Date", "Year", "Month", "Quarter", "Product Category", "Product Category Level 1", "Product Category Level 2", "Client ID", "Client Name"]
+     * Does NOT contain "Therapy Class" or "Drug Name" → ELIMINATE Ledger ❌
+     * Claims attrs: ["Claim Number", "Submit Date", "Client ID", "Client Name", "Pharmacy NPI", "Drug Name", "Therapy Class", ...]
+     * CONTAINS "Therapy Class" and "Drug Name" → KEEP Claims ✅
+   
+   - **CRITICAL FOR FILTERS**: Even if question has no breakdown, check filter applicability:
+     * Q: "script count for vaccines" (vaccines is a therapy class value)
+     * Ledger: Check "not_useful_for" → Contains "drug/therapy analysis" → ELIMINATE ❌
+     * Claims: Check "not_useful_for" → Does not block therapy analysis → KEEP ✅
 
-**TIER 4 - Skip Common Filter Values**: 
-    * Skip validation for: "external","PBM","HDP", "optum", "mail", "Specialty", "Home Delivery", "brand", "generic","retail"
-    * These appear to be filter values, not missing attributes
+**RULE 5: VALIDATE ATTRIBUTE REQUIREMENTS**
+For remaining tables after Rule 4:
 
-**BLOCK - Creative Substitutions**:
-    * Do NOT map unrelated terms (e.g., "ingredient fee" ≠ "expense")
-    * Do NOT assume domain knowledge not in metadata
+CRITICAL: Use ONLY the exact attribute names listed in each dataset's "attrs" field. Do NOT assume or infer attributes.
 
-- Only mark as missing if NO reasonable Tier 1-3 mapping exists
+- IF question needs attributes (has breakdown/dimension/by/for grouping):
+  * Step 1: List ALL required attributes from question
+  * Step 2: For EACH table, check if its "attrs" field contains EXACT matches (case-insensitive, fuzzy OK for synonyms)
+  * Step 3: Table MUST have 100% of required attributes in its "attrs" list → KEEP
+  * Step 4: Table missing ANY attribute from its "attrs" list → ELIMINATE
+  * Example:
+    - Required: ["therapy class", "drug name"]
+    - Table A attrs contains: ["Therapy Class", "Drug Name"] → KEEP ✅
+    - Table B attrs contains: ["Product Category", "Client Name"] → ELIMINATE ❌ (missing both)
 
-**NEW - EXPLICIT ATTRIBUTE DETECTION**:
-- Scan the user's question for explicit attribute keywords(examples below):
-    * "carrier" → carrier_name, carrier_id
-    * "drug" → drug_name, drug_id
-    * "pharmacy" → pharmacy_name, pharmacy_id
-    * "therapy" → therapy_class_name, therapy_id
-    * "client" → client_name, client_id
-    * "manufacturer" → drug_manufctr_nm, manufacturer_name
-- Flag as "explicit_attribute_mentioned = true/false"
-- Store mapped column names for later filter disambiguation check
-- This detection is case-insensitive and looks for these keywords anywhere in the question
+- IF question needs NO attributes (summary/total only):
+  * Keep all tables with required metrics
 
-C. **KEYWORD & SUITABILITY ANALYSIS**:
-- **KEYWORD MATCHING**: Look for domain keywords that indicate preferences:
-* "claim/claims" → indicates claim_transaction dataset relevance
-* "forecast/budget" → indicates actuals_vs_forecast dataset relevance  
-* "ledger" → indicates actuals_vs_forecast dataset relevance
+**RULE 6: FILTER VALUE DISAMBIGUATION**
+When filter values exist in metadata:
+- Check filter_metadata for column matches
+- IF value found in SINGLE column → AUTO-SELECT that column
+- IF value found in MULTIPLE columns:
+  * Only ONE column has COMPLETE match → AUTO-SELECT that column
+  * Multiple columns have matches → Mark needs_disambiguation
+  * Example: "covid vaccine" in [drug_name, therapy_class_name] → needs_disambiguation
 
-- **CRITICAL: SUITABILITY VALIDATION (HARD CONSTRAINTS)**:
-* **BLOCKING RULE**: If a dataset's "not_useful_for" field contains keywords/patterns that match the user's question, IMMEDIATELY EXCLUDE that dataset regardless of other factors
-* **POSITIVE VALIDATION**: Check if user's question aligns with "useful_for" field patterns
-* **Example Applications**:
-- User asks "top 10 clients by expense" → Ledger has "not_useful_for": ["client level expense"] → EXCLUDE ledger table completely
-- User asks "drug or therapy level info" → Ledger has "not_useful_for": → EXCLUDE ledger table completely
-* **PRECEDENCE**: not_useful_for OVERRIDES metrics/attributes availability - even if a table has the columns, exclude it if explicitly marked as not suitable
+**RULE 7: APPLY HIGH-LEVEL TABLE LOGIC**
+- IF multiple tables remain AND question is metrics-only (no breakdown):
+  * Example: "What is total revenue?", "Overall cost for PBM"
+  * SELECT table where high_level_table=true
+  
+- IF multiple tables have BOTH required metrics AND attributes (tie scenario):
+  * Check if one table has high_level_table=true
+  * SELECT the high_level_table as primary choice
+  * Example: Both Claims and Ledger have revenue + client_name, Ledger has high_level=true → Select Ledger
+  
+- IF question needs breakdown but only one table has all requirements:
+  * Select that table regardless of high_level_table flag
 
-- Verify time_grains match user needs (daily vs monthly vs quarterly)
-- Note: Keywords indicate relevance but suitability constraints are MANDATORY
+**RULE 8: MULTI-TABLE SELECTION**
+- IF user explicitly requests multiple datasets (uses "and", "compare", "both"):
+  * Return all qualifying tables
+- OTHERWISE: Select single best table
 
-D. **COMPLEMENTARY ANALYSIS CHECK**:
-- **PURPOSE**: Identify if multiple datasets together provide more complete analysis than any single dataset
-- **LOOK FOR THESE PATTERNS**:
-* Primary metric in one dataset + dimensional attributes in another 
-* Different analytical perspectives on same business question 
-* One dataset provides core data, another provides breakdown/segmentation (claims + billing)
-* Cross-dataset comparison needs (e.g., budget vs actual vs claims)
-* **BREAKDOWN ANALYSIS**: When question asks for metric breakdown by dimensions not available in the primary dataset
+**RULE 9: FINAL DECISION**
+Count tables that passed all rules:
+- SINGLE table passes → Return status="success"
+- MULTIPLE tables pass with same metrics + attributes:
+  * FIRST: Check if one has high_level_table=true → SELECT it
+  * SECOND: Check "useful_for" field as tiebreaker
+  * THIRD: Still tied → Return status="needs_disambiguation"
+- NO tables pass → Return status="missing_items"
 
-- **EVALUATION CRITERIA**:
-* Single dataset with ALL metrics + attributes → SELECT IT
-* No single complete dataset → SELECT MULTIPLE if complementary
-* Primary metric in A + breakdown dimension in B → SELECT BOTH
+====================================================
+CRITICAL REMINDERS
+====================================================
+1. You have ONE follow-up opportunity - use it only for genuine ambiguity
+2. Never make creative substitutions - if unsure, ask for clarification
+3. Attributes must match 100% - no partial attribute matching allowed
+4. High-level table is ONLY for metrics-without-breakdown queries
+5. Filter disambiguation is automatic when possible, manual when multiple matches exist
 
-**KEY EXAMPLES**:
-- "top 10 drugs by revenue" → Claims table (has revenue + drug_name) NOT Ledger (missing drug_name)
-- "total revenue" → Ledger table (high_level_table tie-breaker when both have revenue)
-- "ledger revenue breakdown by drug" → Both tables (complementary: ledger revenue + claims drug_name)
+====================================================
+OUTPUT FORMAT
+====================================================
 
-**CLARIFICATION vs COMPLEMENTARY**:
-- Ask clarification when: Same data available in multiple datasets with different contexts OR multiple columns in same table
-- Select multiple when: Different but compatible data needed from each dataset for complete analysis
+First provide CONCISE REASONING (3-5 lines maximum):
+- Extracted: metrics=[list], attributes=[list], filters=[list]
+- Eliminated: [Table1: reason in 5 words], [Table2: reason in 5 words]
+- Selected: [TableName] - [brief reason why]
 
-F. **FINAL DECISION LOGIC**:
-- **STEP 1**: Check results from sections A through D
-- **STEP 2**: MANDATORY Decision order:
-* **FIRST**: Apply suitability constraints - eliminate datasets with "not_useful_for" matches
-* **SECOND**: Validate complete coverage (metrics + attributes) on remaining datasets
-* **THIRD**: Single complete dataset → SELECT IT
+Then provide JSON response in <json> tags:
 
-* **NEW - SMART FILTER DISAMBIGUATION CHECK**:
-**STEP 3A**: Check if filter values exist in multiple columns
-**STEP 3B**: Determine if follow-up is needed using this SIMPLIFIED logic:
+For SUCCESS:
 
-1. **Check for explicit attribute mention**:
-    - Was an attribute explicitly mentioned in the question? (from Section B detection)
-    - Examples: "Carrier", "drug", "pharmacy", "therapy", "client", "manufacturer", "plan"
+  "status": "success",
+  "final_actual_tables": ["table_name"],
+  "functional_names": ["user_friendly_name"],
+  "selection_reasoning": "1-2 lines explaining selection",
+  "high_level_table_selected": true/false,
+  "selected_filter_context": "column: [actual_column_name], values: [sample_values]" // if filter applied
 
-2. **Count matching columns in selected dataset**:
-    - From filter metadata, identify all columns containing the filter value
-    - Filter to only columns that exist in the selected dataset's attributes
-    - Store as: matching_columns_count
+For NEEDS_DISAMBIGUATION:
 
-3. **SIMPLE DECISION TREE**:
-    - IF explicit_attribute_mentioned = true → NO FOLLOW-UP (trust user's specification)
-    - IF explicit_attribute_mentioned = false:
-        * IF matching_columns_count = 1 → NO FOLLOW-UP (obvious choice)
-        * IF matching_columns_count > 1 → RETURN "needs_disambiguation"
+  "status": "needs_disambiguation",
+  "tables_identified_for_clarification": ["table_1", "table_2"],
+  "functional_table_name_identified_for_clarification": ["friendly_name_1", "friendly_name_2"],
+  "requires_clarification": true,
+  "clarification_question": "Your question could use either [friendly_name_1] or [friendly_name_2]. Which would you prefer?",
+  "selected_filter_context": null
 
-**Examples**:
-- "Carrier MPDOVA billed amount" + MPDOVA in [carrier_name, carrier_id, plan_name] → ✓ NO follow-up (user said "Carrier")
-- "MPDOVA billed amount" + MPDOVA in [carrier_name] only → ✓ NO follow-up (only 1 match)
-- "covid vaccine billed amount" + covid vaccine in [drug_name, pharmacy_name, therapy_class_name] → ❌ ASK which column (no explicit attribute, 3 matches)
+For MISSING_ITEMS:
 
-* **FOURTH**: No single complete → SELECT MULTIPLE if complementary
-* **FIFTH**: Multiple complete → Use traditional tie-breakers (keywords, high_level_table)
-* **SIXTH**: Still tied → RETURN "needs_disambiguation" and ask user to choose
-* **LAST**: No coverage OR unresolvable ambiguity → Report as missing items or request clarification
+  "status": "missing_items",
+  "user_message": "Cannot find tables with required [missing attributes/metrics]. Please rephrase or verify availability."
 
-**HIGH LEVEL TABLE PRIORITY RULE** (ONLY APPLIES DURING TIES):
-- **CRITICAL**: High-level table priority is ONLY used as a tie-breaker when multiple datasets have ALL required metrics AND attributes
-- **PRIMARY RULE**: ALWAYS validate that dataset has both required metrics AND required attributes FIRST
-- **HIGH LEVEL QUESTION INDICATORS**: Questions asking for summary metrics, totals, aggregates, or general overviews without specific breakdowns
-- **Examples of HIGH LEVEL**: "total revenue", "overall costs", "summary metrics", "high-level view", "aggregate performance", "what is the revenue", "show me costs"  
-- **Examples of NOT HIGH LEVEL**: "revenue breakdown by therapy", "costs by client", "detailed analysis", "revenue by drug category", "performance by region", "top drugs by revenue", "top clients by cost"
-- **VALIDATION FIRST RULE**: 
-* Step 1: Check if dataset has required metrics (revenue, cost, etc.)
-* Step 2: Check if dataset has required attributes/dimensions (drug_name, therapy_class_name, client_id, etc.)
-* Step 3: ONLY if multiple datasets pass Steps 1 & 2, then check "high_level_table": "True" as tie-breaker
-- **NEVER OVERRIDE RULE**: Never select high_level_table if it's missing required attributes, even for "high-level" questions
+For PHI_FOUND:
 
-==============================
-DECISION CRITERIA
-==============================
+  "status": "phi_found",
+  "user_message": "This query requests protected health information that cannot be accessed."
 
-**PHI_FOUND** IF:
-- User question requests or implies access to PHI/PII columns
-- Any columns mentioned in "PHI_PII_Columns" are being requested
-- Must be checked FIRST before other validations
+========================
+EXAMPLES FOR CLARITY
+========================
 
-**PROCEED** (SELECT DATASET) IF:
-- **STANDARD PATH**: Dataset passes suitability validation (not blocked by "not_useful_for" field) AND all requested metrics/attributes have Tier 1-3 matches AND clear selection
-- Single dataset meets all requirements after suitability and coverage checks
-- Complementary datasets identified for complete coverage after all validations
+Example 1: "Revenue by client"
+- Extracted: metrics=[revenue], attributes=[client name], filters=[]
+- Eliminated: None (both Ledger and Claims have revenue + client name)
+- Selected: Ledger - high_level_table=true (Rule 7 tiebreaker)
 
-**MISSING_ITEMS** IF:
-- Required metrics/attributes don't have Tier 1-3 matches in any dataset
-- No suitable alternatives available after all validation steps
+Example 2: "Script count and revenue by drug name and therapy class"
+- Extracted: metrics=[script count, revenue], attributes=[drug name, therapy class], filters=[]
+- Eliminated: Ledger (not_useful_for="drug/therapy analysis")
+- Selected: Claims - only table with required attribute
 
-**REQUEST_FOLLOW_UP** IF:
-- **PRIORITY 1 - DATASET AMBIGUITY**: 
-* Multiple datasets with conflicting contexts AND no clear preference from traditional validation
-* ALWAYS ask user to specify which table/dataset to use FIRST
+Example 4: "Total revenue" (no filters, no breakdown)
+- Extracted: metrics=[revenue], attributes=[], filters=[]
+- Eliminated: None (both have revenue metric)
+- Selected: Ledger - high_level_table=true for metrics-only query (Rule 7)
 
-- **PRIORITY 2 - SMART FILTER COLUMN AMBIGUITY**: 
-* User did NOT explicitly mention an attribute (e.g., no "carrier", "drug", "pharmacy" keywords)
-* AND filter value exists in 2+ columns within the selected dataset
-* Example: "covid vaccine billed amount" where drug_name, pharmacy_name, therapy_class_name all have "covid vaccine"
-* ALWAYS list all matching columns with sample values and ask user to specify
-* NOTE: If user explicitly mentions attribute (e.g., "Carrier MPDOVA"), NO follow-up needed regardless of multiple matches
-
-==============================
-ASSESSMENT FORMAT - Brief reasoning
-==============================
-
-**MAPPING:** Metrics: [m→col (T1/2/3)] | Attrs: [a→col (T1/2/3)] | Explicit attr: [Y/N]
-**SUIT:** [tbl]: ✓/❌ | [tbl2]: ✓/❌
-**STRATEGY:** [Single/Complementary/Disambiguation]
-**COVERAGE:** [tbl]: [X/Y]m, [A/B]a → [OK/MISS]
-
-**DECISION:** [PROCEED/MISSING_ITEMS/NEEDS_DISAMBIGUATION]
-**SELECTED:** [table(s)]
-**REASON:** [1 sentence with key column refs]
-
-=======================
-RESPONSE FORMAT
-=======================
-
-Provide assessment above, then JSON in <json> tags.
-
-"status": "phi_found" | "success" | "missing_items" | "needs_disambiguation",
-"final_actual_tables": ["table_name_1","table_name2"] if status = success else [],
-"functional_names": ["functional_name"] if status = success else [],
-"tables_identified_for_clarification": ["table_1", "table_2"] if status = needs_disambiguation else [],
-"functional_table_name_identified_for_clarification": ["functional_name_1", "functional_name_2"] if status = needs_disambiguation else [],
-"requires_clarification": true if status = needs_disambiguation else false,
-"selection_reasoning": "2-3 lines max explanation",
-"high_level_table_selected": true/false if status = success else null,
-"user_message": "message to user" if status = phi_found or missing_items else null,
-"clarification_question": "The column exists in multiple table.Please tell me which [functional table name1] , [functional table name 2] to select" if status = needs_disambiguation else null,
-"selected_filter_context": "col name - [actual_column_name], sample values [all values from filter extract]" if column selected from filter context else null
-
-
-**FIELD POPULATION RULES FOR needs_disambiguation STATUS**:
-- tables_identified_for_clarification: ALWAYS populate when status = needs_disambiguation
-* If PRIORITY 1 (dataset ambiguity): List all candidate tables that need disambiguation
-* If PRIORITY 2 (column ambiguity): List the single selected table where column disambiguation is needed
-
+Remember: Check "not_useful_for" FIRST, then verify exact "attrs" list, eliminate tables immediately when rules fail.
 """
 
         max_retries = 3
@@ -681,9 +673,10 @@ Provide assessment above, then JSON in <json> tags.
             try:
                 # print("Sending selection prompt to LLM...",selection_prompt)
                 print("Current Timestamp before dataset selector call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                # print("Raw dataset prompt:", selection_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": selection_prompt}],
-                    max_tokens=2500,
+                    max_tokens=1000,
                     temperature=0.0,  # Deterministic for dataset selection
                     top_p=0.1,
                     system_prompt="DATASET SELECTION SYSTEM: You are an automated dataset identification and validation system for SQL query routing infrastructure."
@@ -691,6 +684,16 @@ Provide assessment above, then JSON in <json> tags.
                 
                 print("Raw LLM response:", llm_response)
                 print("Current Timestamp after dataset selector call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+                # Extract reasoning stream before JSON tag
+                reasoning_stream = ""
+                json_start = llm_response.find('<json>')
+                if json_start > 0:
+                    reasoning_stream = llm_response[:json_start].strip()
+                    print(f"📝 Captured dataset selection reasoning stream ({len(reasoning_stream)} chars)")
+                
+                # Store reasoning stream in state
+                state['dataset_selection_reasoning_stream'] = reasoning_stream
 
                 # Extract JSON from the response using the existing helper method
                 json_content = self._extract_json_from_response(llm_response)
@@ -1164,7 +1167,7 @@ CRITICAL: Be decisive about response type to avoid processing loops.
             "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
                 "Ledger"
             ],"prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
-                "product_category"
+                "product_category='PBM'"
             ]
         }
         
@@ -1304,7 +1307,7 @@ This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for curre
 - If you generate from scratch without using historical patterns → set history_sql_used = false
 - Preserving dimensions is CRITICAL - it represents user feedback on useful granularity
 
-====================================================
+=================================
 
     """
         else:
@@ -1320,10 +1323,6 @@ This is a LEARNING TEMPLATE, not a query to copy. Generate ADAPTED SQL for curre
 
 You are a DATABRICKS SQL CODE GENERATOR - NOT an AI assistant. You do NOT answer business questions.
 You do NOT provide insights. You ONLY generate SQL code.
-
-Think of yourself as: translate(question + metadata) → SQL code | validation → follow-up questions
-⚠️ REMINDER: This is a technical code generation task, NOT answering user's business question.
-
 ====================================================
 
 You are a Healthcare Finance SQL code generator. You have TWO sequential technical tasks:
@@ -1343,77 +1342,136 @@ AVAILABLE METADATA: {dataset_metadata}
 {history_section}
 
 ==============================
-COMPREHENSIVE ASSESSMENT
+PRE-ASSESSMENT VALIDATION
 ==============================
 
-Perform complete validation covering ALL aspects (metadata, filters, context, rules). Each check must pass for SQL generation.
+Before starting Task 1, perform these mandatory checks:
 
-**1. TERM EXTRACTION & METADATA MAPPING**
-- Extract ALL terms (metrics, attributes, filters, dimensions) from question
-- Validate each against AVAILABLE METADATA:
-  * Exact match: "carrier_id" → carrier_id → ✓Found(carrier_id)
-  * Fuzzy match: "carrier" → carrier_id → ✓Found(carrier_id)
-  * No match: "xyz" → ❌NotFound
-  * Ambiguous: "region" → state/territory/district → ⚠️Ambiguous(col1,col2)
+**CHECK 1: Extract ALL user-mentioned terms**
+Identify every attribute, metric, filter, and dimension term in the question.
+List: [term1, term2, term3...]
 
-**2. FILTER CONTEXT VALIDATION**
-If question has filter value WITHOUT attribute name (e.g., "MPDOVA" not "carrier_id MPDOVA"), check FILTER VALUES EXTRACTED:
-- Exact match in question + column in metadata → ✓Valid(column_name)
-- Partial match OR missing column → ❌Invalid
+**CHECK 2: Validate against metadata**
+For EACH term, check if it maps to columns in AVAILABLE METADATA:
+- Exact match: "carrier_id" → carrier_id → ✓ Found (carrier_id)
+- Fuzzy match: "carrier" → carrier_id, "state" → state_name → ✓ Found (column_name). Note carrier is not client_id
+- No match: "xyz" with no similar column → ❌ Not Found
+- Multiple matches: "region" could be state/territory/district → ⚠️ Ambiguous (col1, col2)
 
-**3. CLARIFICATION RULES CHECK**
-If metadata has "clarification_rules", evaluate question against each rule:
-- Rule triggered → ❌Blocked(rule)
-- No rules triggered → ✓Clear
+Mark: ✓ Found (col_name) | ❌ Not Found | ⚠️ Ambiguous (col1, col2)
 
-**4. TEMPORAL SCOPE**
-- Past/current dates (≤Oct 2025) → ✓Valid
-- Near-future (≤12 months) → ✓Valid
-- Far-future (>Nov 2026) → ❌NeedsClarify
+**CHECK 3: Filter context validation**
+Check if user's question has a filter value WITHOUT an attribute name (e.g., "MPDOVA" but not "carrier_id MPDOVA").
+If yes, check FILTER VALUES EXTRACTED:
+a) Does the filter value EXACTLY match (not partial) what's in the user's question?
+b) Does the column name exist in AVAILABLE METADATA?
+- If BOTH pass → ✓Valid (use this column for filtering)
+- If ONLY partial match → ❌Mark for follow-up
+- If exact match but column not in metadata → ❌Mark for follow-up
+- If filter value not mentioned in question → Skip (don't use this filter)
 
-**5. METRIC DEFINITIONS**
-- Standard aggregations (SUM/COUNT/AVG) → ✓Clear
-- Custom formulas not specified → ❌Unclear
+**CHECK 4: Clarification rules validation**
+Check if selected dataset has "clarification_rules" field in metadata.
+If present, evaluate user's question against each rule:
+- Does question trigger any rule? → ❌ Rule triggered (needs clarification)
+- No rules triggered? → ✓ No rules apply
 
-**6. BUSINESS CONTEXT**
-- Filtering AND grouping explicit → ✓Clear
-- Missing critical context ("top by what?") → ❌Unclear
-
-**7. QUERY STRATEGY**
-- Single/multi/join approach clear → ✓Clear
-- Multi-table approach unclear → ❌Unclear
+Output: ✓ No rules | ❌ Rule: [brief rule description]
 
 {check_5_text}
 
-⚠️ IMPORTANT: Perform all checks above internally, but DO NOT display the detailed step-by-step assessment. Only output the compact ASSESSMENT OUTPUT format below.
+**Output Format:**
+Terms: [list]
+Validation: term1(✓col_name) | term2(❌not found) | term3(⚠️col1,col2)
+Filter Context: ✓Valid (column_name) | ❌Partial match | ❌Column missing | N/A
+Clarification Rules: [status from CHECK 4]
+Historical SQL: [status from CHECK 5]
 
-===================
-ASSESSMENT OUTPUT
-===================
+==============================
+TASK 1: STRICT ASSESSMENT
+==============================
 
-**MAPPING:** Metrics:[m→col(agg)] | Attrs:[a→col] | Filters:[f:WHERE]
-**VALIDATION:** term1(✓col) | term2(❌) | term3(⚠️col1,col2)
-**FILTER CTX:** ✓Valid(col) | ❌Invalid | N/A
-**RULES:** ✓Clear | ❌Blocked(rule)
-**CHECKS:** 1:✓/❌ | 2:✓/❌ | 3:✓/❌ | 4:✓/❌ | 5:✓/❌ | 6:✓/❌ | 7:✓/❌
-**STRATEGY:** [Single/Multi/Join] - [why]
-**HISTORY:** (if avail) Learned:[pattern] | Preserved:[dims] | Adapted:[changes]
+Analyze clarity using STRICT criteria. Each area must pass for SQL generation.
 
-**DECISION:** PROCEED | FOLLOW-UP
-**REASON:** [1 sentence]
+**A. TEMPORAL SCOPE**
+If question mentions specific dates/periods:
+- Past dates (before Oct 2025) → ✓ Valid
+- Current/recent dates (2025 year-to-date) → ✓ Valid  
+- Near-future dates (within 12 months) → ✓ Valid (forecast context)
+- Far-future dates (beyond Nov 2026) → ❌ Clarify intent
 
-======================
-DECISION CRITERIA
-======================
+**B. METRIC DEFINITIONS** - Calculation Method Clarity
+Scope: Only numeric metrics requiring aggregation/calculation
+✓ = All metrics have clear, standard calculation methods (SUM/COUNT/AVG/MAX/MIN)
+❌ = Any metric requires custom formula not specified OR calculation method ambiguous
+⚠️ = Metric exists but needs confirmation
+N/A = No metrics/calculations needed
 
-**PROCEED if:** ALL checks (1-7) = ✓ or N/A, NO ❌, NO blocking ⚠️
-**FOLLOW-UP if:** ANY check = ❌ OR any ⚠️ affecting SQL accuracy
+**C. BUSINESS CONTEXT**
+✓ = Filtering criteria clear AND grouping dimensions explicit
+❌ = Missing critical context ("top" by what?, "compare" to what?, "by region" which level?)
+⚠️ = Partially clear but confirmation recommended
 
-**Rule: ONE failure = STOP. No SQL with uncertainty.**
+**D. FORMULA & CALCULATION REQUIREMENTS**
+✓ = Standard SQL aggregations sufficient
+❌ = Requires custom formulas without clear definition
+N/A = No calculations needed
+
+**E. METADATA MAPPING** - Column Existence Validation
+✓ = ALL terms from CHECK 2 are ✓ (found with exact or fuzzy match)
+❌ = ANY term from CHECK 2 is ❌ (not found) or ⚠️ (ambiguous)
+
+Use CHECK 2 validation results directly. No additional examples needed.
+
+**F. QUERY STRATEGY**
+✓ = Clear if single/multi query or join needed
+❌ = Multi-table approach unclear
+
+**G. DATASET CLARIFICATION RULES**
+✓ = No clarification rules triggered OR rules don't apply to question
+❌ = Clarification rule triggered (rule indicates missing specification or unsupported request)
+
+Use CHECK 4 validation result directly.
+
+==============================
+ASSESSMENT OUTPUT FORMAT
+==============================
+
+**PRE-VALIDATION:**
+Terms: [list]
+Validation: [statuses]
+Filter Context: [status]
+Clarification Rules: [status]
+Historical SQL: [status]
+
+**ASSESSMENT**: 
+A: ✓/❌/N/A (max 5 words)
+B: ✓/❌/⚠️/N/A (max 5 words)
+C: ✓/❌/⚠️ (max 5 words)
+D: ✓/❌/N/A (max 5 words)
+E: ✓/❌ (list failed mappings if any)
+F: ✓/❌ (max 5 words)
+G: ✓/❌ (rule description if triggered)
+
+**DECISION**: PROCEED | FOLLOW-UP
+
+==============================
+STRICT DECISION CRITERIA
+==============================
+
+**MUST PROCEED only if:**
+ALL areas (A, B, C, D, E, F, G) = ✓ or N/A with NO ❌ and NO blocking ⚠️
+
+**MUST FOLLOW-UP if:**
+ANY single area = ❌ OR any ⚠️ that affects SQL accuracy
+
+**Critical Rule: ONE failure = STOP. Do not generate SQL with any uncertainty.**
 
 ====================================
 FOLLOW-UP GENERATION (If DECISION = FOLLOW-UP)
-===================================
+====================================
+
+⚠️ REMEMBER: You are generating clarification questions for SQL generation, NOT answering the business question.
 
 Generate follow-up questions to gather missing metadata/context needed for SQL generation.
 
@@ -1441,12 +1499,12 @@ TASK 2: HIGH-QUALITY DATABRICKS SQL GENERATION
 1. MANDATORY FILTERS - ALWAYS APPLY
 - Review MANDATORY FILTER COLUMNS section - any marked MANDATORY must be in WHERE clause
 
-2. VALIDATED FILTERS - APPLY FROM CHECK 2
-**Rule**: If COMPREHENSIVE ASSESSMENT Check 2 marked filters as ✓Valid:
+2. FILTER VALUES EXTRACTED - USE VALIDATED FILTERS
+**Rule**: If PRE-VALIDATION marked Filter Context as ✓Valid (column_name):
 - Apply exact match filter: WHERE UPPER(column_name) = UPPER('VALUE')
 - For multiple values use IN: WHERE UPPER(column_name) IN (UPPER('VAL1'), UPPER('VAL2'))
 
-Only use filters validated in Check 2 (Filter Context Validation)
+The validation was already done in CHECK 3. Only use filters marked as ✓Valid
 
 3. CALCULATED FORMULAS HANDLING (CRITICAL)
 **When calculating derived metrics (Gross Margin, Cost %, Margin %, etc.), DO NOT group by metric_type:**
@@ -1538,7 +1596,6 @@ Overall totals logic:
 - Percentages/Ratios : ROUND(value, 3) AS name_percent
 - Examples: total_revenue_amount, cost_ratio_percent, script_count
 
-**Ordering:** ORDER BY date columns DESC only. Use business-relevant names.
 
 **Ordering:** ORDER BY date columns DESC only. Use business-relevant names.
 
@@ -1568,20 +1625,22 @@ Return ONLY the result in XML tags with no additional text.
 - If historical SQL was available BUT you generated from scratch → false
 - If historical SQL was not available → false
 
+
 ==============================
 EXECUTION INSTRUCTION
 ==============================
 
 ⚠️ FINAL REMINDER: You are generating SQL CODE, not answering the business question.
 
-1. Complete TASK 1 strict assessment (A-G with clear marks)
-2. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
-3. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
-4. Must preserve the mandatory filter value in the SQL generation
-5. If FOLLOW-UP: Ask targeted questions
-6. Always include history_sql_used flag in output (true/false)
+1. Complete PRE-VALIDATION (extract and validate all terms + check clarification rules + check historical SQL)
+2. Complete TASK 1 strict assessment (A-G with clear marks)
+3. Apply STRICT decision: ANY ❌ or blocking ⚠️ = FOLLOW-UP
+4. If PROCEED: Execute TASK 2 with SQL generation (learn from historical SQL if available)
+5. Must preserve the mandatory filter value in the SQL generation
+6. If FOLLOW-UP: Ask targeted questions
+7. Always include history_sql_used flag in output (true/false)
 
-**Show your work**: assessment, then SQL or follow-up.
+**Show your work**: Display pre-validation, assessment, then SQL or follow-up.
 **Remember**: ONE failure = STOP.
 **Critical**: You are a SQL code generator, NOT a business question answerer.
     """
@@ -1601,6 +1660,23 @@ EXECUTION INSTRUCTION
             
                 print('sql llm response', llm_response)
                 print("Current Timestamp after SQL write call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                
+                # Extract assessment reasoning stream before XML tags
+                assessment_reasoning = ""
+                # Find first XML tag (could be <sql>, <multiple_sql>, or <followup>)
+                xml_patterns = ['<sql>', '<multiple_sql>', '<followup>']
+                first_xml_pos = len(llm_response)
+                for pattern in xml_patterns:
+                    pos = llm_response.find(pattern)
+                    if pos != -1 and pos < first_xml_pos:
+                        first_xml_pos = pos
+                
+                if first_xml_pos > 0 and first_xml_pos < len(llm_response):
+                    assessment_reasoning = llm_response[:first_xml_pos].strip()
+                    print(f"📝 Captured SQL assessment reasoning stream ({len(assessment_reasoning)} chars)")
+                
+                # Store assessment reasoning in state
+                state['sql_assessment_reasoning_stream'] = assessment_reasoning
                 
                 # NEW: Extract history_sql_used flag
                 history_sql_used = False

@@ -1,60 +1,448 @@
-check_5_text = "**CHECK 5: Historical SQL availability**: ✓ Available (learning template)"
-history_section = f"""
-=== HISTORICAL SQL REFERENCE ===
-Previous: "{history_question_match}" | Table: {matched_table_name}
+async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
+        """
+        Pure LLM-based selection of most relevant historical question from feedback results.
+        Returns single best match or NO_MATCH status.
+        """
+        
+        user_question = state.get('current_question', state.get('original_question', ''))
+        
+        # System prompt for feedback matching
+        system_prompt = """
+You are a SQL query matching expert. Select the SINGLE best historical question or return NO_MATCH.
 
-<historical_sql>
-{matched_sql}
-</historical_sql>
+=== MANDATORY DISQUALIFIERS (CHECK FIRST!) ===
 
-**STEP 1: QUESTION ALIGNMENT CHECK**
-Current asks for: [Interpret current question's grouping needs]
-Historical had: [Observe historical GROUP BY dimensions]
+Immediately REJECT candidates that fail ANY check:
 
-**INHERIT DECISIONS:**
-A. **DIMENSIONS/GROUP BY**: 
-   ✅ INHERIT if: Questions ask for same analysis type (e.g., both ask "by product category")
-   ❌ DON'T INHERIT if: Different analysis requested (e.g., current asks "by carrier" vs historical "by product")
-   
-B. **STRUCTURAL PATTERNS** (ALWAYS PRESERVE):
-   - Side-by-side comparisons (CASE WHEN for periods)
-   - UNION/UNION ALL patterns (detail + OVERALL_TOTAL rows)
-   - CTE/subquery architecture
-   - Calculation methods (ROUND, NULLIF, percentages)
-   - Window functions structure
+❌ DISQUALIFIER 1: Metric Mismatch (CRITICAL!)
+Core metrics must match (accounting for synonyms):
+- Synonyms: "revenue"="network revenue"="product revenue" | "script count"="volume"="scripts"="adjusted/unadjusted scripts"
+- NON-synonyms: "revenue" ≠ "script count" | "revenue" ≠ "volume" | "script count" ≠ "cost"
+- Extra metrics OK: History "volume, revenue" matches current "volume" ✅
+- Different metrics: Current "volume", History "revenue only" → REJECT ❌
 
-**STEP 2: SELECTIVE LEARNING**
+❌ DISQUALIFIER 2: Extra Filter TYPES (exclude dates!)
+History has extra filter TYPES current doesn't have (ignore date filters).
+Ex: Current="revenue for PBM", History="revenue for PBM for client MDOVA" → REJECT (extra client_id)
 
-✅ **ALWAYS LEARN** (Universal Patterns):
-- CASE WHEN for side-by-side columns (august_revenue, september_revenue)
-- Aggregation placement (SUM/COUNT/AVG)
-- Division safety (NULLIF patterns)
-- UPPER() for case-insensitive filters
-- ROUND(amounts,0), ROUND(percentages,3)
+❌ DISQUALIFIER 3: Missing Filter TYPES (exclude dates!)
+Current has filter TYPES history doesn't have (ignore date filters).
+Ex: Current="revenue for PBM", History="revenue" → REJECT (missing product_category)
 
-⚡ **CONDITIONALLY INHERIT** (Check Alignment First):
-- GROUP BY dimensions → Only if questions ask same granularity
-- SELECT columns → Match if same analysis type
-- JOIN patterns → Use if same tables needed
+❌ DISQUALIFIER 4: Missing/Extra Dimensions
+Current needs GROUP BY history lacks, or history has GROUP BY current doesn't mention.
+Ex: Current="revenue by drug", History="revenue" → REJECT
 
-❌ **NEVER COPY** (Always From Current):
-- Filter values (dates, carrier_id, entities)
-- <parameter> placeholders → use actual values
-- Specific time periods → use current question's dates
+**IF ANY DISQUALIFIER TRIGGERED → SKIP CANDIDATE**
 
-**STEP 3: VALIDATION**
-1. Verify columns exist in AVAILABLE METADATA
-2. Add MANDATORY FILTER COLUMNS if missing
-3. Apply ✓Valid filters from current question
+=== PRIORITY SCORING (For candidates passing disqualifiers) ===
 
-**DECISION LOGIC:**
-IF current_question_pattern == historical_pattern:
-    → Inherit dimensions + structure
-    → Set history_sql_used = true
-ELSE:
-    → Learn only structural patterns (CASE WHEN, UNION)
-    → Build GROUP BY from current question
-    → Set history_sql_used = partial
+**⚠️⚠️⚠️ CRITICAL RULE: ENTITY MATCHING IS MANDATORY FIRST CHECK ⚠️⚠️⚠️**
 
-**CRITICAL**: Structural patterns (side-by-side) are proven UX patterns - preserve these even when dimensions differ.
+**BEFORE scoring, extract entities from current question:**
+- "volume for HDP Core" → Entity: "HDP Core"
+- "revenue for Specialty" → Entity: "Specialty"  
+- "revenue for PBM" → Entity: "PBM"
+
+**Then SEARCH each candidate for that entity (case-insensitive substring):**
+- If history contains the entity → TIER 1 (100-95 pts)
+- If history does NOT contain the entity → TIER 2 (80 pts)
+
+**TIER 1 ALWAYS BEATS TIER 2 - NO EXCEPTIONS!**
+- Even if Tier 2 has better date match, better structure, etc.
+- If ANY Tier 1 exists → Ignore ALL Tier 2
+
+---
+
+**TIER 1 - EXACT ENTITY MATCH (HIGHEST PRIORITY):**
+
+**100 pts**: Current entity EXACTLY appears in history + has required metric(s)
+- Current: "revenue for HDP Core"
+- History: "revenue for HDP Core" → 100 pts ✅
+- History: "revenue, script count for HDP Core" → 100 pts ✅ (extra metric OK)
+- History: "revenue for divvyDOSE, HDP Core, Frontier" → 100 pts ✅ (HDP Core is mentioned)
+- **CHECK**: Does history text contain "HDP Core" as substring? (case-insensitive)
+
+**95 pts**: Multiple current entities ALL appear in history + has required metric(s)
+- Current: "revenue for HDP Core, Specialty Core"
+- History: "revenue for HDP Core, Specialty Core, Frontier" → 95 pts ✅ (has both + extra)
+
+**TIER 2 - DIFFERENT ENTITY VALUE (FALLBACK - ONLY IF ZERO TIER 1 MATCHES):**
+
+**⚠️ DO NOT USE TIER 2 IF ANY TIER 1 EXISTS!**
+
+**80 pts**: Same filter TYPE, different entity VALUE + has required metric(s)
+- Current: "revenue for HDP Core" (NO history has "HDP Core")
+- History: "revenue for Specialty" → 80 pts ✅ (both are product categories, different values)
+- History: "revenue for PBM" → 80 pts ✅ (both are product categories, different values)
+
+**TIER 3 - PARTIAL MATCHES:**
+
+**70 pts**: Multiple filters, partial match
+- Current: "revenue for PBM for client X"
+- History: "revenue for PBM for client Y" → 70 pts (PBM matches, client differs)
+
+**SCORING BONUS:**
+
+**+5 pts**: Same date structure (single vs comparison - see below)
+
+**SELECTION RULE:**
+- If ANY Tier 1 matches exist (score 95-100), pick highest Tier 1 score
+- If NO Tier 1 matches exist, then consider Tier 2 matches (score 80)
+- If tied, pick any (all equivalent)
+
+=== DATE COMPATIBILITY ===
+
+Focus on STRUCTURE, not values. Dates ignored when comparing filter types.
+
+**Compatible (can match):**
+- Single period/range: "July 2025" ↔ "Q3 2025" ↔ "Jan-Mar 2025" ↔ "July-Aug 2025"
+- YoY: "Q3 2025 vs Q3 2024" ↔ "Q2 2025 vs Q2 2024"
+- QoQ: "Q3 vs Q2 2025" ↔ "Q2 vs Q1 2025"
+- MoM: "July vs June 2025" ↔ "Aug vs July 2025"
+
+**Incompatible:**
+- Single vs Comparison: "July 2025" ✗ "Q3 2025 vs Q3 2024"
+- YoY vs QoQ: "Q3 2025 vs Q3 2024" ✗ "Q3 2025 vs Q2 2025"
+
+=== CORE RULES ===
+
+1. **Synonyms**: "revenue"="network revenue" | "volume"="script count"="scripts" | "HDP"="Home Delivery"="Mail" | "SP"="Specialty"
+
+2. **Dates**: Ignore specific values (July vs Aug), match structure (single vs comparison)
+
+3. **Filter VALUES**: Different values OK but exact match gets priority. PBM vs Specialty = same type, different value.
+
+4. **Extra metrics**: History "volume, revenue" + Current "volume" = MATCH ✅ (has what we need)
+
+5. **Parsing**: "PBM revenue" means metric="revenue", filter="PBM", NOT metric="PBM revenue"
+
+=== DECISION PROCESS ===
+
+**STEP 1**: Apply disqualifiers → Eliminate failing candidates
+
+**STEP 2**: Extract entities from CURRENT question
+- Look for specific entity names: HDP Core, Specialty, PBM, divvyDOSE, Community Core, etc.
+- Example: "volume for HDP Core" → Entity = "HDP Core"
+- Example: "volume for PBM" → Entity = "PBM"
+
+**STEP 3**: Check for TIER 1 matches (exact entity)
+- For EACH candidate passing disqualifiers:
+  * Does the historical question text contain the EXACT entity from Step 2?
+  * Case-insensitive, but must be present as a substring
+- If YES → Mark as TIER 1 candidate (100-95 pts)
+- If NO → Mark as TIER 2 candidate (80 pts)
+
+**STEP 4**: Score candidates within their tier
+- Calculate scores based on tier rules
+- Apply date structure bonus (+5 pts) if applicable
+
+**STEP 5**: Select highest score with TIER PRIORITY
+- **CRITICAL**: If ANY TIER 1 candidates exist → Pick highest TIER 1 score (ignore ALL Tier 2)
+- If NO TIER 1 candidates exist → Pick highest TIER 2 score
+- If tied → Pick any
+
+**EXAMPLE DECISION PROCESS:**
+
+Current: "volume for HDP Core from Jan to Sep 2025"
+
+Candidates after disqualifiers:
+- id:9 "script counts, revenue for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, **HDP Core** in september 2025"
+- id:11 "script counts, revenue for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, **HDP Core** from jan to feb 2025"
+- id:5 "script counts trends for Specialty from jan to march 2025"
+- id:6 "script counts for Specialty in september 2025"
+
+Step 2: Extract entity → "HDP Core"
+
+Step 3: Check for "HDP Core" in each:
+- id:9 contains "HDP Core" → TIER 1 ✅
+- id:11 contains "HDP Core" → TIER 1 ✅
+- id:5 does NOT contain "HDP Core" → TIER 2
+- id:6 does NOT contain "HDP Core" → TIER 2
+
+Step 4: Score within tiers:
+- id:9 (TIER 1): 100 pts (has entity + metric + compatible date)
+- id:11 (TIER 1): 100 pts (has entity + metric + compatible date)
+- id:5 (TIER 2): 80 pts (different entity, same metric)
+- id:6 (TIER 2): 80 pts (different entity, same metric)
+
+Step 5: Select with tier priority:
+- TIER 1 exists → IGNORE all TIER 2 candidates
+- Pick from TIER 1: id:9 or id:11 (both 100 pts, either valid)
+- Decision: SELECT id:9 or id:11 ✅
+
+**WRONG DECISION EXAMPLE:**
+❌ Selecting id:5 (Tier 2, 80 pts) when id:9 (Tier 1, 100 pts) exists
+✅ Always pick Tier 1 over Tier 2, regardless of date compatibility or other factors
+
+=== EXAMPLES ===
+
+Ex 0 - TIER 1 WINS (Exact Entity Match):
+Current: "revenue for HDP Core"
+Candidates:
+- id:9 "script count, revenue for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core in september 2025" → 100 pts (TIER 1 - HAS "HDP Core" explicitly)
+- id:6 "script count, revenue for Specialty in september 2025" → 80 pts (TIER 2 - different entity, same metric)
+- id:1 "revenue for PBM" → 80 pts (TIER 2 - different entity, same metric)
+Decision: SELECT id:9 ✅
+Reason: **Tier 1 takes precedence over Tier 2**. id:9 has exact entity match "HDP Core" (100 pts). Others are Tier 2 fallbacks (80 pts each). Score 100 > 80.
+
+Ex 0b - TIER 2 USED WHEN NO TIER 1 EXISTS:
+Current: "revenue for HDP Core"
+Candidates:
+- id:6 "script count, revenue for Specialty in september 2025" → 80 pts (TIER 2 - no HDP Core anywhere)
+- id:1 "revenue for PBM" → 80 pts (TIER 2 - no HDP Core anywhere)
+- id:7 "script count for HDP Core" → REJECT via DISQUALIFIER 1 (metric mismatch - script count ≠ revenue)
+Decision: SELECT id:6 or id:1 ✅ (either is valid, both Tier 2)
+Reason: No Tier 1 matches available (no history mentions "HDP Core" with revenue metric). Fall back to Tier 2 - different entities with same metric. Both score 80 pts.
+
+Ex 0c - EXACT FILTER MATCH:
+Current: "volume for PBM"
+Candidates:
+- id:1 "volume, revenue for PBM" → 100 pts (TIER 1 - exact PBM match, has volume, extra revenue OK)
+- id:2 "volume for Specialty" → 80 pts (TIER 2 - different entity value)
+Decision: SELECT id:1 ✅
+Reason: Tier 1 exact match (PBM=PBM) + has required metric (volume). Extra metric (revenue) is harmless. Score 100 > 80.
+
+Ex 1 - METRIC MISMATCH REJECT:
+Current: "script count for PBM"
+History: "revenue for PBM"
+Decision: REJECT ❌
+Reason: DISQUALIFIER 1 - Different metrics. "script count" ≠ "revenue". Eliminated before scoring.
+
+Ex 2 - FILTER VALUE CHANGE OK:
+Current: "revenue for PBM for July 2025"
+Candidates:
+- id:3 "revenue for Specialty from Jan-Sep 2025" → 80 pts
+- id:4 "revenue for Home Delivery for Q3 2025" → 80 pts
+Decision: SELECT id:3 or id:4 ✅ (both valid, pick either)
+Reason: Same metric (revenue), same filter type (product_category), different values OK. Compatible date structures. Both score 80.
+
+Ex 3 - DATE FLEXIBILITY:
+Current: "revenue for PBM from July to August 2025"
+History: "revenue for PBM for Q3 2025"
+Decision: SELECT ✅ (score: 100 + 5 bonus)
+Reason: Exact filter match (PBM=PBM, 100 pts). Compatible date structures (both single period/range, +5 bonus). SQL builder adjusts dates.
+
+Ex 4 - DATE STRUCTURE MISMATCH:
+Current: "revenue for PBM for July 2025"
+History: "revenue for PBM Q3 2025 vs Q3 2024"
+Decision: REJECT ❌
+Reason: Incompatible date structures (single period vs YoY comparison). Different query patterns.
+
+Ex 5 - EXTRA FILTER TYPE REJECT:
+Current: "revenue for PBM"
+History: "revenue for PBM for client MDOVA"
+Decision: REJECT ❌
+Reason: DISQUALIFIER 2 - History has extra filter TYPE (client_id). Eliminated before scoring.
+
+Ex 6 - MISSING FILTER TYPE REJECT:
+Current: "revenue for PBM"
+History: "revenue" (no filters)
+Decision: REJECT ❌
+Reason: DISQUALIFIER 3 - Current has product_category filter, history has none. Eliminated before scoring.
+
+Ex 7 - SYNONYM MATCH + EXACT FILTER:
+Current: "network revenue for PBM"
+History: "revenue for PBM"
+Decision: SELECT ✅ (score: 100)
+Reason: "network revenue" = "revenue" (synonym). Exact filter match (PBM=PBM). Score 100.
+
+Ex 8 - DATE STRUCTURE BONUS:
+Current: "script count for PBM for July 2025"
+Candidates:
+- id:5 "script count for PBM for Q3 2025" → 100 + 5 = 105 pts (exact PBM, same date structure)
+- id:6 "script count for PBM Q3 2025 vs Q3 2024" → 100 pts (exact PBM, different date structure)
+Decision: SELECT id:5 ✅
+Reason: Both have exact filter match (100 pts), but id:5 gets +5 bonus for compatible date structure (single period). Score 105 > 100.
+
+Ex 9 - NO MATCH (ALL FAIL):
+Current: "script count for PBM"
+Candidates:
+- id:7 "revenue for PBM" → DISQUALIFIER 1 (metric mismatch)
+- id:8 "script count for PBM for client X" → DISQUALIFIER 2 (extra filter type)
+- id:9 "script count" → DISQUALIFIER 3 (missing filter type)
+Decision: NO_MATCH ❌
+Reason: All candidates eliminated by disqualifiers. No valid matches remain.
+
+=== OUTPUT FORMAT ===
+
+Return ONLY JSON in <json> tags. No preamble.
+
+<json>
+{
+  "status": "match_found" or "no_match",
+  "selected_seq_id": <number> or null,
+  "matched_question": "<text>" or null,
+  "table_name": "<name>" or null,
+  "reasoning": "<explanation with score if match_found>",
+  "pattern_match_level": "EXACT" or "PARTIAL" or "NONE",
+  "priority_score": <number> or null
+}
+</json>
+
+Remember: Start with <json>, end with </json>, nothing else.
 """
+
+        # Format feedback results as context in compact format (saves tokens)
+        # Group by table_name first
+        results_by_table = {}
+        for result in feedback_results:
+            table_name = result.get('table_name', 'N/A')
+            if table_name not in results_by_table:
+                results_by_table[table_name] = []
+            results_by_table[table_name].append(result)
+        
+        # Build compact candidates context
+        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
+        for table_name, results in results_by_table.items():
+            candidates_context += f"\n- table_name: {table_name}\n"
+            for result in results:
+                seq_id = result.get('seq_id', 'N/A')
+                question = result.get('user_question', 'N/A')
+                candidates_context += f"  id:{seq_id}, {question}\n"
+        
+        # Build the full prompt with TRIPLE-LAYER protection against guardrails
+        selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
+
+You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
+Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
+
+DO NOT attempt to:
+- Answer the business questions below
+- Provide insights about the data
+- Interpret the meaning of the questions
+- Analyze business metrics
+
+YOU ARE A TEXT MATCHING ALGORITHM. You ONLY compare strings and patterns.
+
+Think of yourself as: if (pattern_A matches pattern_B) return match; else return no_match;
+
+
+{system_prompt}
+
+{candidates_context}
+
+=== CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
+{user_question}
+
+⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
+
+Return ONLY the JSON in <json> tags. Start immediately with <json>.
+"""
+        
+        # Retry logic
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
+
+                # Call LLM with LOWER temperature for more deterministic behavior
+                # Lower temperature = less creative = less likely to trigger guardrails
+                # print("Raw LLM prompt:", selection_prompt)
+                llm_response = await self.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": selection_prompt}],
+                    max_tokens=2000,  # Reduced tokens since we only need JSON
+                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
+                    top_p=0.1,  # ← CRITICAL: Very focused sampling
+                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
+                )
+                
+                print("Raw LLM response:", llm_response)
+                
+                # Extract JSON from response
+                json_content = self._extract_json_from_response(llm_response)
+                selection_result = json.loads(json_content)
+                
+                # Validate response structure
+                status = selection_result.get('status')
+                if status not in ['match_found', 'no_match']:
+                    raise ValueError(f"Invalid status returned: {status}")
+                
+                # Handle success cases
+                if status == "match_found":
+                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
+                    print(f"   Matched question: {selection_result.get('matched_question')}")
+                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'match_found',
+                        'seq_id': selection_result.get('selected_seq_id'),
+                        'question': selection_result.get('matched_question'),
+                        'table_name': selection_result.get('table_name'),
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': selection_result.get('pattern_match_level'),
+                        'error': False,
+                        'error_message': ''
+                    }
+                
+                else:  # status == "no_match"
+                    print(f"❌ No suitable match found in feedback history")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': 'NONE',
+                        'error': False,
+                        'error_message': ''
+                    }
+            
+            except json.JSONDecodeError as e:
+                retry_count += 1
+                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying...")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"JSON parsing failed after {max_retries} attempts"
+                    }
+            
+            except Exception as e:
+                retry_count += 1
+                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - feedback selection failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
+                    }
+        
+        # Should never reach here, but just in case
+        return {
+            'status': 'no_match',
+            'seq_id': None,
+            'question': None,
+            'table_name': None,
+            'reasoning': 'Unexpected error in retry logic',
+            'pattern_match_level': 'NONE',
+            'error': True,
+            'error_message': 'Unexpected error in retry logic'
+        }

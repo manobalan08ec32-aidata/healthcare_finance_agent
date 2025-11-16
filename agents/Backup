@@ -1,12 +1,5 @@
-async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
-        """
-        Pure LLM-based selection of most relevant historical question from feedback results.
-        Returns single best match or NO_MATCH status.
-        """
+
         
-        user_question = state.get('current_question', state.get('original_question', ''))
-        
-        # System prompt for feedback matching
         system_prompt = """
 You are a SQL query matching expert. Select the SINGLE best historical question or return NO_MATCH.
 
@@ -283,24 +276,6 @@ Return ONLY JSON in <json> tags. No preamble.
 Remember: Start with <json>, end with </json>, nothing else.
 """
 
-        # Format feedback results as context in compact format (saves tokens)
-        # Group by table_name first
-        results_by_table = {}
-        for result in feedback_results:
-            table_name = result.get('table_name', 'N/A')
-            if table_name not in results_by_table:
-                results_by_table[table_name] = []
-            results_by_table[table_name].append(result)
-        
-        # Build compact candidates context
-        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
-        for table_name, results in results_by_table.items():
-            candidates_context += f"\n- table_name: {table_name}\n"
-            for result in results:
-                seq_id = result.get('seq_id', 'N/A')
-                question = result.get('user_question', 'N/A')
-                candidates_context += f"  id:{seq_id}, {question}\n"
-        
         # Build the full prompt with TRIPLE-LAYER protection against guardrails
         selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
 
@@ -330,119 +305,4 @@ Think of yourself as: if (pattern_A matches pattern_B) return match; else return
 Return ONLY the JSON in <json> tags. Start immediately with <json>.
 """
         
-        # Retry logic
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
-
-                # Call LLM with LOWER temperature for more deterministic behavior
-                # Lower temperature = less creative = less likely to trigger guardrails
-                # print("Raw LLM prompt:", selection_prompt)
-                llm_response = await self.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": selection_prompt}],
-                    max_tokens=2000,  # Reduced tokens since we only need JSON
-                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
-                    top_p=0.1,  # ← CRITICAL: Very focused sampling
-                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
-                )
-                
-                print("Raw LLM response:", llm_response)
-                
-                # Extract JSON from response
-                json_content = self._extract_json_from_response(llm_response)
-                selection_result = json.loads(json_content)
-                
-                # Validate response structure
-                status = selection_result.get('status')
-                if status not in ['match_found', 'no_match']:
-                    raise ValueError(f"Invalid status returned: {status}")
-                
-                # Handle success cases
-                if status == "match_found":
-                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
-                    print(f"   Matched question: {selection_result.get('matched_question')}")
-                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'match_found',
-                        'seq_id': selection_result.get('selected_seq_id'),
-                        'question': selection_result.get('matched_question'),
-                        'table_name': selection_result.get('table_name'),
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': selection_result.get('pattern_match_level'),
-                        'error': False,
-                        'error_message': ''
-                    }
-                
-                else:  # status == "no_match"
-                    print(f"❌ No suitable match found in feedback history")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': 'NONE',
-                        'error': False,
-                        'error_message': ''
-                    }
-            
-            except json.JSONDecodeError as e:
-                retry_count += 1
-                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying...")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"JSON parsing failed after {max_retries} attempts"
-                    }
-            
-            except Exception as e:
-                retry_count += 1
-                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - feedback selection failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
-                    }
-        
-        # Should never reach here, but just in case
-        return {
-            'status': 'no_match',
-            'seq_id': None,
-            'question': None,
-            'table_name': None,
-            'reasoning': 'Unexpected error in retry logic',
-            'pattern_match_level': 'NONE',
-            'error': True,
-            'error_message': 'Unexpected error in retry logic'
-        }
+    

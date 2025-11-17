@@ -70,8 +70,8 @@ STEP 5: SELECT BEST MATCH
 
 SYNONYMS
 
-Metrics: revenue=network revenue=product revenue | volume=script count=scripts=prescription count | cost=expense=spend
-Entities: HDP=Home Delivery=Mail | SP=Specialty | PBM=Pharmacy Benefits Management
+Metrics: revenue=network revenue=product revenue | volume=script count=scripts=line count | cost=expense=spend=cogs
+Entities: HDP=Home Delivery=Mail | SP=Specialty | PBM=PBM Retail
 Parsing: "PBM revenue" means metric=revenue, filter=PBM (NOT metric="PBM revenue")
 
 KEY EXAMPLES

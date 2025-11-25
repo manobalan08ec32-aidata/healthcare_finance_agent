@@ -1,168 +1,25 @@
-system_prompt = """
-You are a SQL pattern matching system. Select the single best historical question or return NO_MATCH.
-You compare TEXT PATTERNS - you do NOT answer business questions.
-
-MATCHING RULES (APPLY IN ORDER)
-
-STEP 1: METRIC MATCH (MANDATORY - REJECT IF FAILS)
-
-Current metric(s) MUST appear in history.
-
-Rules:
-✅ History has required metric + extras → ALLOW
-✅ Metric synonyms count as match (see synonym list)
-❌ History missing required metric → REJECT
-
-Examples:
-- Current: "revenue" | History: "revenue, volume" → ✅ PASS
-- Current: "revenue" | History: "volume" → ❌ REJECT
-- Current: "network revenue" | History: "revenue" → ✅ PASS (synonym)
-
-STEP 2: DIMENSION MATCH (MANDATORY - REJECT IF FAILS)
-
-At least ONE dimension must overlap between current and history.
-Either side can have more dimensions than the other.
-
-⚠️ CRITICAL: Date dimensions (BY month, BY quarter, BY year) are NOT counted as dimensions here - ignore them completely in this check.
-
-Rules:
-✅ Current: BY drug | History: BY drug BY region → PASS (drug overlaps)
-✅ Current: BY drug BY region | History: BY drug → PASS (drug overlaps)
-✅ Current: BY drug BY class | History: BY drug BY region → PASS (drug overlaps)
-❌ Current: BY drug | History: BY region → REJECT (no overlap)
-❌ Current: BY drug | History: no dimension → REJECT (no overlap)
-✅ Current: no dimension | History: any dimension → PASS (no requirement)
-
-Edge Case - Date Dimensions:
-- Current: "revenue BY month" | History: "revenue BY lob" → ❌ REJECT
-  Reason: "BY month" is a REAL dimension (not a date filter), no overlap with "lob"
-- Current: "revenue for Q3 2025" | History: "revenue for Jan 2024" → ✅ PASS
-  Reason: "Q3 2025" and "Jan 2024" are date FILTERS (not dimensions), ignored in Step 3
-
-STEP 3: IGNORE DATE/TIME FILTERS
-
-Strip all date specifications from filters. Any date = any other date.
-
-Rules:
-- Q3 2025 = Jan 2024 = July-Aug 2025 = Q1 2023 vs Q1 2022 = ANY
-- Single periods, ranges, YoY, MoM, QoQ → ALL IGNORED
-
-STEP 4: RANK BY FILTER VALUE MATCH
-
-After passing Steps 1-3, rank candidates by filter alignment:
-
-TIER A (HIGHEST): Filter value(s) match
-- Current filter value(s) appear in history (history can have extras)
-- Dimensions overlap + metric matches + filter matches
-
-TIER B (MEDIUM): Filter value differs
-- Dimensions overlap + metric matches, but filter value different
-
-TIER C (LOWEST): No dimension requirement
-- Metric matches, current has no dimension requirement
-
-STEP 5: SELECT BEST MATCH
-
-1. If any TIER A exists → Pick first TIER A
-2. Else if any TIER B exists → Pick first TIER B
-3. Else if any TIER C exists → Pick first TIER C
-4. Else → NO_MATCH
-
-SYNONYMS
-
-Metrics: revenue=network revenue=product revenue | volume=script count=scripts=line count | cost=expense=spend=cogs
-Entities: HDP=Home Delivery=Mail | SP=Specialty | PBM=PBM Retail
-Parsing: "PBM revenue" means metric=revenue, filter=PBM (NOT metric="PBM revenue")
-
-KEY EXAMPLES
-
-Example 1: Filter + Dimension Overlap + Metric Match (TIER A)
-
-Current: "revenue BY lob for Prior Auth"
-History: "revenue BY lob for Prior Auth, HDP Core"
-Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found + extras OK)
-
-Current: "revenue BY lob BY region for Prior Auth"
-History: "revenue BY lob for Prior Auth"
-Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found)
-
-Example 2: Dimension Flexibility (History Subset/Superset Both OK)
-
-Current: "revenue BY drug BY therapeutic_class for PBM"
-History: "revenue BY drug for PBM"
-Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
-
-Current: "revenue BY drug for PBM"
-History: "revenue BY drug BY therapeutic_class BY region for PBM"
-Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
-
-Example 3: No Dimension Overlap → REJECT
-
-Current: "revenue BY drug for PBM"
-History: "revenue BY region for PBM"
-Result: REJECT ❌ (drug vs region - no dimension overlap)
-
-Current: "revenue BY lob for HDP"
-History: "revenue for HDP"
-Result: REJECT ❌ (current needs lob dimension, history has none - no overlap)
-
-Example 4: Date Filters Completely Ignored
-
-Current: "revenue for PBM in Q3 2025"
-History: "revenue for PBM from Jan-Dec 2024"
-Result: TIER A ✅ (dates ignored, PBM matches, revenue matches)
-
-Current: "script count for HDP from Jan-June 2025"
-History: "volume for Home Delivery Q3 2024 vs Q3 2023"
-Result: TIER A ✅ (script count=volume synonym, HDP=Home Delivery synonym, dates ignored)
-
-Example 5: Metric Mismatch → REJECT
-
-Current: "revenue BY lob for PBM"
-History: "volume BY lob for PBM"
-Result: REJECT ❌ (revenue ≠ volume, failed Step 1)
-
-Current: "script count for HDP"
-History: "cost for HDP"
-Result: REJECT ❌ (script count ≠ cost, failed Step 1)
-
-Example 6: TIER B (Dimension Overlap But Filter Differs)
-
-Current: "revenue BY lob for Prior Auth"
-History: "revenue BY lob for HDP Core"
-Result: TIER B (lob overlaps, revenue matches, but Prior Auth ≠ HDP Core)
-
-Current: "volume BY drug BY region for Specialty"
-History: "scripts BY drug for PBM"
-Result: TIER B (drug overlaps, volume=scripts synonym, but Specialty ≠ PBM)
-
-OUTPUT FORMAT
-
-Return ONLY JSON in <json> tags. No explanation outside tags.
-
-<json>
-{
-  "status": "match_found" or "no_match",
-  "selected_seq_id": <number> or null,
-  "matched_question": "<text>" or null,
-  "table_name": "<name>" or null,
-  "reasoning": "<1-line explanation with tier>",
-  "match_confidence": "HIGH" or "MEDIUM" or "LOW"
-}
-</json>
-
-Confidence: HIGH=TIER A | MEDIUM=TIER B | LOW=TIER C
-
-Remember: You match patterns, not answer questions. Start with <json>.
-"""
-
-selection_prompt = f"""PATTERN MATCHER: Compare text patterns only. Do NOT answer business questions.
-
-{system_prompt}
-
-{candidates_context}
-
-CURRENT QUESTION: {user_question}
-
-Return JSON only. Start with <json>.
-"""
+Navigation Input - Current: 'new question - what is the billed amount for carrier MPDOVA '
+Navigation Input - Existing Domain: PBM Network
+Starting single-step processing...
+conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
+📊 Current forecast cycle: 8+4
+Current Timestamp before question validator call: 2025-11-20 22:59:33
+📊 Input tokens: 0 | Output tokens: 0 | Response time: 2.83s
+Current Timestamp after Question validator call: 2025-11-20 22:59:36
+LLM Response: Sorry, the model cannot answer this question.
+⚠️ LLM cannot answer - retrying (1/5)
+Current Timestamp before question validator call: 2025-11-20 22:59:38
+📊 Input tokens: 0 | Output tokens: 0 | Response time: 2.09s
+Current Timestamp after Question validator call: 2025-11-20 22:59:40
+LLM Response: Sorry, the model cannot answer this question.
+⚠️ LLM cannot answer - retrying (2/5)
+Current Timestamp before question validator call: 2025-11-20 22:59:44
+📊 Input tokens: 0 | Output tokens: 0 | Response time: 1.81s
+Current Timestamp after Question validator call: 2025-11-20 22:59:46
+LLM Response: Sorry, the model cannot answer this question.
+⚠️ LLM cannot answer - retrying (3/5)
+Current Timestamp before question validator call: 2025-11-20 22:59:54
+📊 Input tokens: 0 | Output tokens: 0 | Response time: 1.81s
+Current Timestamp after Question validator call: 2025-11-20 22:59:55
+LLM Response: Sorry, the model cannot answer this question.
+⚠️ LLM cannot answer - retrying (4/5)

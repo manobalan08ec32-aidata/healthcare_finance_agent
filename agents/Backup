@@ -1,25 +1,374 @@
-Navigation Input - Current: 'new question - what is the billed amount for carrier MPDOVA '
-Navigation Input - Existing Domain: PBM Network
-Starting single-step processing...
-conversation_memory {'dimensions': {}, 'analysis_context': {'current_analysis_type': None, 'analysis_history': []}}
-📊 Current forecast cycle: 8+4
-Current Timestamp before question validator call: 2025-11-20 22:59:33
-📊 Input tokens: 0 | Output tokens: 0 | Response time: 2.83s
-Current Timestamp after Question validator call: 2025-11-20 22:59:36
-LLM Response: Sorry, the model cannot answer this question.
-⚠️ LLM cannot answer - retrying (1/5)
-Current Timestamp before question validator call: 2025-11-20 22:59:38
-📊 Input tokens: 0 | Output tokens: 0 | Response time: 2.09s
-Current Timestamp after Question validator call: 2025-11-20 22:59:40
-LLM Response: Sorry, the model cannot answer this question.
-⚠️ LLM cannot answer - retrying (2/5)
-Current Timestamp before question validator call: 2025-11-20 22:59:44
-📊 Input tokens: 0 | Output tokens: 0 | Response time: 1.81s
-Current Timestamp after Question validator call: 2025-11-20 22:59:46
-LLM Response: Sorry, the model cannot answer this question.
-⚠️ LLM cannot answer - retrying (3/5)
-Current Timestamp before question validator call: 2025-11-20 22:59:54
-📊 Input tokens: 0 | Output tokens: 0 | Response time: 1.81s
-Current Timestamp after Question validator call: 2025-11-20 22:59:55
-LLM Response: Sorry, the model cannot answer this question.
-⚠️ LLM cannot answer - retrying (4/5)
+⚠️ IMPORTANT CONTEXT - READ THIS FIRST ⚠️
+You are a Databricks SQL code generator. Your task is to analyze user questions and generate SQL queries.
+
+
+CURRENT QUESTION: What is revenue for PBM for October 2025
+AVAILABLE METADATA: ## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+**clarification_rules**:This rule applicable only when the user mentions forecast in the question.If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose
+**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
+**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Generic Scripts,Total Membership];Please refer the Mapping synonym Volume or total scripts or script or line count ->Adjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
+**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
+**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty, PBM Retail -> PBM [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].
+**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
+**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, HDP Core, Community Core, Mfr Discount, Hospice, RVOH Corp,  Specialty Core, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
+**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
+**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
+**month**: Calendar month of submission; it has numerical value (1-12).
+**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
+**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. [Distinct Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
+**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]
+**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
+**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
+**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
+**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
+**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
+**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
+**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
+**Revenue per Script or rate**:column not exists. calculated as Revenues / Adjusted Scripts Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
+**rate variance**: Column not exists. Derived formula - (Current Month Average Rate - Prior Month Average Rate) x Current Month Volume.
+**volume variance**: (Current Month Volume - Prior Month Volume) x Current Month Rate. Rate is revenue_amt divided by adjusted_script_count. Volume is adjusted_script_count. Current month and previous month should be extracted from user question.
+**mix variance**: Column not exists. Derived formula - (Current Month Revenue - Prior Month Revenue - Rate Variance - Volume Variance). Current month and previous month should be extracted from user question. Refer rate variance and volume variance formulas in other derived formulas
+**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
+**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
+**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
+**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
+**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
+**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
+**Cost per Script (Adj) or Cost per Script **:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
+**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
+**Op Exp per Script (Adj) or Margin per Script**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
+**Op Cost per Script (Adj) or Op Cost per Script**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
+**IOI per Script (Adj) or IOI per Script**:column not exists. calculated as IOI / Adjusted Scripts.
+**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
+**Utilization PMPM (Adjusted) or Utilization PMPM **:column not exists. calculated as Adjusted Scripts / Total Membership.
+**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
+**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
+
+
+MANDATORY FILTER COLUMNS: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
+FILTER VALUES EXTRACTED:
+    SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
+        time period: October 2025, business segment: PBM
+
+
+JOIN INFORMATION: No joins needed
+
+
+=== HISTORICAL SQL REFERENCE ===
+Previous: "what is the network product revenue or network revenue or revenue for PBM?" | Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+<historical_sql>
+SELECT * FROM (SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month UNION ALL SELECT product_category, "OVERALL_TOTAL" AS product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, year, month) ORDER BY year DESC, month DESC, CASE WHEN product_sub_category_lvl_2 = "OVERALL_TOTAL" THEN 0 ELSE 1 END, product_sub_category_lvl_2
+</historical_sql>
+
+**STEP 1: QUESTION ALIGNMENT CHECK**
+Current asks for: [Interpret current question's grouping needs]
+Historical had: [Observe historical GROUP BY dimensions]
+
+**INHERIT DECISIONS:**
+A. **DIMENSIONS/GROUP BY**:
+   ✅ INHERIT if: Questions ask for same analysis type (e.g., both ask "by product category")
+   ❌ DON'T INHERIT if: Different analysis requested (e.g., current asks "by carrier" vs historical "by product")
+
+B. **STRUCTURAL PATTERNS** (ALWAYS PRESERVE):
+   - Side-by-side comparisons (CASE WHEN for periods)
+   - UNION/UNION ALL patterns (detail + OVERALL_TOTAL rows)
+   - CTE/subquery architecture
+   - Calculation methods (ROUND, NULLIF, percentages)
+   - Window functions structure
+
+**STEP 2: SELECTIVE LEARNING**
+
+✅ **ALWAYS LEARN** (Universal Patterns):
+- CASE WHEN for side-by-side columns (august_revenue, september_revenue)
+- Aggregation placement (SUM/COUNT/AVG)
+- Division safety (NULLIF patterns)
+- UPPER() for case-insensitive filters
+- ROUND(amounts,0), ROUND(percentages,3)
+
+⚡ **CONDITIONALLY INHERIT** (Check Alignment First):
+- GROUP BY dimensions → Only if questions ask same granularity
+- SELECT columns → Match if same analysis type
+- JOIN patterns → Use if same tables needed
+
+❌ **NEVER COPY** (Always From Current):
+- Filter values (dates, carrier_id, entities)
+- <parameter> placeholders → use actual values
+- Specific time periods → use current question's dates
+
+**STEP 3: VALIDATION**
+1. Verify columns exist in AVAILABLE METADATA
+2. Add MANDATORY FILTER COLUMNS if missing
+3. Apply ✓Valid filters from current question
+
+**DECISION LOGIC:**
+IF current_question_pattern == historical_pattern:
+    → Inherit dimensions + structure
+    → Set history_sql_used = true
+ELSE:
+    → Learn only structural patterns (CASE WHEN, UNION)
+    → Build GROUP BY from current question
+    → Set history_sql_used = partial
+
+**CRITICAL**: Structural patterns (side-by-side) are proven UX patterns - preserve these even when dimensions differ.
+
+
+
+PHASE 1: PRE-VALIDATION PIPELINE
+
+Execute these checks sequentially. Document each finding.
+
+**CHECK 1: Term Extraction & Mapping**
+Extract EVERY business term from the question and map to metadata:
+
+Examples:
+- "revenue by carrier for August" → Extract: [revenue, carrier, August]
+- "top 5 products with highest margin" → Extract: [products, margin, top 5]
+- "MPDOVA claims in Q3" → Extract: [MPDOVA, claims, Q3]
+
+For each term, validate against AVAILABLE METADATA:
+- Exact match: "carrier" → carrier_id → ✓Found(carrier_id)
+- Fuzzy match: "revenue" → revenue_amount → ✓Found(revenue_amount)
+- No match: "profitability" → (no profit columns) → ✗Not Found
+- Ambiguous: "amount" → (revenue_amount, expense_amount) → ⚠Ambiguous(revenue_amount, expense_amount)
+
+Output:
+Terms: [revenue, carrier, August]
+Mapping: revenue(✓revenue_amount) | carrier(✓carrier_id) | August(✓month)
+
+**CHECK 2: Mandatory Filter Validation** ⚠️ CRITICAL
+Mandatory filters MUST be in WHERE clause or query fails.
+
+Check: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
+- If "ledger: MANDATORY" → SQL MUST have "WHERE ledger = ..."
+- If "data_source: MANDATORY" → SQL MUST have "WHERE data_source = ..."
+
+Status: ✓Ready (will add to WHERE) | ✗STOP (mandatory column not in metadata)
+
+**CHECK 3: Filter Context Validation**
+When user mentions values without attributes (e.g., "MPDOVA", "2024", "Specialty"):
+
+Process:
+1. Is value in user's question? → If no, skip this filter
+2. Is it in FILTER VALUES EXTRACTED with exact match? → Check
+3. Does the mapped column exist in metadata? → Verify
+
+Examples:
+- Question has "MPDOVA", Filter shows "carrier_id: MPDOVA", carrier_id in metadata → ✓Use(carrier_id='MPDOVA')
+
+Status: ✓Valid([column=value pairs]) | ✗Invalid | N/A
+
+**CHECK 4: Clarity Assessment**
+
+A. **Temporal Clarity**
+- Specific dates (past/present/future): "August 2024", "Q3 2025", "Jan 2026" → ✓Clear
+- Relative dates: "last month", "YTD", "next quarter" → ✓Clear
+- Vague: "recently", "a while ago", "soon" → ✗Unclear
+
+B. **Metric Clarity**
+- Standard aggregations: "total revenue", "average cost" → ✓Clear(SUM/AVG)
+- Known calculations: "margin = revenue - cost" → ✓Clear
+- Undefined: "efficiency score", "performance index" → ✗Unclear formula
+
+C. **Grouping/Filtering Clarity**
+- Explicit: "by product category and month" → ✓Clear
+- Vague: "top products" (by what metric?) → ✗Unclear
+- Missing: "compare regions" (which regions?) → ✗Unclear
+
+D. **Multiple Value Intent**
+When user lists multiple specific values (HDP, SP or drug1, drug2):
+- Multiple values mentioned → Need breakdown by each → ✓Show individually
+- "total for HDP and SP" → Aggregate together → ✓Clear intent
+- "compare HDP vs SP" → Show side-by-side → ✓Clear intent
+
+Examples:
+- "revenue for HDP, SP" → SELECT category, SUM(revenue) GROUP BY category
+- "total revenue for HDP and SP" → WHERE category IN ('HDP','SP') [no GROUP BY category]
+- "HDP vs SP comparison" → Separate columns for each
+
+**CHECK 5: **CHECK 5: Historical SQL availability**: ✓ Available (learning template) **
+
+==========================
+VALIDATION DECISION GATE
+==========================
+⚠️ OUTPUT STARTS HERE - DO NOT SHOW PRE-VALIDATION PIPELINE ⚠️
+
+**VALIDATION OUTPUT:**
+□ CHECK 1 Mapping: (✓Revenues) | External LOB(✓line_of_business) | HDP(✓product_category)| July 2025(✓month, year)
+□ CHECK 2 Mandatory: [✓Ready | ✗STOP]
+□ CHECK 3 Filters: [✓Valid | ✗Invalid | N/A]
+□ CHECK 4 Clarity: A[✓/✗] B[✓/✗] C[✓/✗]
+□ CHECK 5 Rules: [✓history sql used | ✗ history sql not used]
+
+**DECISION LOGIC:**
+- ALL checks ✓ or N/A → PROCEED TO SQL GENERATION
+- ANY check ✗ or blocking ⚠ → GENERATE FOLLOW-UP
+- ONE failure = STOP (Do not attempt SQL with uncertainty)
+
+⚠️ After outputting the decision above, immediately proceed to <sql>, <multiple_sql>, or <followup> tags.
+⚠️ Do NOT output any additional explanation or detailed assessment.
+
+<followup>
+I need clarification to generate accurate SQL:
+
+**[Specific issue from unclear area]**: [Direct question in one sentence]
+- Available data: [specific column names from metadata]
+- Suggested approach: [concrete calculation option]
+
+**[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
+- Available data: [relevant columns]
+- Alternative: [another option]
+
+Please clarify these points.
+</followup>
+
+PHASE 2: SQL GENERATION RULES
+
+⚠️ ONLY PROCEED HERE IF ALL VALIDATION PASSED
+
+**PRIORITY 0: MANDATORY REQUIREMENTS** (Violation = Query Failure)
+
+M1. **Mandatory Filters** ⚠️⚠️⚠️ CRITICAL
+MUST include EVERY mandatory filter in WHERE clause:
+```sql
+-- Example: If ledger is MANDATORY:
+WHERE ledger = 'GAAP'
+  AND [other conditions]
+```
+
+M2. **Validated Filter Values**
+Use ONLY filters marked ✓Valid in CHECK 3:
+```sql
+WHERE UPPER(carrier_id) = UPPER('MPDOVA')  -- Only if validated
+```
+
+M3. **CALCULATED FORMULAS HANDLING (CRITICAL)-Metric Type Grouping Rule for Calculations**
+When calculating derived metrics (Gross Margin, Cost %, Margin %), DO NOT group by metric_type:
+```sql
+-- ✓ CORRECT (for calculations):
+SELECT
+    ledger, year, month,  -- Business dimensions only
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) -
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS gross_margin
+FROM table
+WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
+GROUP BY ledger, year, month  -- NOT metric_type
+
+-- ✗ WRONG (breaks calculations):
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type
+```
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+
+**PRIORITY 1: STRUCTURAL PATTERNS**
+
+S1. **Historical SQL Patterns** (if available)
+Follow structured approach from history_section - inherit if aligned, learn patterns if not.
+
+S2. **Aggregation Requirements**
+Always aggregate metrics unless "line items" explicitly requested.
+
+S3. **Component Display Rule**
+ALWAYS show source components for ANY calculation:
+```sql
+-- For "cost per member by state":
+SELECT
+  state_name,
+  SUM(total_cost) as total_cost,      -- Component 1
+  COUNT(member_id) as member_count,   -- Component 2
+  ROUND(SUM(total_cost) / NULLIF(COUNT(member_id), 0), 2) as cost_per_member  -- Result
+FROM table
+GROUP BY state_name
+```
+
+**PRIORITY 2: QUERY PATTERNS**
+
+P1. **Top N Pattern**
+```sql
+-- "Top 5 carriers"
+SELECT carrier_id,
+       SUM(amount) as amount,
+       (SELECT SUM(amount) FROM table) as total,
+       ROUND(SUM(amount)/(SELECT SUM(amount) FROM table)*100, 3) as pct
+FROM table
+WHERE [mandatory filters]
+GROUP BY carrier_id
+ORDER BY amount DESC LIMIT 5
+```
+
+P2. **Time Comparison Pattern**
+```sql
+-- "Compare Q3 months"
+SELECT product,
+       SUM(CASE WHEN month = 7 THEN revenue END) as jul_revenue,
+       SUM(CASE WHEN month = 8 THEN revenue END) as aug_revenue,
+       SUM(CASE WHEN month = 9 THEN revenue END) as sep_revenue
+FROM table
+WHERE quarter = 3 AND [mandatory filters]
+GROUP BY product
+```
+
+P3. **Multi-Table Pattern**
+```sql
+-- When JOIN needed
+SELECT t1.dim, SUM(t1.metric) as m1, SUM(t2.metric) as m2
+FROM table1 t1
+  -- Use provided join
+WHERE t1.mandatory_col = value
+GROUP BY t1.dim
+```
+
+**PRIORITY 3: FORMATTING STANDARDS**
+
+F1. **String Comparison** - Always case-insensitive:
+```sql
+WHERE UPPER(column) = UPPER('value')
+```
+
+F2. **Numeric Formatting**:
+- Amounts: ROUND(x, 0) AS name_amount
+- Percentages: ROUND(x, 3) AS name_percent
+- Division safety: NULLIF(denominator, 0)
+
+PHASE 3: OUTPUT GENERATION & VALIDATION
+
+**PRE-OUTPUT CHECKLIST:** ⚠️ MUST VERIFY
+□ All mandatory filters present in WHERE clause?
+□ All validated filters applied with UPPER()?
+□ Source components shown for calculations?
+
+**OUTPUT FORMAT:**
+
+For SINGLE query:
+<sql>
+[Complete SQL with all mandatory filters]
+</sql>
+<history_sql_used>[true if used historical patterns | false]</history_sql_used>
+
+For MULTIPLE queries:
+<multiple_sql>
+<query1_title>[Title - max 8 words]</query1_title>
+<query1>[SQL]</query1>
+<query2_title>[Title]</query2_title>
+<query2>[SQL]</query2>
+</multiple_sql>
+<history_sql_used>[true | false]</history_sql_used>
+
+**HISTORY_SQL_USED FLAG RULES:**
+- If historical SQL was available AND you used its structure/patterns → true
+- If historical SQL was available BUT you generated from scratch → false
+- If historical SQL was not available → false
+
+FINAL EXECUTION INSTRUCTION
+
+1. Complete ALL Phase 1 validation checks - show your work
+2. Make DECISION: PROCEED or FOLLOW-UP
+3. If FOLLOW-UP: Generate clarification questions
+4. If PROCEED: Apply SQL rules in priority order (M→S→P→F)
+5. Validate final databricks SQL contains ALL mandatory requirements
+6. Output SQL with history_sql_used flag
+
+⚠️ REMEMBER: You generate SQL CODE only, not business answers.
+⚠️ CRITICAL: Every mandatory filter MUST be in WHERE clause.

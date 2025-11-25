@@ -1,374 +1,323 @@
-⚠️ IMPORTANT CONTEXT - READ THIS FIRST ⚠️
-You are a Databricks SQL code generator. Your task is to analyze user questions and generate SQL queries.
+async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
+        """
+        Pure LLM-based selection of most relevant historical question from feedback results.
+        Returns single best match or NO_MATCH status.
+        """
+        
+        user_question = state.get('rewritten_question', state.get('original_question', ''))
+        
+        # System prompt for feedback matching
+        system_prompt = """
+You are a SQL pattern matching system. Select the single best historical question or return NO_MATCH.
+You compare TEXT PATTERNS - you do NOT answer business questions.
 
+MATCHING RULES (APPLY IN ORDER)
 
-CURRENT QUESTION: What is revenue for PBM for October 2025
-AVAILABLE METADATA: ## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+STEP 1: METRIC MATCH (MANDATORY - REJECT IF FAILS)
 
-**clarification_rules**:This rule applicable only when the user mentions forecast in the question.If the user compares or asks for a forecast without mentioning cycles (e.g., 2+10, 5+7, 8+4) and then asks which cycle to choose
-**ledger**:  Allowed values: GAAP, BUDGET, 8+4, 5+7, 2+10.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10), use that value. [Values: 8+4, 2+10, 5+7, GAAP, BUDGET]
-**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Generic Scripts,Total Membership];Please refer the Mapping synonym Volume or total scripts or script or line count ->Adjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
-**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
-**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty, PBM Retail -> PBM [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].
-**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
-**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, HDP Core, Community Core, Mfr Discount, Hospice, RVOH Corp,  Specialty Core, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
-**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
-**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
-**month**: Calendar month of submission; it has numerical value (1-12).
-**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
-**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. [Distinct Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
-**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]
-**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
-**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
-**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
-**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
-**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
-**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
-**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
-**Revenue per Script or rate**:column not exists. calculated as Revenues / Adjusted Scripts Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
-**rate variance**: Column not exists. Derived formula - (Current Month Average Rate - Prior Month Average Rate) x Current Month Volume.
-**volume variance**: (Current Month Volume - Prior Month Volume) x Current Month Rate. Rate is revenue_amt divided by adjusted_script_count. Volume is adjusted_script_count. Current month and previous month should be extracted from user question.
-**mix variance**: Column not exists. Derived formula - (Current Month Revenue - Prior Month Revenue - Rate Variance - Volume Variance). Current month and previous month should be extracted from user question. Refer rate variance and volume variance formulas in other derived formulas
-**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
-**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
-**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
-**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
-**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
-**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
-**Cost per Script (Adj) or Cost per Script **:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
-**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
-**Op Exp per Script (Adj) or Margin per Script**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
-**Op Cost per Script (Adj) or Op Cost per Script**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
-**IOI per Script (Adj) or IOI per Script**:column not exists. calculated as IOI / Adjusted Scripts.
-**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
-**Utilization PMPM (Adjusted) or Utilization PMPM **:column not exists. calculated as Adjusted Scripts / Total Membership.
-**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
-**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
+Current metric(s) MUST appear in history.
 
-
-MANDATORY FILTER COLUMNS: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
-FILTER VALUES EXTRACTED:
-    SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
-        time period: October 2025, business segment: PBM
-
-
-JOIN INFORMATION: No joins needed
-
-
-=== HISTORICAL SQL REFERENCE ===
-Previous: "what is the network product revenue or network revenue or revenue for PBM?" | Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-
-<historical_sql>
-SELECT * FROM (SELECT product_category, product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, product_sub_category_lvl_2, year, month UNION ALL SELECT product_category, "OVERALL_TOTAL" AS product_sub_category_lvl_2, year, month, ROUND(SUM(amount_or_count), 0) AS revenue_amount FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast WHERE UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("PBM") GROUP BY product_category, year, month) ORDER BY year DESC, month DESC, CASE WHEN product_sub_category_lvl_2 = "OVERALL_TOTAL" THEN 0 ELSE 1 END, product_sub_category_lvl_2
-</historical_sql>
-
-**STEP 1: QUESTION ALIGNMENT CHECK**
-Current asks for: [Interpret current question's grouping needs]
-Historical had: [Observe historical GROUP BY dimensions]
-
-**INHERIT DECISIONS:**
-A. **DIMENSIONS/GROUP BY**:
-   ✅ INHERIT if: Questions ask for same analysis type (e.g., both ask "by product category")
-   ❌ DON'T INHERIT if: Different analysis requested (e.g., current asks "by carrier" vs historical "by product")
-
-B. **STRUCTURAL PATTERNS** (ALWAYS PRESERVE):
-   - Side-by-side comparisons (CASE WHEN for periods)
-   - UNION/UNION ALL patterns (detail + OVERALL_TOTAL rows)
-   - CTE/subquery architecture
-   - Calculation methods (ROUND, NULLIF, percentages)
-   - Window functions structure
-
-**STEP 2: SELECTIVE LEARNING**
-
-✅ **ALWAYS LEARN** (Universal Patterns):
-- CASE WHEN for side-by-side columns (august_revenue, september_revenue)
-- Aggregation placement (SUM/COUNT/AVG)
-- Division safety (NULLIF patterns)
-- UPPER() for case-insensitive filters
-- ROUND(amounts,0), ROUND(percentages,3)
-
-⚡ **CONDITIONALLY INHERIT** (Check Alignment First):
-- GROUP BY dimensions → Only if questions ask same granularity
-- SELECT columns → Match if same analysis type
-- JOIN patterns → Use if same tables needed
-
-❌ **NEVER COPY** (Always From Current):
-- Filter values (dates, carrier_id, entities)
-- <parameter> placeholders → use actual values
-- Specific time periods → use current question's dates
-
-**STEP 3: VALIDATION**
-1. Verify columns exist in AVAILABLE METADATA
-2. Add MANDATORY FILTER COLUMNS if missing
-3. Apply ✓Valid filters from current question
-
-**DECISION LOGIC:**
-IF current_question_pattern == historical_pattern:
-    → Inherit dimensions + structure
-    → Set history_sql_used = true
-ELSE:
-    → Learn only structural patterns (CASE WHEN, UNION)
-    → Build GROUP BY from current question
-    → Set history_sql_used = partial
-
-**CRITICAL**: Structural patterns (side-by-side) are proven UX patterns - preserve these even when dimensions differ.
-
-
-
-PHASE 1: PRE-VALIDATION PIPELINE
-
-Execute these checks sequentially. Document each finding.
-
-**CHECK 1: Term Extraction & Mapping**
-Extract EVERY business term from the question and map to metadata:
+Rules:
+✅ History has required metric + extras → ALLOW
+✅ Metric synonyms count as match (see synonym list)
+❌ History missing required metric → REJECT
 
 Examples:
-- "revenue by carrier for August" → Extract: [revenue, carrier, August]
-- "top 5 products with highest margin" → Extract: [products, margin, top 5]
-- "MPDOVA claims in Q3" → Extract: [MPDOVA, claims, Q3]
+- Current: "revenue" | History: "revenue, volume" → ✅ PASS
+- Current: "revenue" | History: "volume" → ❌ REJECT
+- Current: "network revenue" | History: "revenue" → ✅ PASS (synonym)
 
-For each term, validate against AVAILABLE METADATA:
-- Exact match: "carrier" → carrier_id → ✓Found(carrier_id)
-- Fuzzy match: "revenue" → revenue_amount → ✓Found(revenue_amount)
-- No match: "profitability" → (no profit columns) → ✗Not Found
-- Ambiguous: "amount" → (revenue_amount, expense_amount) → ⚠Ambiguous(revenue_amount, expense_amount)
+STEP 2: DIMENSION MATCH (MANDATORY - REJECT IF FAILS)
 
-Output:
-Terms: [revenue, carrier, August]
-Mapping: revenue(✓revenue_amount) | carrier(✓carrier_id) | August(✓month)
+At least ONE dimension must overlap between current and history.
+Either side can have more dimensions than the other.
 
-**CHECK 2: Mandatory Filter Validation** ⚠️ CRITICAL
-Mandatory filters MUST be in WHERE clause or query fails.
+⚠️ CRITICAL: Date dimensions (BY month, BY quarter, BY year) are NOT counted as dimensions here - ignore them completely in this check.
 
-Check: Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
-- If "ledger: MANDATORY" → SQL MUST have "WHERE ledger = ..."
-- If "data_source: MANDATORY" → SQL MUST have "WHERE data_source = ..."
+Rules:
+✅ Current: BY drug | History: BY drug BY region → PASS (drug overlaps)
+✅ Current: BY drug BY region | History: BY drug → PASS (drug overlaps)
+✅ Current: BY drug BY class | History: BY drug BY region → PASS (drug overlaps)
+❌ Current: BY drug | History: BY region → REJECT (no overlap)
+❌ Current: BY drug | History: no dimension → REJECT (no overlap)
+✅ Current: no dimension | History: any dimension → PASS (no requirement)
 
-Status: ✓Ready (will add to WHERE) | ✗STOP (mandatory column not in metadata)
+Edge Case - Date Dimensions:
+- Current: "revenue BY month" | History: "revenue BY lob" → ❌ REJECT
+  Reason: "BY month" is a REAL dimension (not a date filter), no overlap with "lob"
+- Current: "revenue for Q3 2025" | History: "revenue for Jan 2024" → ✅ PASS
+  Reason: "Q3 2025" and "Jan 2024" are date FILTERS (not dimensions), ignored in Step 3
 
-**CHECK 3: Filter Context Validation**
-When user mentions values without attributes (e.g., "MPDOVA", "2024", "Specialty"):
+STEP 3: IGNORE DATE/TIME FILTERS
 
-Process:
-1. Is value in user's question? → If no, skip this filter
-2. Is it in FILTER VALUES EXTRACTED with exact match? → Check
-3. Does the mapped column exist in metadata? → Verify
+Strip all date specifications from filters. Any date = any other date.
 
-Examples:
-- Question has "MPDOVA", Filter shows "carrier_id: MPDOVA", carrier_id in metadata → ✓Use(carrier_id='MPDOVA')
+Rules:
+- Q3 2025 = Jan 2024 = July-Aug 2025 = Q1 2023 vs Q1 2022 = ANY
+- Single periods, ranges, YoY, MoM, QoQ → ALL IGNORED
 
-Status: ✓Valid([column=value pairs]) | ✗Invalid | N/A
+STEP 4: RANK BY FILTER VALUE MATCH
 
-**CHECK 4: Clarity Assessment**
+After passing Steps 1-3, rank candidates by filter alignment:
 
-A. **Temporal Clarity**
-- Specific dates (past/present/future): "August 2024", "Q3 2025", "Jan 2026" → ✓Clear
-- Relative dates: "last month", "YTD", "next quarter" → ✓Clear
-- Vague: "recently", "a while ago", "soon" → ✗Unclear
+TIER A (HIGHEST): Filter value(s) match
+- Current filter value(s) appear in history (history can have extras)
+- Dimensions overlap + metric matches + filter matches
 
-B. **Metric Clarity**
-- Standard aggregations: "total revenue", "average cost" → ✓Clear(SUM/AVG)
-- Known calculations: "margin = revenue - cost" → ✓Clear
-- Undefined: "efficiency score", "performance index" → ✗Unclear formula
+TIER B (MEDIUM): Filter value differs
+- Dimensions overlap + metric matches, but filter value different
 
-C. **Grouping/Filtering Clarity**
-- Explicit: "by product category and month" → ✓Clear
-- Vague: "top products" (by what metric?) → ✗Unclear
-- Missing: "compare regions" (which regions?) → ✗Unclear
+TIER C (LOWEST): No dimension requirement
+- Metric matches, current has no dimension requirement
 
-D. **Multiple Value Intent**
-When user lists multiple specific values (HDP, SP or drug1, drug2):
-- Multiple values mentioned → Need breakdown by each → ✓Show individually
-- "total for HDP and SP" → Aggregate together → ✓Clear intent
-- "compare HDP vs SP" → Show side-by-side → ✓Clear intent
+STEP 5: SELECT BEST MATCH
 
-Examples:
-- "revenue for HDP, SP" → SELECT category, SUM(revenue) GROUP BY category
-- "total revenue for HDP and SP" → WHERE category IN ('HDP','SP') [no GROUP BY category]
-- "HDP vs SP comparison" → Separate columns for each
+1. If any TIER A exists → Pick first TIER A
+2. Else if any TIER B exists → Pick first TIER B
+3. Else if any TIER C exists → Pick first TIER C
+4. Else → NO_MATCH
 
-**CHECK 5: **CHECK 5: Historical SQL availability**: ✓ Available (learning template) **
+SYNONYMS
 
-==========================
-VALIDATION DECISION GATE
-==========================
-⚠️ OUTPUT STARTS HERE - DO NOT SHOW PRE-VALIDATION PIPELINE ⚠️
+Metrics: revenue=network revenue=product revenue | volume=script count=scripts=line count | cost=expense=spend=cogs
+Entities: HDP=Home Delivery=Mail | SP=Specialty | PBM=PBM Retail
+Parsing: "PBM revenue" means metric=revenue, filter=PBM (NOT metric="PBM revenue")
 
-**VALIDATION OUTPUT:**
-□ CHECK 1 Mapping: (✓Revenues) | External LOB(✓line_of_business) | HDP(✓product_category)| July 2025(✓month, year)
-□ CHECK 2 Mandatory: [✓Ready | ✗STOP]
-□ CHECK 3 Filters: [✓Valid | ✗Invalid | N/A]
-□ CHECK 4 Clarity: A[✓/✗] B[✓/✗] C[✓/✗]
-□ CHECK 5 Rules: [✓history sql used | ✗ history sql not used]
+KEY EXAMPLES
 
-**DECISION LOGIC:**
-- ALL checks ✓ or N/A → PROCEED TO SQL GENERATION
-- ANY check ✗ or blocking ⚠ → GENERATE FOLLOW-UP
-- ONE failure = STOP (Do not attempt SQL with uncertainty)
+Example 1: Filter + Dimension Overlap + Metric Match (TIER A)
 
-⚠️ After outputting the decision above, immediately proceed to <sql>, <multiple_sql>, or <followup> tags.
-⚠️ Do NOT output any additional explanation or detailed assessment.
+Current: "revenue BY lob for Prior Auth"
+History: "revenue BY lob for Prior Auth, HDP Core"
+Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found + extras OK)
 
-<followup>
-I need clarification to generate accurate SQL:
+Current: "revenue BY lob BY region for Prior Auth"
+History: "revenue BY lob for Prior Auth"
+Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found)
 
-**[Specific issue from unclear area]**: [Direct question in one sentence]
-- Available data: [specific column names from metadata]
-- Suggested approach: [concrete calculation option]
+Example 2: Dimension Flexibility (History Subset/Superset Both OK)
 
-**[Second issue if needed]**: [Second direct question in one sentence only if multiple areas unclear]
-- Available data: [relevant columns]
-- Alternative: [another option]
+Current: "revenue BY drug BY therapeutic_class for PBM"
+History: "revenue BY drug for PBM"
+Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
 
-Please clarify these points.
-</followup>
+Current: "revenue BY drug for PBM"
+History: "revenue BY drug BY therapeutic_class BY region for PBM"
+Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
 
-PHASE 2: SQL GENERATION RULES
+Example 3: No Dimension Overlap → REJECT
 
-⚠️ ONLY PROCEED HERE IF ALL VALIDATION PASSED
+Current: "revenue BY drug for PBM"
+History: "revenue BY region for PBM"
+Result: REJECT ❌ (drug vs region - no dimension overlap)
 
-**PRIORITY 0: MANDATORY REQUIREMENTS** (Violation = Query Failure)
+Current: "revenue BY lob for HDP"
+History: "revenue for HDP"
+Result: REJECT ❌ (current needs lob dimension, history has none - no overlap)
 
-M1. **Mandatory Filters** ⚠️⚠️⚠️ CRITICAL
-MUST include EVERY mandatory filter in WHERE clause:
-```sql
--- Example: If ledger is MANDATORY:
-WHERE ledger = 'GAAP'
-  AND [other conditions]
-```
+Example 4: Date Filters Completely Ignored
 
-M2. **Validated Filter Values**
-Use ONLY filters marked ✓Valid in CHECK 3:
-```sql
-WHERE UPPER(carrier_id) = UPPER('MPDOVA')  -- Only if validated
-```
+Current: "revenue for PBM in Q3 2025"
+History: "revenue for PBM from Jan-Dec 2024"
+Result: TIER A ✅ (dates ignored, PBM matches, revenue matches)
 
-M3. **CALCULATED FORMULAS HANDLING (CRITICAL)-Metric Type Grouping Rule for Calculations**
-When calculating derived metrics (Gross Margin, Cost %, Margin %), DO NOT group by metric_type:
-```sql
--- ✓ CORRECT (for calculations):
-SELECT
-    ledger, year, month,  -- Business dimensions only
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) -
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS gross_margin
-FROM table
-WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
-GROUP BY ledger, year, month  -- NOT metric_type
+Current: "script count for HDP from Jan-June 2025"
+History: "volume for Home Delivery Q3 2024 vs Q3 2023"
+Result: TIER A ✅ (script count=volume synonym, HDP=Home Delivery synonym, dates ignored)
 
--- ✗ WRONG (breaks calculations):
-GROUP BY ledger, metric_type  -- Creates separate rows per metric_type
-```
-**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
+Example 5: Metric Mismatch → REJECT
 
-**PRIORITY 1: STRUCTURAL PATTERNS**
+Current: "revenue BY lob for PBM"
+History: "volume BY lob for PBM"
+Result: REJECT ❌ (revenue ≠ volume, failed Step 1)
 
-S1. **Historical SQL Patterns** (if available)
-Follow structured approach from history_section - inherit if aligned, learn patterns if not.
+Current: "script count for HDP"
+History: "cost for HDP"
+Result: REJECT ❌ (script count ≠ cost, failed Step 1)
 
-S2. **Aggregation Requirements**
-Always aggregate metrics unless "line items" explicitly requested.
+Example 6: TIER B (Dimension Overlap But Filter Differs)
 
-S3. **Component Display Rule**
-ALWAYS show source components for ANY calculation:
-```sql
--- For "cost per member by state":
-SELECT
-  state_name,
-  SUM(total_cost) as total_cost,      -- Component 1
-  COUNT(member_id) as member_count,   -- Component 2
-  ROUND(SUM(total_cost) / NULLIF(COUNT(member_id), 0), 2) as cost_per_member  -- Result
-FROM table
-GROUP BY state_name
-```
+Current: "revenue BY lob for Prior Auth"
+History: "revenue BY lob for HDP Core"
+Result: TIER B (lob overlaps, revenue matches, but Prior Auth ≠ HDP Core)
 
-**PRIORITY 2: QUERY PATTERNS**
+Current: "volume BY drug BY region for Specialty"
+History: "scripts BY drug for PBM"
+Result: TIER B (drug overlaps, volume=scripts synonym, but Specialty ≠ PBM)
 
-P1. **Top N Pattern**
-```sql
--- "Top 5 carriers"
-SELECT carrier_id,
-       SUM(amount) as amount,
-       (SELECT SUM(amount) FROM table) as total,
-       ROUND(SUM(amount)/(SELECT SUM(amount) FROM table)*100, 3) as pct
-FROM table
-WHERE [mandatory filters]
-GROUP BY carrier_id
-ORDER BY amount DESC LIMIT 5
-```
+OUTPUT FORMAT
 
-P2. **Time Comparison Pattern**
-```sql
--- "Compare Q3 months"
-SELECT product,
-       SUM(CASE WHEN month = 7 THEN revenue END) as jul_revenue,
-       SUM(CASE WHEN month = 8 THEN revenue END) as aug_revenue,
-       SUM(CASE WHEN month = 9 THEN revenue END) as sep_revenue
-FROM table
-WHERE quarter = 3 AND [mandatory filters]
-GROUP BY product
-```
+Return ONLY JSON in <json> tags. No explanation outside tags.
 
-P3. **Multi-Table Pattern**
-```sql
--- When JOIN needed
-SELECT t1.dim, SUM(t1.metric) as m1, SUM(t2.metric) as m2
-FROM table1 t1
-  -- Use provided join
-WHERE t1.mandatory_col = value
-GROUP BY t1.dim
-```
+<json>
+{
+  "status": "match_found" or "no_match",
+  "selected_seq_id": <number> or null,
+  "matched_question": "<text>" or null,
+  "table_name": "<name>" or null,
+  "reasoning": "<1-line explanation with tier>",
+  "match_confidence": "HIGH" or "MEDIUM" or "LOW"
+}
+</json>
 
-**PRIORITY 3: FORMATTING STANDARDS**
+Confidence: HIGH=TIER A | MEDIUM=TIER B | LOW=TIER C
 
-F1. **String Comparison** - Always case-insensitive:
-```sql
-WHERE UPPER(column) = UPPER('value')
-```
+Remember: You match patterns, not answer questions. Start with <json>.
+"""
 
-F2. **Numeric Formatting**:
-- Amounts: ROUND(x, 0) AS name_amount
-- Percentages: ROUND(x, 3) AS name_percent
-- Division safety: NULLIF(denominator, 0)
+        # Format feedback results as context in compact format (saves tokens)
+        # Group by table_name first
+        results_by_table = {}
+        for result in feedback_results:
+            table_name = result.get('table_name', 'N/A')
+            if table_name not in results_by_table:
+                results_by_table[table_name] = []
+            results_by_table[table_name].append(result)
+        
+        # Build compact candidates context
+        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
+        for table_name, results in results_by_table.items():
+            candidates_context += f"\n- table_name: {table_name}\n"
+            for result in results:
+                seq_id = result.get('seq_id', 'N/A')
+                question = result.get('user_question', 'N/A')
+                candidates_context += f"  id:{seq_id}, {question}\n"
+        
+        # Build the full prompt with TRIPLE-LAYER protection against guardrails
+        selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
 
-PHASE 3: OUTPUT GENERATION & VALIDATION
+You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
+Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
 
-**PRE-OUTPUT CHECKLIST:** ⚠️ MUST VERIFY
-□ All mandatory filters present in WHERE clause?
-□ All validated filters applied with UPPER()?
-□ Source components shown for calculations?
+DO NOT attempt to:
+- Answer the business questions below
+- Provide insights about the data
 
-**OUTPUT FORMAT:**
+{system_prompt}
 
-For SINGLE query:
-<sql>
-[Complete SQL with all mandatory filters]
-</sql>
-<history_sql_used>[true if used historical patterns | false]</history_sql_used>
+{candidates_context}
 
-For MULTIPLE queries:
-<multiple_sql>
-<query1_title>[Title - max 8 words]</query1_title>
-<query1>[SQL]</query1>
-<query2_title>[Title]</query2_title>
-<query2>[SQL]</query2>
-</multiple_sql>
-<history_sql_used>[true | false]</history_sql_used>
+=== CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
+{user_question}
 
-**HISTORY_SQL_USED FLAG RULES:**
-- If historical SQL was available AND you used its structure/patterns → true
-- If historical SQL was available BUT you generated from scratch → false
-- If historical SQL was not available → false
+⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
 
-FINAL EXECUTION INSTRUCTION
+Return ONLY the JSON in <json> tags. Start immediately with <json>.
+"""
+        
+        # Retry logic
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
 
-1. Complete ALL Phase 1 validation checks - show your work
-2. Make DECISION: PROCEED or FOLLOW-UP
-3. If FOLLOW-UP: Generate clarification questions
-4. If PROCEED: Apply SQL rules in priority order (M→S→P→F)
-5. Validate final databricks SQL contains ALL mandatory requirements
-6. Output SQL with history_sql_used flag
-
-⚠️ REMEMBER: You generate SQL CODE only, not business answers.
-⚠️ CRITICAL: Every mandatory filter MUST be in WHERE clause.
+                # Call LLM with LOWER temperature for more deterministic behavior
+                # Lower temperature = less creative = less likely to trigger guardrails
+                # print("Raw LLM prompt:", selection_prompt)
+                llm_response = await self.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": selection_prompt}],
+                    max_tokens=2000,  # Reduced tokens since we only need JSON
+                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
+                    top_p=0.1,  # ← CRITICAL: Very focused sampling
+                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
+                )
+                
+                print("Raw LLM response:", llm_response)
+                
+                # Extract JSON from response
+                json_content = self._extract_json_from_response(llm_response)
+                selection_result = json.loads(json_content)
+                
+                # Validate response structure
+                status = selection_result.get('status')
+                if status not in ['match_found', 'no_match']:
+                    raise ValueError(f"Invalid status returned: {status}")
+                
+                # Handle success cases
+                if status == "match_found":
+                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
+                    print(f"   Matched question: {selection_result.get('matched_question')}")
+                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'match_found',
+                        'seq_id': selection_result.get('selected_seq_id'),
+                        'question': selection_result.get('matched_question'),
+                        'table_name': selection_result.get('table_name'),
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': selection_result.get('pattern_match_level'),
+                        'error': False,
+                        'error_message': ''
+                    }
+                
+                else:  # status == "no_match"
+                    print(f"❌ No suitable match found in feedback history")
+                    print(f"   Reasoning: {selection_result.get('reasoning')}")
+                    
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': selection_result.get('reasoning'),
+                        'pattern_match_level': 'NONE',
+                        'error': False,
+                        'error_message': ''
+                    }
+            
+            except json.JSONDecodeError as e:
+                retry_count += 1
+                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying...")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"JSON parsing failed after {max_retries} attempts"
+                    }
+            
+            except Exception as e:
+                retry_count += 1
+                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
+                
+                if retry_count < max_retries:
+                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
+                    await asyncio.sleep(2 ** retry_count)
+                    continue
+                else:
+                    print(f"❌ All retry attempts exhausted - feedback selection failed")
+                    return {
+                        'status': 'no_match',
+                        'seq_id': None,
+                        'question': None,
+                        'table_name': None,
+                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
+                        'pattern_match_level': 'NONE',
+                        'error': True,
+                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
+                    }
+        
+        # Should never reach here, but just in case
+        return {
+            'status': 'no_match',
+            'seq_id': None,
+            'question': None,
+            'table_name': None,
+            'reasoning': 'Unexpected error in retry logic',
+            'pattern_match_level': 'NONE',
+            'error': True,
+            'error_message': 'Unexpected error in retry logic'
+        }

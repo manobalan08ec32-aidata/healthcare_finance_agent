@@ -209,3 +209,42 @@ DO NOT attempt to:
 
 Return ONLY the JSON in <json> tags. Start immediately with <json>.
 """
+
+
+SAAMPLE QUESTION LLM hullucinated:
+current user question - what is the revenue for HDP for july 2025
+below are the history passed to LLM along with above promnpt rules.
+=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===
+
+- table_name: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+  id:14.0, what is the network product revenue or revenue for each line of business for July 2025
+  id:3.0, what is the actuals vs forecast 8+4 for membership for PBM for july 2025
+  id:2.0, what is the actuals vs forecast 8+4 or actuals vs 5+7 for July 2025 for PBM
+  id:9.0, what is the script counts (adjusted, volume),revenue, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core in september 2025
+  id:4.0, what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM
+  id:21.0, compare HDP revenue or HDP network revenue or Network product revenue for Q3 2025 VS q3 2024
+  id:7.0, what is the script counts (unadjusted, volume), adjusted script count, revenue per script (rate) or revenue per adjusted script count for Specialty in september 2025   
+  id:12.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core from jan to feb 2025
+  id:10.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core september 2025 vs september 2024
+  id:15.0, what is the revenue for each line of business from jan to sept 2025 for PBM
+  id:6.0, what is the script counts (adjusted, volume) trends, unadjusted script count, revenue per script (rate) or revenue per adjusted script count trends for Specialty from jan to march 2025
+  id:1.0, what is the network product revenue or network revenue or revenue for PBM?
+  id:26.0, what is the rate variance,volume variance,mix variance for each lob or line of business for PBM from sep to oct 2025?
+  id:11.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate)for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth september 2025 vs september 2024
+  id:16.0, compare revenue for each line of business Q3 2025 vs Q3 2024
+  id:13.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth from jan to feb 2025
+  id:27.0, what is the rate variance,volume variance,mix variance for PBM from sep to oct 2025?
+  id:5.0, compare PBM revenue or PBM network revenue or Network product revenue for Q3 2025 VS q3 2024
+  id:8.0, compare script counts (adjusted, volume), revenue per script (rate), revenue amount for Specialty Q3 2025 vs Q3 2024
+
+Raw LLM response: <json>
+{
+  "status": "match_found",
+  "selected_seq_id": 14.0,
+  "matched_question": "what is the network product revenue or revenue for each line of business for July 2025",
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+  "reasoning": "TIER B - revenue metric matches, date matches (July 2025), but filter differs (HDP vs line of business)",
+  "match_confidence": "MEDIUM",
+  "similarity_score": 85
+}
+</json>

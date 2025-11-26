@@ -150,3 +150,211 @@ Available columns: [from metadata]
 </followup>"""
 
     return prompt
+
+
+"""
+MINIMAL CHANGES to add similarity_score to your existing _llm_feedback_selection
+
+Your current design works well. These are the ONLY changes needed:
+1. Add similarity_score to the LLM output format in the prompt
+2. Add similarity_score to the return dict
+3. Map confidence to score range
+
+DO NOT replace your entire method. Just make these targeted changes.
+"""
+
+# =============================================================================
+# CHANGE 1: Update the OUTPUT FORMAT section in your system_prompt
+# =============================================================================
+
+# FIND this in your current system_prompt (around line 85-95):
+"""
+OUTPUT FORMAT
+
+Return ONLY JSON in <json> tags. No explanation outside tags.
+
+<json>
+{
+  "status": "match_found" or "no_match",
+  "selected_seq_id": <number> or null,
+  "matched_question": "<text>" or null,
+  "table_name": "<name>" or null,
+  "reasoning": "<1-line explanation with tier>",
+  "match_confidence": "HIGH" or "MEDIUM" or "LOW"
+}
+</json>
+
+Confidence: HIGH=TIER A | MEDIUM=TIER B | LOW=TIER C
+"""
+
+# REPLACE WITH:
+"""
+OUTPUT FORMAT
+
+Return ONLY JSON in <json> tags. No explanation outside tags.
+
+<json>
+{
+  "status": "match_found" or "no_match",
+  "selected_seq_id": <number> or null,
+  "matched_question": "<text>" or null,
+  "table_name": "<name>" or null,
+  "reasoning": "<1-line explanation with tier>",
+  "match_confidence": "HIGH" or "MEDIUM" or "LOW",
+  "similarity_score": <number 0-100>
+}
+</json>
+
+Confidence and Score mapping:
+HIGH = TIER A = score 95-100 (only filter/time differs)
+MEDIUM = TIER B = score 75-94 (same metric, structural patterns reusable)
+LOW = TIER C = score 40-74 (minimal reuse value)
+NO_MATCH = score 0-39
+"""
+
+
+# =============================================================================
+# CHANGE 2: Add similarity_score to your return dicts
+# =============================================================================
+
+# FIND your match_found return block (around line 135-147):
+"""
+return {
+    'status': 'match_found',
+    'seq_id': selection_result.get('selected_seq_id'),
+    'question': selection_result.get('matched_question'),
+    'table_name': selection_result.get('table_name'),
+    'reasoning': selection_result.get('reasoning'),
+    'pattern_match_level': selection_result.get('pattern_match_level'),
+    'error': False,
+    'error_message': ''
+}
+"""
+
+# REPLACE WITH (just add similarity_score):
+"""
+return {
+    'status': 'match_found',
+    'seq_id': selection_result.get('selected_seq_id'),
+    'question': selection_result.get('matched_question'),
+    'table_name': selection_result.get('table_name'),
+    'reasoning': selection_result.get('reasoning'),
+    'pattern_match_level': selection_result.get('pattern_match_level'),
+    'match_confidence': selection_result.get('match_confidence'),
+    'similarity_score': selection_result.get('similarity_score', 0),
+    'error': False,
+    'error_message': ''
+}
+"""
+
+# FIND your no_match return block (around line 150-160):
+"""
+return {
+    'status': 'no_match',
+    'seq_id': None,
+    'question': None,
+    'table_name': None,
+    'reasoning': selection_result.get('reasoning'),
+    'pattern_match_level': 'NONE',
+    'error': False,
+    'error_message': ''
+}
+"""
+
+# REPLACE WITH (just add similarity_score):
+"""
+return {
+    'status': 'no_match',
+    'seq_id': None,
+    'question': None,
+    'table_name': None,
+    'reasoning': selection_result.get('reasoning'),
+    'pattern_match_level': 'NONE',
+    'match_confidence': 'NONE',
+    'similarity_score': selection_result.get('similarity_score', 0),
+    'error': False,
+    'error_message': ''
+}
+"""
+
+
+# =============================================================================
+# CHANGE 3: Update error return blocks to include similarity_score
+# =============================================================================
+
+# Add similarity_score: 0 to all your error return blocks
+# Example for JSON parse error block:
+"""
+return {
+    'status': 'no_match',
+    'seq_id': None,
+    'question': None,
+    'table_name': None,
+    'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
+    'pattern_match_level': 'NONE',
+    'match_confidence': 'NONE',
+    'similarity_score': 0,
+    'error': True,
+    'error_message': f"JSON parsing failed after {max_retries} attempts"
+}
+"""
+
+
+# =============================================================================
+# CHANGE 4: In _assess_and_generate_sql_async, extract and use the score
+# =============================================================================
+
+# FIND where you process feedback_selection_result (around line 26-46):
+"""
+if feedback_selection_result.get('status') == 'match_found':
+    matched_seq_id = feedback_selection_result.get('seq_id')
+    
+    matched_record = None
+    for result in feedback_results:
+        if result.get('seq_id') == matched_seq_id:
+            matched_record = result
+            break
+    
+    if matched_record:
+        history_question_match = matched_record.get('user_question', '')
+        matched_sql = matched_record.get('sql_query', '')
+        matched_table_name = matched_record.get('table_name', '')
+        
+        state['history_question_match'] = history_question_match
+        state['matched_sql'] = matched_sql
+        state['matched_table_name'] = matched_table_name
+"""
+
+# ADD these lines after state assignments:
+"""
+        # Extract similarity score for prompt selection
+        similarity_score = feedback_selection_result.get('similarity_score', 0)
+        score_reasoning = feedback_selection_result.get('reasoning', '')
+        match_confidence = feedback_selection_result.get('match_confidence', 'LOW')
+        
+        state['similarity_score'] = similarity_score
+        state['score_reasoning'] = score_reasoning
+        state['match_confidence'] = match_confidence
+        
+        print(f"Similarity score: {similarity_score}, Confidence: {match_confidence}")
+"""
+
+
+# =============================================================================
+# CHANGE 5: Use score to decide prompt (in _assess_and_generate_sql_async)
+# =============================================================================
+
+# FIND where you check has_history (around line 58):
+"""
+has_history = bool(matched_sql and history_question_match and matched_table_name)
+"""
+
+# ADD below it:
+"""
+similarity_score = state.get('similarity_score', 0)
+
+# Use Prompt A (with history) only if score >= 70
+has_usable_history = has_history and similarity_score >= 70
+"""
+
+# Then use has_usable_history to decide which prompt to build

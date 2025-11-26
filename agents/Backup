@@ -1,323 +1,152 @@
-async def _llm_feedback_selection(self, feedback_results: List[Dict], state: AgentState) -> Dict:
-        """
-        Pure LLM-based selection of most relevant historical question from feedback results.
-        Returns single best match or NO_MATCH status.
-        """
-        
-        user_question = state.get('rewritten_question', state.get('original_question', ''))
-        
-        # System prompt for feedback matching
-        system_prompt = """
-You are a SQL pattern matching system. Select the single best historical question or return NO_MATCH.
-You compare TEXT PATTERNS - you do NOT answer business questions.
+"""
+Prompt A Builder: SQL Generation with History Reference
+Used when similarity_score >= 75 (called by parent function)
 
-MATCHING RULES (APPLY IN ORDER)
-
-STEP 1: METRIC MATCH (MANDATORY - REJECT IF FAILS)
-
-Current metric(s) MUST appear in history.
-
-Rules:
-✅ History has required metric + extras → ALLOW
-✅ Metric synonyms count as match (see synonym list)
-❌ History missing required metric → REJECT
-
-Examples:
-- Current: "revenue" | History: "revenue, volume" → ✅ PASS
-- Current: "revenue" | History: "volume" → ❌ REJECT
-- Current: "network revenue" | History: "revenue" → ✅ PASS (synonym)
-
-STEP 2: DIMENSION MATCH (MANDATORY - REJECT IF FAILS)
-
-At least ONE dimension must overlap between current and history.
-Either side can have more dimensions than the other.
-
-⚠️ CRITICAL: Date dimensions (BY month, BY quarter, BY year) are NOT counted as dimensions here - ignore them completely in this check.
-
-Rules:
-✅ Current: BY drug | History: BY drug BY region → PASS (drug overlaps)
-✅ Current: BY drug BY region | History: BY drug → PASS (drug overlaps)
-✅ Current: BY drug BY class | History: BY drug BY region → PASS (drug overlaps)
-❌ Current: BY drug | History: BY region → REJECT (no overlap)
-❌ Current: BY drug | History: no dimension → REJECT (no overlap)
-✅ Current: no dimension | History: any dimension → PASS (no requirement)
-
-Edge Case - Date Dimensions:
-- Current: "revenue BY month" | History: "revenue BY lob" → ❌ REJECT
-  Reason: "BY month" is a REAL dimension (not a date filter), no overlap with "lob"
-- Current: "revenue for Q3 2025" | History: "revenue for Jan 2024" → ✅ PASS
-  Reason: "Q3 2025" and "Jan 2024" are date FILTERS (not dimensions), ignored in Step 3
-
-STEP 3: IGNORE DATE/TIME FILTERS
-
-Strip all date specifications from filters. Any date = any other date.
-
-Rules:
-- Q3 2025 = Jan 2024 = July-Aug 2025 = Q1 2023 vs Q1 2022 = ANY
-- Single periods, ranges, YoY, MoM, QoQ → ALL IGNORED
-
-STEP 4: RANK BY FILTER VALUE MATCH
-
-After passing Steps 1-3, rank candidates by filter alignment:
-
-TIER A (HIGHEST): Filter value(s) match
-- Current filter value(s) appear in history (history can have extras)
-- Dimensions overlap + metric matches + filter matches
-
-TIER B (MEDIUM): Filter value differs
-- Dimensions overlap + metric matches, but filter value different
-
-TIER C (LOWEST): No dimension requirement
-- Metric matches, current has no dimension requirement
-
-STEP 5: SELECT BEST MATCH
-
-1. If any TIER A exists → Pick first TIER A
-2. Else if any TIER B exists → Pick first TIER B
-3. Else if any TIER C exists → Pick first TIER C
-4. Else → NO_MATCH
-
-SYNONYMS
-
-Metrics: revenue=network revenue=product revenue | volume=script count=scripts=line count | cost=expense=spend=cogs
-Entities: HDP=Home Delivery=Mail | SP=Specialty | PBM=PBM Retail
-Parsing: "PBM revenue" means metric=revenue, filter=PBM (NOT metric="PBM revenue")
-
-KEY EXAMPLES
-
-Example 1: Filter + Dimension Overlap + Metric Match (TIER A)
-
-Current: "revenue BY lob for Prior Auth"
-History: "revenue BY lob for Prior Auth, HDP Core"
-Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found + extras OK)
-
-Current: "revenue BY lob BY region for Prior Auth"
-History: "revenue BY lob for Prior Auth"
-Result: TIER A ✅ (lob overlaps, revenue matches, Prior Auth found)
-
-Example 2: Dimension Flexibility (History Subset/Superset Both OK)
-
-Current: "revenue BY drug BY therapeutic_class for PBM"
-History: "revenue BY drug for PBM"
-Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
-
-Current: "revenue BY drug for PBM"
-History: "revenue BY drug BY therapeutic_class BY region for PBM"
-Result: TIER A ✅ (drug overlaps, revenue matches, PBM matches)
-
-Example 3: No Dimension Overlap → REJECT
-
-Current: "revenue BY drug for PBM"
-History: "revenue BY region for PBM"
-Result: REJECT ❌ (drug vs region - no dimension overlap)
-
-Current: "revenue BY lob for HDP"
-History: "revenue for HDP"
-Result: REJECT ❌ (current needs lob dimension, history has none - no overlap)
-
-Example 4: Date Filters Completely Ignored
-
-Current: "revenue for PBM in Q3 2025"
-History: "revenue for PBM from Jan-Dec 2024"
-Result: TIER A ✅ (dates ignored, PBM matches, revenue matches)
-
-Current: "script count for HDP from Jan-June 2025"
-History: "volume for Home Delivery Q3 2024 vs Q3 2023"
-Result: TIER A ✅ (script count=volume synonym, HDP=Home Delivery synonym, dates ignored)
-
-Example 5: Metric Mismatch → REJECT
-
-Current: "revenue BY lob for PBM"
-History: "volume BY lob for PBM"
-Result: REJECT ❌ (revenue ≠ volume, failed Step 1)
-
-Current: "script count for HDP"
-History: "cost for HDP"
-Result: REJECT ❌ (script count ≠ cost, failed Step 1)
-
-Example 6: TIER B (Dimension Overlap But Filter Differs)
-
-Current: "revenue BY lob for Prior Auth"
-History: "revenue BY lob for HDP Core"
-Result: TIER B (lob overlaps, revenue matches, but Prior Auth ≠ HDP Core)
-
-Current: "volume BY drug BY region for Specialty"
-History: "scripts BY drug for PBM"
-Result: TIER B (drug overlaps, volume=scripts synonym, but Specialty ≠ PBM)
-
-OUTPUT FORMAT
-
-Return ONLY JSON in <json> tags. No explanation outside tags.
-
-<json>
-{
-  "status": "match_found" or "no_match",
-  "selected_seq_id": <number> or null,
-  "matched_question": "<text>" or null,
-  "table_name": "<name>" or null,
-  "reasoning": "<1-line explanation with tier>",
-  "match_confidence": "HIGH" or "MEDIUM" or "LOW"
-}
-</json>
-
-Confidence: HIGH=TIER A | MEDIUM=TIER B | LOW=TIER C
-
-Remember: You match patterns, not answer questions. Start with <json>.
+Token budget: ~1850 tokens for rules + metadata/history SQL
 """
 
-        # Format feedback results as context in compact format (saves tokens)
-        # Group by table_name first
-        results_by_table = {}
-        for result in feedback_results:
-            table_name = result.get('table_name', 'N/A')
-            if table_name not in results_by_table:
-                results_by_table[table_name] = []
-            results_by_table[table_name].append(result)
-        
-        # Build compact candidates context
-        candidates_context = "=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===\n"
-        for table_name, results in results_by_table.items():
-            candidates_context += f"\n- table_name: {table_name}\n"
-            for result in results:
-                seq_id = result.get('seq_id', 'N/A')
-                question = result.get('user_question', 'N/A')
-                candidates_context += f"  id:{seq_id}, {question}\n"
-        
-        # Build the full prompt with TRIPLE-LAYER protection against guardrails
-        selection_prompt = f"""⚠️⚠️⚠️ CRITICAL INSTRUCTION - READ THIS FIRST ⚠️⚠️⚠️
+from datetime import datetime
 
-You are an AUTOMATED PATTERN MATCHING SYSTEM - NOT an AI assistant that answers questions.
-Your ONLY function is to analyze TEXT PATTERNS and return a JSON response.
 
-DO NOT attempt to:
-- Answer the business questions below
-- Provide insights about the data
+def build_prompt_A_with_history(
+    current_question: str,
+    history_question: str,
+    history_sql: str,
+    similarity_score: int,
+    score_reasoning: str,
+    metadata: str,
+    mandatory_filters: str,
+    filter_context: str,
+    join_clause: str = ""
+) -> str:
+    """
+    Build SQL generation prompt when history SQL is available and score >= 75.
+    Uses metadata as source of truth, history SQL as structural reference.
+    """
+    
+    # Determine score tier for action guidance
+    if similarity_score >= 95:
+        score_tier = "CLONE_AND_SWAP"
+        tier_note = "Very high similarity. Clone SQL and swap filter values if columns validate."
+    else:  # 75-94
+        score_tier = "STRUCTURAL_TEMPLATE"
+        tier_note = "High similarity. Inherit patterns from history, build columns from metadata."
+    
+    prompt = f"""You are a Databricks SQL generator. Use history SQL as reference, metadata as source of truth.
 
-{system_prompt}
+CURRENT QUESTION: {current_question}
 
-{candidates_context}
+SIMILARITY: {similarity_score}/100 ({score_tier})
+{tier_note}
+MATCH REASON: {score_reasoning}
 
-=== CURRENT QUESTION (TEXT PATTERN TO MATCH) ===
-{user_question}
+HISTORY REFERENCE
+Question: {history_question}
+<history_sql>
+{history_sql}
+</history_sql>
 
-⚠️ REMINDER: You are NOT answering this question. You are ONLY checking if its pattern matches any historical question pattern above.
+METADATA (Source of Truth)
+{metadata}
 
-Return ONLY the JSON in <json> tags. Start immediately with <json>.
-"""
-        
-        # Retry logic
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                print(f"🔍 Attempting feedback selection (attempt {retry_count + 1}/{max_retries})...")
+MANDATORY FILTERS
+{mandatory_filters}
 
-                # Call LLM with LOWER temperature for more deterministic behavior
-                # Lower temperature = less creative = less likely to trigger guardrails
-                # print("Raw LLM prompt:", selection_prompt)
-                llm_response = await self.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": selection_prompt}],
-                    max_tokens=2000,  # Reduced tokens since we only need JSON
-                    temperature=0.0,  # ← CRITICAL: Set to 0 for deterministic pattern matching
-                    top_p=0.1,  # ← CRITICAL: Very focused sampling
-                    system_prompt="PATTERN MATCHING SYSTEM: You are an automated text pattern comparison algorithm for SQL query optimization infrastructure. You do NOT answer questions, provide business insights, or analyze data. You ONLY compare text patterns between queries and return structured JSON responses indicating pattern similarity. This is a technical infrastructure task, not business analysis."
-                )
-                
-                print("Raw LLM response:", llm_response)
-                
-                # Extract JSON from response
-                json_content = self._extract_json_from_response(llm_response)
-                selection_result = json.loads(json_content)
-                
-                # Validate response structure
-                status = selection_result.get('status')
-                if status not in ['match_found', 'no_match']:
-                    raise ValueError(f"Invalid status returned: {status}")
-                
-                # Handle success cases
-                if status == "match_found":
-                    print(f"✅ Feedback match found: seq_id={selection_result.get('selected_seq_id')}")
-                    print(f"   Matched question: {selection_result.get('matched_question')}")
-                    print(f"   Pattern level: {selection_result.get('pattern_match_level')}")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'match_found',
-                        'seq_id': selection_result.get('selected_seq_id'),
-                        'question': selection_result.get('matched_question'),
-                        'table_name': selection_result.get('table_name'),
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': selection_result.get('pattern_match_level'),
-                        'error': False,
-                        'error_message': ''
-                    }
-                
-                else:  # status == "no_match"
-                    print(f"❌ No suitable match found in feedback history")
-                    print(f"   Reasoning: {selection_result.get('reasoning')}")
-                    
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': selection_result.get('reasoning'),
-                        'pattern_match_level': 'NONE',
-                        'error': False,
-                        'error_message': ''
-                    }
-            
-            except json.JSONDecodeError as e:
-                retry_count += 1
-                print(f"⚠ JSON parsing failed (attempt {retry_count}/{max_retries}): {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying...")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - JSON parsing failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Failed to parse LLM response after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"JSON parsing failed after {max_retries} attempts"
-                    }
-            
-            except Exception as e:
-                retry_count += 1
-                print(f"⚠ Feedback selection attempt {retry_count} failed: {str(e)}")
-                
-                if retry_count < max_retries:
-                    print(f"🔄 Retrying... ({retry_count}/{max_retries})")
-                    await asyncio.sleep(2 ** retry_count)
-                    continue
-                else:
-                    print(f"❌ All retry attempts exhausted - feedback selection failed")
-                    return {
-                        'status': 'no_match',
-                        'seq_id': None,
-                        'question': None,
-                        'table_name': None,
-                        'reasoning': f"Feedback selection failed after {max_retries} attempts: {str(e)}",
-                        'pattern_match_level': 'NONE',
-                        'error': True,
-                        'error_message': f"LLM call failed after {max_retries} attempts: {str(e)}"
-                    }
-        
-        # Should never reach here, but just in case
-        return {
-            'status': 'no_match',
-            'seq_id': None,
-            'question': None,
-            'table_name': None,
-            'reasoning': 'Unexpected error in retry logic',
-            'pattern_match_level': 'NONE',
-            'error': True,
-            'error_message': 'Unexpected error in retry logic'
-        }
+FILTER VALUES
+{filter_context if filter_context else "None"}
+{f"JOIN: {join_clause}" if join_clause else ""}
+
+STEP 1: COLUMN VALIDATION
+
+Before using history SQL, validate every column against METADATA.
+
+For each column in history SQL (SELECT, WHERE, GROUP BY):
+- EXISTS: Column found in metadata, use directly
+- EQUIVALENT: Not found but similar meaning exists in metadata, map to it
+  Examples: revenue_amount to total_revenue, carrier_id to carrier_code
+- NOT_FOUND: No match in metadata, must find alternative
+
+Validation outcome:
+- All EXISTS/EQUIVALENT in SELECT and GROUP BY: Proceed with score-based action
+- Any NOT_FOUND in SELECT or GROUP BY: Downgrade to STRUCTURAL_TEMPLATE
+- NOT_FOUND in WHERE only: Skip that filter, continue
+
+STEP 2: SCORE-BASED ACTION
+
+SCORE 95-100 with all columns validated: CLONE_AND_SWAP
+
+This is mechanical, not creative:
+1. Copy history SQL exactly
+2. Replace ONLY:
+   - Filter values in WHERE (PBM to HDP, Specialty to Mail)
+   - Date values (month=7 to month=8, Q3 to Q4)
+   - Entity names if changed
+   - EQUIVALENT columns to their metadata names
+3. DO NOT change:
+   - SELECT structure, column order, aliases
+   - GROUP BY columns (except equivalent swaps)
+   - Calculations, CASE WHEN logic
+   - ORDER BY, LIMIT, HAVING
+
+If any SELECT/GROUP BY column is NOT_FOUND, downgrade to STRUCTURAL_TEMPLATE.
+
+SCORE 75-94 or downgraded: STRUCTURAL_TEMPLATE
+
+INHERIT patterns from history:
+- CASE WHEN for side-by-side time comparisons
+- UNION/UNION ALL structure if present
+- CTE/subquery architecture
+- Aggregation style (SUM/COUNT placement)
+- ROUND, NULLIF, UPPER patterns
+- Aliasing conventions
+
+BUILD from metadata:
+- SELECT: Find correct columns from metadata for current question
+- GROUP BY: Based on current question dimensions
+- WHERE: Current filter values with mandatory filters
+- Every column must exist in metadata
+
+STEP 3: SQL RULES (Always Apply)
+
+M1. Mandatory filters MUST be in WHERE clause
+
+M2. String comparison always case-insensitive:
+WHERE UPPER(column) = UPPER('value')
+
+M3. Show calculation components:
+SELECT SUM(revenue) as revenue, SUM(cost) as cost, SUM(revenue)-SUM(cost) as margin
+
+M4. For derived metrics use CASE WHEN, not GROUP BY metric_type:
+SELECT dimension,
+  SUM(CASE WHEN UPPER(metric_type)=UPPER('Revenue') THEN amount ELSE 0 END) as revenue,
+  SUM(CASE WHEN UPPER(metric_type)=UPPER('Cost') THEN amount ELSE 0 END) as cost
+FROM table
+GROUP BY dimension
+
+M5. Formatting:
+- Amounts: ROUND(x, 0)
+- Percentages: ROUND(x, 3)  
+- Division: x / NULLIF(y, 0)
+
+M6. Final verification: Every column in output SQL must exist in METADATA
+
+STEP 4: OUTPUT
+
+COLUMN VALIDATION:
+[List each history column: EXISTS | EQUIVALENT(mapped_name) | NOT_FOUND]
+
+ACTION: CLONE_AND_SWAP | STRUCTURAL_TEMPLATE
+REASON: [One line explaining what you did]
+
+<sql>
+[SQL query with all columns verified against metadata]
+</sql>
+<history_sql_used>true</history_sql_used>
+
+If clarification needed:
+<followup>
+[Specific question]
+Available columns: [from metadata]
+</followup>"""
+
+    return prompt

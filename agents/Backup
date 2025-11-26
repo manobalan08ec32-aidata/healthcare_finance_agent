@@ -4,92 +4,135 @@ PARSING RULES (APPLY FIRST)
 
 Before matching, parse CURRENT and each HISTORY question into components:
 
-METRIC EXTRACTION: Identify metrics (revenue, volume, scripts, cost, rate, variance, membership). Apply synonyms during extraction.
+METRIC EXTRACTION:
+- Identify metrics (revenue, volume, scripts, cost, rate, variance, membership)
+- Apply synonyms during extraction
 
-ATTRIBUTE EXTRACTION: Attributes are GROUP BY dimensions returning MULTIPLE ROWS. Detect via keywords: "BY", "for each", "per", "breakdown by", "by each", "across all", "for every".
-Examples: "revenue BY lob" → attribute=lob | "revenue for each line of business" → attribute=lob | "revenue per drug" → attribute=drug
+ATTRIBUTE EXTRACTION:
+- Attributes are GROUP BY dimensions returning MULTIPLE ROWS
+- Detect via keywords: "BY", "for each", "per", "breakdown by", "by each", "across all", "for every"
+- Examples:
+  - "revenue BY lob" → attribute=lob
+  - "revenue for each line of business" → attribute=lob
+  - "revenue per drug" → attribute=drug
 
-FILTER EXTRACTION: Filters are WHERE conditions returning SPECIFIC entity. Named entities without grouping keywords = filter.
-Examples: "revenue for HDP" → filter=HDP, attribute=NONE | "revenue by lob for HDP" → filter=HDP, attribute=lob
+FILTER EXTRACTION:
+- Filters are WHERE conditions returning SPECIFIC entity
+- Named entities without grouping keywords = filter
+- Examples:
+  - "revenue for HDP" → filter=HDP, attribute=NONE
+  - "revenue by lob for HDP" → filter=HDP, attribute=lob
 
-DATE EXTRACTION: Extract but IGNORE all date/time references. Q3 2025, July 2025, Jan-Sep 2024, YoY, QoQ → ALL IGNORED
+DATE EXTRACTION:
+- Extract but IGNORE all date/time references
+- Q3 2025, July 2025, Jan-Sep 2024, YoY, QoQ → ALL IGNORED
 
 PARSING EXAMPLES:
-"revenue for HDP" → metric=revenue, attribute=NONE, filter=HDP
-"revenue for each lob" → metric=revenue, attribute=lob, filter=NONE
-"revenue by lob for PBM" → metric=revenue, attribute=lob, filter=PBM
-"revenue, volume for Specialty" → metric=[revenue,volume], attribute=NONE, filter=Specialty
-"script count by drug by region" → metric=scripts, attribute=[drug,region], filter=NONE
+- "revenue for HDP" → metric=revenue, attribute=NONE, filter=HDP
+- "revenue for each lob" → metric=revenue, attribute=lob, filter=NONE
+- "revenue by lob for PBM" → metric=revenue, attribute=lob, filter=PBM
+- "revenue, volume for Specialty" → metric=[revenue,volume], attribute=NONE, filter=Specialty
+- "script count by drug by region" → metric=scripts, attribute=[drug,region], filter=NONE
 
 SYNONYM MAPPINGS
 
-METRICS: revenue=network revenue=product revenue=network product revenue | volume=scripts=script count=script counts=line count=adjusted script count=unadjusted script count | cost=expense=spend=cogs | rate=revenue per script=rate per script
+METRICS:
+- revenue = network revenue = product revenue = network product revenue
+- volume = scripts = script count = script counts = line count = adjusted script count = unadjusted script count
+- cost = expense = spend = cogs
+- rate = revenue per script = rate per script
 
-ENTITIES: HDP=Home Delivery=Mail=HDP Core | SP=Specialty=Specialty Core | PBM=PBM Retail
+ENTITIES:
+- HDP = Home Delivery = Mail = HDP Core
+- SP = Specialty = Specialty Core
+- PBM = PBM Retail
 
-ATTRIBUTES: lob=line of business | drug=drug name=NDC | region=geography
+ATTRIBUTES:
+- lob = line of business
+- drug = drug name = NDC
+- region = geography
 
 MATCHING GATES (SEQUENTIAL)
 
 Process each historical question through gates IN ORDER. STOP and REJECT at first failed gate.
 
 GATE 1 - METRIC OVERLAP (Mandatory)
+
 Rule: At least ONE metric must be common between current and history (after applying synonyms).
-Current ∩ History ≠ ∅ → PASS
-Current ∩ History = ∅ → REJECT
+- Current ∩ History ≠ ∅ → PASS
+- Current ∩ History = ∅ → REJECT
+
 Examples:
-✅ Current:[revenue] | History:[revenue,volume] → PASS
-✅ Current:[revenue,volume] | History:[revenue] → PASS
-✅ Current:[revenue,cost] | History:[revenue] → PASS
-❌ Current:[cost] | History:[revenue,volume] → REJECT
+- ✅ Current:[revenue] | History:[revenue,volume] → PASS
+- ✅ Current:[revenue,volume] | History:[revenue] → PASS
+- ✅ Current:[revenue,cost] | History:[revenue] → PASS
+- ❌ Current:[cost] | History:[revenue,volume] → REJECT
+
 Record: overlap_count = number of metrics in common
 
 GATE 2 - ATTRIBUTE SYMMETRY (Mandatory)
+
 Rule: Attributes must be SYMMETRICALLY present or absent. STRICT BIDIRECTIONAL check.
 
-Case A - Current has attribute(s): History MUST have at least one SAME attribute. No attribute in history = REJECT. Completely different attributes = REJECT.
+Case A - Current has attribute(s):
+- History MUST have at least one SAME attribute
+- No attribute in history = REJECT
+- Completely different attributes = REJECT
 
-Case B - Current has NO attribute: History MUST also have NO attribute. Any attribute in history = REJECT.
+Case B - Current has NO attribute:
+- History MUST also have NO attribute
+- Any attribute in history = REJECT
 
 Examples:
-✅ Current:NONE | History:NONE → PASS
-✅ Current:[lob] | History:[lob] → PASS
-✅ Current:[lob] | History:[lob,region] → PASS
-✅ Current:[lob,drug] | History:[lob] → PASS
-❌ Current:NONE | History:[lob] → REJECT
-❌ Current:[lob] | History:NONE → REJECT
-❌ Current:[drug] | History:[region] → REJECT
+- ✅ Current:NONE | History:NONE → PASS
+- ✅ Current:[lob] | History:[lob] → PASS
+- ✅ Current:[lob] | History:[lob,region] → PASS
+- ✅ Current:[lob,drug] | History:[lob] → PASS
+- ❌ Current:NONE | History:[lob] → REJECT
+- ❌ Current:[lob] | History:NONE → REJECT
+- ❌ Current:[drug] | History:[region] → REJECT
 
 GATE 3 - FILTER RANKING (For Passed Candidates Only)
+
 Assign tier based on filter value alignment:
 
-TIER A (Highest): Filter values MATCH. Current filter found in history. Example: Current=HDP, History=HDP → TIER A
+TIER A (Highest):
+- Filter values MATCH
+- Current filter found in history
+- Example: Current=HDP, History=HDP → TIER A
 
-TIER B (Medium): Filter values DIFFER. Both have filters but values differ. Example: Current=HDP, History=PBM → TIER B
+TIER B (Medium):
+- Filter values DIFFER
+- Both have filters but values differ
+- Example: Current=HDP, History=PBM → TIER B
 
-TIER C (Lowest): Filter presence ASYMMETRIC. One has filter, other doesn't. Example: Current=HDP, History=NONE → TIER C
+TIER C (Lowest):
+- Filter presence ASYMMETRIC
+- One has filter, other doesn't
+- Example: Current=HDP, History=NONE → TIER C
 
 SELECTION ALGORITHM
 
-STEP 1: Run all historical questions through GATE 1 → GATE 2. Collect only those that PASS both gates.
-STEP 2: If no candidates remain → return NO_MATCH
-STEP 3: Assign TIER (A/B/C) to each remaining candidate via GATE 3
-STEP 4: Sort candidates by: PRIMARY=TIER (A>B>C), SECONDARY=overlap_count (higher=better)
-STEP 5: Select TOP 1 candidate
+- STEP 1: Run all historical questions through GATE 1 → GATE 2. Collect only those that PASS both gates.
+- STEP 2: If no candidates remain → return NO_MATCH
+- STEP 3: Assign TIER (A/B/C) to each remaining candidate via GATE 3
+- STEP 4: Sort candidates by: PRIMARY=TIER (A>B>C), SECONDARY=overlap_count (higher=better)
+- STEP 5: Select TOP 1 candidate
 
 CONFIDENCE MAPPING
 
-TIER A → confidence:HIGH, score:90-100
-TIER B → confidence:MEDIUM, score:70-89
-TIER C → confidence:LOW, score:50-69
-NO_MATCH → confidence:NONE, score:0
-Within tier, adjust score by overlap_count: Full metric overlap +5, Partial +0
+- TIER A → confidence:HIGH, score:90-100
+- TIER B → confidence:MEDIUM, score:70-89
+- TIER C → confidence:LOW, score:50-69
+- NO_MATCH → confidence:NONE, score:0
+- Within tier, adjust score by overlap_count: Full metric overlap +5, Partial +0
 
 OUTPUT FORMAT
 
 Return ONLY JSON inside <json> tags. No text outside tags.
+
 <json>
-{"status":"match_found"|"no_match","selected_seq_id":<number>|null,"matched_question":"<text>"|null,"table_name":"<name>"|null,"tier":"A"|"B"|"C"|null,"reasoning":"<parsed components + gate results>","match_confidence":"HIGH"|"MEDIUM"|"LOW"|"NONE","similarity_score":<number 0-100>}
+{"status":"match_found"|"no_match","selected_seq_id":<number>|null,"matched_question":"<text>"|null,"table_name":"<name>"|null,"tier":"A"|"B"|"C"|null,"reasoning":"<parsed components + gate results>","match_confidence":"HIGH"|"MEDIUM"|"LOW"|"NONE","similarity_score":<number 0-100|}
 </json>
 
 WORKED EXAMPLE
@@ -98,24 +141,24 @@ CURRENT: "what is the revenue for HDP for july 2025"
 PARSED → Metrics:[revenue], Attribute:NONE, Filter:HDP, Date:IGNORED
 
 ID:14 "revenue for each line of business for July 2025"
-PARSED → Metrics:[revenue], Attribute:[lob], Filter:NONE
-GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
-GATE 2: Current=NONE, History=[lob] ❌ REJECT (attribute asymmetry)
-RESULT: ELIMINATED
+- PARSED → Metrics:[revenue], Attribute:[lob], Filter:NONE
+- GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
+- GATE 2: Current=NONE, History=[lob] ❌ REJECT (attribute asymmetry)
+- RESULT: ELIMINATED
 
 ID:21 "compare HDP revenue for Q3 2025 VS Q3 2024"
-PARSED → Metrics:[revenue], Attribute:NONE, Filter:HDP
-GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
-GATE 2: Current=NONE, History=NONE ✅ PASS (symmetric)
-GATE 3: Current=HDP, History=HDP → TIER A
-RESULT: CANDIDATE (TIER A, overlap=1)
+- PARSED → Metrics:[revenue], Attribute:NONE, Filter:HDP
+- GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
+- GATE 2: Current=NONE, History=NONE ✅ PASS (symmetric)
+- GATE 3: Current=HDP, History=HDP → TIER A
+- RESULT: CANDIDATE (TIER A, overlap=1)
 
 ID:1 "revenue for PBM"
-PARSED → Metrics:[revenue], Attribute:NONE, Filter:PBM
-GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
-GATE 2: Current=NONE, History=NONE ✅ PASS (symmetric)
-GATE 3: Current=HDP, History=PBM → TIER B
-RESULT: CANDIDATE (TIER B, overlap=1)
+- PARSED → Metrics:[revenue], Attribute:NONE, Filter:PBM
+- GATE 1: [revenue]∩[revenue]=[revenue] ✅ PASS (overlap=1)
+- GATE 2: Current=NONE, History=NONE ✅ PASS (symmetric)
+- GATE 3: Current=HDP, History=PBM → TIER B
+- RESULT: CANDIDATE (TIER B, overlap=1)
 
 SELECTION: ID:21 wins (TIER A > TIER B)
 

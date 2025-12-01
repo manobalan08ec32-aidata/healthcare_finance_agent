@@ -1,6 +1,3 @@
-AttributeError: 'list' object has no attribute 'items'
-
-
 """
 Insurance Claims Coverage Agent using LangGraph ReAct Pattern
 
@@ -949,10 +946,16 @@ def summarize_policy_guideline(policy_id: str) -> dict:
         Each procedure may have multiple rule sets. Coverage is approved if the
         claim matches ANY of the rule sets for that procedure.
         
+    Note:
+        Handles both list and dictionary formats for covered_procedures field
+        to accommodate different data source structures.
+        
     Example:
         >>> summarize_policy_guideline("POL1001")
         {
-            "summary": "• Policy Details\n- Policy ID: POL1001\n- Plan Name: ..."
+            "summary": "• Policy Details
+- Policy ID: POL1001
+- Plan Name: ..."
         }
     """
     # Lookup policy in database
@@ -962,7 +965,7 @@ def summarize_policy_guideline(policy_id: str) -> dict:
         return {"error": f"Policy {policy_id} not found."}
     
     plan_name = policy.get("plan_name", "Not provided")
-    proc_rules = policy.get("covered_procedures", {}) or {}
+    proc_rules_raw = policy.get("covered_procedures", [])
     
     # Helper function to format yes/no
     def yes_no(v): 
@@ -985,29 +988,91 @@ def summarize_policy_guideline(policy_id: str) -> dict:
     
     # Build procedure coverage entries
     entries = []
-    for pcode, rules in proc_rules.items():
-        # Lookup procedure description
-        pdesc = procedure_codes_db.get(pcode, "Description not found")
-        
-        # Each procedure may have multiple coverage rule sets
-        for r in (rules or []):
+    
+    # ========================================================================
+    # HANDLE MULTIPLE DATA FORMATS FOR COVERED_PROCEDURES
+    # ========================================================================
+    # Format 1: Dictionary structure {procedure_code: [rules]}
+    # Example: {"99213": [{"covered_diagnoses": [...], "age_range": [...]}]}
+    if isinstance(proc_rules_raw, dict):
+        for pcode, rules in proc_rules_raw.items():
+            # Lookup procedure description
+            pdesc = procedure_codes_db.get(pcode, "Description not found")
+            
+            # Each procedure may have multiple coverage rule sets
+            for r in (rules or []):
+                # Extract covered diagnoses for this rule
+                diags = r.get("covered_diagnoses", []) or []
+                diag_lines = "
+".join(
+                    f"  - {d}: {diagnosis_codes_db.get(d, 'Description not found')}" 
+                    for d in diags
+                ) or "  - Not provided"
+                
+                # Format this rule entry
+                entries.append(
+                    f"- Procedure: {pcode} — {pdesc}
+"
+                    f"  - Covered Diagnoses and Descriptions:
+"
+                    f"{diag_lines}
+"
+                    f"  - Gender Restriction: {r.get('gender', 'Any')}
+"
+                    f"  - Age Range: {age_range_str(r)}
+"
+                    f"  - Preauthorization Requirement: {yes_no(r.get('requires_preauthorization', False))}
+"
+                    f"  - Notes on Coverage: {r.get('notes', 'None') or 'None'}
+"
+                )
+    
+    # Format 2: List structure [{"procedure_code": "99213", ...rules...}]
+    # Each list item is a complete rule with procedure code embedded
+    elif isinstance(proc_rules_raw, list):
+        for rule in proc_rules_raw:
+            if not isinstance(rule, dict):
+                continue
+            
+            # Extract procedure code from the rule (try multiple field names)
+            pcode = rule.get("procedure_code") or rule.get("procedure") or rule.get("code")
+            if not pcode:
+                continue
+            
+            pcode = str(pcode).strip()
+            
+            # Lookup procedure description
+            pdesc = procedure_codes_db.get(pcode, "Description not found")
+            
             # Extract covered diagnoses for this rule
-            diags = r.get("covered_diagnoses", []) or []
-            diag_lines = "\n".join(
+            diags = rule.get("covered_diagnoses", []) or []
+            diag_lines = "
+".join(
                 f"  - {d}: {diagnosis_codes_db.get(d, 'Description not found')}" 
                 for d in diags
             ) or "  - Not provided"
             
             # Format this rule entry
             entries.append(
-                f"- Procedure: {pcode} — {pdesc}\n"
-                f"  - Covered Diagnoses and Descriptions:\n"
-                f"{diag_lines}\n"
-                f"  - Gender Restriction: {r.get('gender', 'Any')}\n"
-                f"  - Age Range: {age_range_str(r)}\n"
-                f"  - Preauthorization Requirement: {yes_no(r.get('requires_preauthorization', False))}\n"
-                f"  - Notes on Coverage: {r.get('notes', 'None') or 'None'}\n"
+                f"- Procedure: {pcode} — {pdesc}
+"
+                f"  - Covered Diagnoses and Descriptions:
+"
+                f"{diag_lines}
+"
+                f"  - Gender Restriction: {rule.get('gender', 'Any')}
+"
+                f"  - Age Range: {age_range_str(rule)}
+"
+                f"  - Preauthorization Requirement: {yes_no(rule.get('requires_preauthorization', False))}
+"
+                f"  - Notes on Coverage: {rule.get('notes', 'None') or 'None'}
+"
             )
+    
+    else:
+        # Unsupported format - log error but continue
+        entries = [f"- Error: Unsupported covered_procedures format (type: {type(proc_rules_raw).__name__})"]
     
     # Format final summary
     summary = f"""
@@ -1020,7 +1085,6 @@ def summarize_policy_guideline(policy_id: str) -> dict:
 """.strip()
     
     return {"summary": summary}
-
 
 # Test the tool
 pol_out = summarize_policy_guideline("POL1001")

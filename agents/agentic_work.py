@@ -1,3 +1,6 @@
+AttributeError: 'list' object has no attribute 'items'
+
+
 """
 Insurance Claims Coverage Agent using LangGraph ReAct Pattern
 

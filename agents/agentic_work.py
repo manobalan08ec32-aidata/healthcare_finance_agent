@@ -1,35 +1,13 @@
 """
-Insurance Claims Coverage Agent using LangGraph ReAct Pattern
+Insurance Claims Coverage Agent - AI Certification Project
 
-This module implements an AI-powered insurance claims processing system that uses
-a ReAct (Reasoning + Acting) agent to evaluate whether medical procedures are 
-covered under a patient's insurance policy.
-
-Architecture Overview:
----------------------
-1. Data Layer: Loads patient records, insurance policies, and medical code references
-2. Processing Layer: Normalizes and validates data, builds lookup databases
-3. Tool Layer: Three specialized tools for patient records, policy guidelines, and coverage checks
-4. Agent Layer: LangGraph ReAct agent orchestrates sequential tool calling with reasoning
-5. Evaluation Layer: LLM-based coverage determination with structured output
-
-Key AI/ML Concepts Demonstrated:
---------------------------------
-- ReAct Pattern: Iterative reasoning and action taking for complex decision-making
-- Tool Calling: LLM orchestrates specialized tools in a logical sequence
-- Prompt Engineering: Structured prompts with clear evaluation criteria and output formats
-- Few-Shot Learning: Examples guide the LLM to produce consistent, accurate decisions
-- Chain-of-Thought: Step-by-step reasoning before final decision
-
-Author: Manobalan
-Project: AI Certification - Healthcare Claims Processing
+This system uses LangGraph ReAct pattern to evaluate insurance claim coverage.
+It orchestrates three tools (patient record lookup, policy lookup, coverage evaluation)
+to make automated coverage decisions.
 """
 
-# ============================================================================
-# IMPORTS AND DEPENDENCIES
-# ============================================================================
-# Note: Line below is for Databricks notebook environment setup
-# %run ./.setup/learner_setup  
+# Notebook setup for Databricks environment
+%run ./.setup/learner_setup  
 
 import os
 from dotenv import load_dotenv
@@ -38,39 +16,28 @@ import json
 import pandas as pd
 from datetime import datetime
 from typing import Dict, Any, Tuple, Optional, List
-
-# LangChain components for LLM interaction and agent orchestration
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain_core.tools import tool
 from IPython.display import display, Markdown
-
-# Retry logic for handling API failures (imported but can be utilized for robustness)
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-
 # ============================================================================
-# AUTHENTICATION & CONFIGURATION
+# AUTHENTICATION
 # ============================================================================
 
-def get_access_token() -> str:
+def get_access_token():
     """
-    Retrieves an Azure AD access token using the Client Credentials OAuth2 flow.
+    Retrieves an Azure AD access token using the Client Credentials flow.
     
-    This function authenticates with UHG's API gateway to obtain a bearer token
-    that is used for subsequent API calls to Azure OpenAI services. The credentials
-    are securely stored in Databricks secrets.
+    Uses secrets stored in the workspace (Databricks example).
     
     Returns:
-        str: Bearer token for API authentication
+        str: Bearer token string for API authentication
         
     Raises:
-        httpx.HTTPError: If the authentication request fails
-        KeyError: If the response doesn't contain an access_token
-        
-    Note:
-        Token expiration is handled by re-calling this function when needed.
-        For production, consider implementing token caching with expiry checking.
+        httpx.HTTPError: If the HTTP request fails
+        KeyError: If access_token not found in response
     """
     auth = "https://api.uhg.com/oauth2/token"
     scope = "https://api.uhg.com/.default"
@@ -86,16 +53,18 @@ def get_access_token() -> str:
             }
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             resp = client.post(auth, headers=headers, data=body, timeout=60)
-            resp.raise_for_status()  # Raise exception for 4xx/5xx status codes
+            resp.raise_for_status()  # Raise exception for HTTP errors
             return resp.json()["access_token"]
     except httpx.HTTPError as e:
         raise RuntimeError(f"Failed to obtain access token: {e}")
     except KeyError:
         raise RuntimeError("Access token not found in authentication response")
 
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
 # Load environment variables from configuration file
-# These contain Azure OpenAI endpoint, API version, deployment names, and project ID
 try:
     load_dotenv('./Data/UAIS_vars.env')
     AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
@@ -107,36 +76,32 @@ except KeyError as e:
     raise RuntimeError(f"Missing required environment variable: {e}")
 
 # Initialize Azure OpenAI chat client
-# Temperature=0 ensures deterministic outputs for consistent coverage decisions
+# Temperature=0 for deterministic outputs (important for consistent coverage decisions)
 chat_client = AzureChatOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
     api_version=OPENAI_API_VERSION,
     azure_deployment=MODEL_DEPLOYMENT_NAME,
-    temperature=0,  # Deterministic outputs for consistency in coverage decisions
+    temperature=0,  # Deterministic responses for consistency
     azure_ad_token=get_access_token(),
     default_headers={"projectId": PROJECT_ID}
 )
-
 
 # ============================================================================
 # DATA LOADING
 # ============================================================================
 
-# Load core datasets with error handling
-# These JSON files contain patient records, insurance policies, and medical code references
+# Load all required data files with error handling
 try:
     insurance_policies_df = pd.read_json("./Data/insurance_policies.json")
     references_codes_df = pd.read_json("./Data/reference_codes.json")
     test_records_df = pd.read_json("./Data/test_records.json")
     validation_records_df = pd.read_json("./Data/validation_records.json")
 except FileNotFoundError as e:
-    raise FileNotFoundError(f"Required data file not found: {e}. Please ensure all data files are in ./Data/ directory.")
+    raise FileNotFoundError(f"Required data file not found: {e}")
 except ValueError as e:
     raise ValueError(f"Invalid JSON format in data file: {e}")
 
-# Display sample validation records for quick verification
 display(validation_records_df.head())
-
 
 # ============================================================================
 # DATA PROCESSING - AGE CALCULATION
@@ -147,29 +112,23 @@ def add_age_column(df: pd.DataFrame,
                    dos_col: str = "date_of_service",
                    out_col: str = "age") -> pd.DataFrame:
     """
-    Calculate patient age at date of service with proper birthday handling.
+    Calculate patient age at date of service.
     
-    This function computes age by determining if the patient has had their birthday
-    by the date of service. It handles edge cases like invalid dates and dates of
-    service before birth.
+    Computes age in completed years, accounting for whether birthday has occurred
+    by the date of service.
     
     Args:
         df: DataFrame containing patient records
-        dob_col: Column name for date of birth (default: "date_of_birth")
-        dos_col: Column name for date of service (default: "date_of_service")
-        out_col: Output column name for calculated age (default: "age")
+        dob_col: Column name for date of birth
+        dos_col: Column name for date of service
+        out_col: Output column name for calculated age
         
     Returns:
         pd.DataFrame: Copy of input DataFrame with age column added
         
-    Logic:
-        - Age = (DOS year - DOB year) - 1 if birthday hasn't occurred yet
-        - Invalid dates (DOS < DOB) result in None
-        - Missing dates result in None
-        
     Note:
-        Uses completed years (age at last birthday), which is standard for
-        insurance eligibility determination.
+        - Returns None for invalid dates or when DOS < DOB
+        - Uses completed years (standard for insurance eligibility)
     """
     df = df.copy()
     
@@ -178,117 +137,93 @@ def add_age_column(df: pd.DataFrame,
     dos = pd.to_datetime(df[dos_col], errors="coerce")
     
     # Check if birthday has occurred by date of service
-    # Birthday occurred if: DOS month > DOB month OR (same month AND DOS day >= DOB day)
-    had_birthday = (
-        (dos.dt.month > dob.dt.month) | 
-        ((dos.dt.month == dob.dt.month) & (dos.dt.day >= dob.dt.day))
-    )
+    had_birthday = ( (dos.dt.month > dob.dt.month) | ((dos.dt.month == dob.dt.month) & (dos.dt.day >= dob.dt.day)) )
     
     # Calculate age: subtract 1 if birthday hasn't occurred yet
     age = (dos.dt.year - dob.dt.year) - (~had_birthday).astype("Int64")
     
-    # Handle invalid cases: missing dates or DOS before DOB
+    # Handle invalid cases
     valid_mask = dob.notna() & dos.notna()
-    age = age.where(valid_mask)  # Set to None where dates are invalid
-    age = age.mask((valid_mask) & (dos < dob))  # Set to None where DOS < DOB
+    age = age.where(valid_mask)
+    age = age.mask((valid_mask) & (dos < dob))  # Set None if DOS before DOB
     
     df[out_col] = age.astype("Int64")
     return df
 
-
-# Apply age calculation to both test and validation datasets
-test_records_df = add_age_column(test_records_df)
+# Apply age calculation to both datasets
+test_records_df       = add_age_column(test_records_df)
 validation_records_df = add_age_column(validation_records_df)
 
 display(test_records_df.head())
 
-
 # ============================================================================
-# MEDICAL CODE REFERENCE PROCESSING
+# MEDICAL CODE REFERENCE EXTRACTION
 # ============================================================================
 
 def _extract_map_from_df(ref_df: pd.DataFrame, system: str) -> dict:
     """
     Extract medical code mappings (code -> description) from reference DataFrame.
     
-    This helper function handles multiple data formats for medical code references:
+    Handles multiple data formats:
     1. Standard format with code_system, code, description columns
-    2. Column-based format where system name is a column
+    2. System name as column (e.g., CPT column, ICD10 column)
     3. Nested dictionary format within cells
     
     Args:
         ref_df: Reference DataFrame containing medical codes
-        system: Code system name (e.g., "CPT", "ICD10")
+        system: Code system name (e.g., "CPT" for procedures, "ICD10" for diagnoses)
         
     Returns:
         dict: Mapping of code (str) -> description (str)
-        
-    Note:
-        Handles duplicates by keeping the last occurrence, which allows for
-        code definition updates in the reference data.
     """
-    # Format 1: Standard structured format with code_system column
+    # Format 1: Standard structured format
     if {"code_system", "code", "description"}.issubset(ref_df.columns):
         sub = ref_df.loc[ref_df["code_system"].astype(str) == system, ["code", "description"]].copy()
         sub["code"] = sub["code"].astype(str)
         sub["description"] = sub["description"].astype(str)
-        # Keep last occurrence for duplicate codes (allows updates)
         return dict(sub.drop_duplicates(subset=["code"], keep="last").values)
     
-    # Format 2: System name as column (e.g., CPT column, ICD10 column)
+    # Format 2: System name as column
     if system in ref_df.columns:
         ser = ref_df[system].dropna()
-        
-        # Handle nested dictionary format in cells
+        # Handle nested dictionary format
         if ser.map(lambda v: isinstance(v, dict)).any():
             combined = {}
             for d in ser[ser.map(lambda v: isinstance(v, dict))]:
                 combined.update({str(k): str(v) for k, v in d.items()})
             return combined
-        
         # Handle simple value format
         ser = ser.astype(str)
         return {str(idx): str(val) for idx, val in ser.items()}
     
-    # No matching format found
     return {}
 
-
-def build_procedure_and_diagnosis_tables(references_codes_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def build_procedure_and_diagnosis_tables(references_codes_df: pd.DataFrame):
     """
-    Build structured lookup tables for medical procedure and diagnosis codes.
+    Build structured lookup tables for medical codes.
     
-    Extracts CPT (Current Procedural Terminology) and ICD-10 (International 
-    Classification of Diseases) codes from the reference DataFrame and creates
-    clean, sorted lookup tables.
+    Creates separate DataFrames for CPT (procedure) and ICD-10 (diagnosis) codes
+    with descriptions for human-readable summaries.
     
     Args:
         references_codes_df: DataFrame containing reference code mappings
         
     Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: 
-            - procedure_codes_df: CPT codes with descriptions
-            - diagnosis_codes_df: ICD-10 codes with descriptions
-            
-    Note:
-        These tables are used for:
-        1. Validating codes in patient records
-        2. Enriching summaries with human-readable descriptions
-        3. Supporting the LLM's coverage evaluation
+        Tuple[pd.DataFrame, pd.DataFrame]: (procedure_codes_df, diagnosis_codes_df)
     """
-    # Extract code mappings using helper function
-    cpt_map = _extract_map_from_df(references_codes_df, "CPT")
+    # Extract CPT and ICD-10 code mappings
+    cpt_map   = _extract_map_from_df(references_codes_df, "CPT")
     icd10_map = _extract_map_from_df(references_codes_df, "ICD10")
     
-    # Build procedure codes DataFrame (CPT)
+    # Build procedure codes DataFrame
     procedure_codes_df = (
         pd.DataFrame(list(cpt_map.items()), columns=["procedure_codes", "CPT"])
         .astype({"procedure_codes": "string", "CPT": "string"})
-        .sort_values("procedure_codes", kind="stable")  # Stable sort preserves order for ties
+        .sort_values("procedure_codes", kind="stable")
         .reset_index(drop=True)
     )
     
-    # Build diagnosis codes DataFrame (ICD-10)
+    # Build diagnosis codes DataFrame
     diagnosis_codes_df = (
         pd.DataFrame(list(icd10_map.items()), columns=["diagnosis_codes", "ICD10"])
         .astype({"diagnosis_codes": "string", "ICD10": "string"})
@@ -298,15 +233,12 @@ def build_procedure_and_diagnosis_tables(references_codes_df: pd.DataFrame) -> T
     
     return procedure_codes_df, diagnosis_codes_df
 
-
-# Build lookup tables for medical codes
 procedure_codes_df, diagnosis_codes_df = build_procedure_and_diagnosis_tables(references_codes_df)
 
 display(procedure_codes_df.head())
 
-
 # ============================================================================
-# DATABASE CONSTRUCTION
+# CODE LOOKUP DATABASES
 # ============================================================================
 
 def build_procedure_codes_db(procedure_codes_df: pd.DataFrame) -> Dict[str, str]:
@@ -319,11 +251,7 @@ def build_procedure_codes_db(procedure_codes_df: pd.DataFrame) -> Dict[str, str]
     Returns:
         Dict[str, str]: Mapping of procedure code -> description
     """
-    return dict(zip(
-        procedure_codes_df["procedure_codes"].astype(str), 
-        procedure_codes_df["CPT"].astype(str)
-    ))
-
+    return dict(zip(procedure_codes_df["procedure_codes"].astype(str), procedure_codes_df["CPT"].astype(str)))
 
 def build_diagnosis_codes_db(diagnosis_codes_df: pd.DataFrame) -> Dict[str, str]:
     """
@@ -335,21 +263,14 @@ def build_diagnosis_codes_db(diagnosis_codes_df: pd.DataFrame) -> Dict[str, str]
     Returns:
         Dict[str, str]: Mapping of diagnosis code -> description
     """
-    return dict(zip(
-        diagnosis_codes_df["diagnosis_codes"].astype(str), 
-        diagnosis_codes_df["ICD10"].astype(str)
-    ))
+    return dict(zip(diagnosis_codes_df["diagnosis_codes"].astype(str), diagnosis_codes_df["ICD10"].astype(str)))
 
-
-# Initialize global lookup databases
-# These provide O(1) lookup time for code descriptions during summarization
+# Initialize global lookup databases (O(1) lookup time)
 patient_record_db: Dict[str, Dict[str, Any]] = {}  # Will be populated from records
 procedure_codes_db = build_procedure_codes_db(procedure_codes_df)
 diagnosis_codes_db = build_diagnosis_codes_db(diagnosis_codes_df)
 
-# Verify database construction
 print(list(procedure_codes_db.items())[:5])
-
 
 # ============================================================================
 # HELPER FUNCTIONS - DATA NORMALIZATION
@@ -359,402 +280,278 @@ def _parse_date_to_iso(s: Any) -> Optional[str]:
     """
     Parse various date formats into ISO format (YYYY-MM-DD).
     
-    Handles multiple input formats commonly found in healthcare data:
-    - ISO format: YYYY-MM-DD
-    - US format: MM/DD/YYYY
-    - European format: DD-MM-YYYY
-    - Compact format: YYYYMMDD
-    - Pandas Timestamp objects
-    - Python datetime objects
+    Handles multiple input formats:
+    - ISO: YYYY-MM-DD
+    - US: MM/DD/YYYY
+    - European: DD-MM-YYYY
+    - Compact: YYYYMMDD
+    - Pandas Timestamp and datetime objects
     
     Args:
-        s: Date value in various formats (str, datetime, Timestamp, or None)
+        s: Date value in various formats
         
     Returns:
-        Optional[str]: ISO formatted date string (YYYY-MM-DD) or None if parsing fails
-        
-    Note:
-        Returns None for invalid dates rather than raising exceptions, allowing
-        graceful handling of malformed data in patient records.
+        Optional[str]: ISO formatted date (YYYY-MM-DD) or None if parsing fails
     """
-    # Handle None and NaN values
     if s is None or (isinstance(s, float) and pd.isna(s)) or (isinstance(s, str) and not s.strip()):
         return None
-    
-    # Handle Pandas Timestamp
     if isinstance(s, pd.Timestamp):
         return s.date().isoformat()
-    
-    # Handle Python datetime
     if isinstance(s, (datetime, )):
         return s.date().isoformat()
-    
-    # Handle string formats
     if isinstance(s, str):
         s = s.strip()
-        
         # Try common date formats
         for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%m/%d/%Y"):
             try:
                 return datetime.strptime(s, fmt).date().isoformat()
             except Exception:
                 pass
-        
-        # Try compact format (YYYYMMDD)
+        # Try compact format
         if s.isdigit() and len(s) == 8:
             try:
                 return datetime.strptime(s, "%Y%m%d").date().isoformat()
             except Exception:
                 pass
-        
-        # Try ISO format parsing as fallback
+        # Try ISO format parsing
         try:
             return datetime.fromisoformat(s).date().isoformat()
         except Exception:
             return None
-    
     return None
-
 
 def _normalize_bool(v: Any) -> Optional[bool]:
     """
     Normalize various boolean representations to Python bool.
     
-    Healthcare data often contains boolean values in multiple formats:
-    - Actual booleans: True/False
-    - Strings: "true", "yes", "1", "false", "no", "0"
-    - Integers: 1/0
+    Handles: True/False, 1/0, "true"/"yes"/"1", "false"/"no"/"0"
     
     Args:
-        v: Value to normalize (bool, int, str, or None)
+        v: Value to normalize
         
     Returns:
-        Optional[bool]: Normalized boolean or None if value cannot be interpreted
-        
-    Note:
-        Case-insensitive for string comparisons. Returns None for ambiguous values
-        to avoid false assumptions in coverage decisions.
+        Optional[bool]: Normalized boolean or None if cannot be interpreted
     """
-    # Handle None and NaN
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
-    
-    # Already a boolean
     if isinstance(v, bool):
         return v
-    
-    # Integer representation
     if isinstance(v, (int, )):
         return bool(v)
-    
-    # String representation (case-insensitive)
     if isinstance(v, str):
         s = v.strip().lower()
-        if s in {"true", "t", "yes", "y", "1"}: 
-            return True
-        if s in {"false", "f", "no", "n", "0"}: 
-            return False
-    
+        if s in {"true", "t", "yes", "y", "1"}: return True
+        if s in {"false", "f", "no", "n", "0"}: return False
     return None
-
 
 def _split_codes(val: Any) -> List[str]:
     """
     Split and normalize medical codes from various input formats.
     
-    Medical codes in patient records may appear as:
-    - Space-separated strings: "99213 99214"
-    - Comma-separated strings: "99213, 99214"
-    - Lists: ["99213", "99214"]
-    - Dictionaries: {99213: desc, 99214: desc}
+    Handles: space-separated strings, comma-separated strings, lists, dicts
     
     Args:
-        val: Code value in various formats (str, list, dict, or None)
+        val: Code value in various formats
         
     Returns:
-        List[str]: List of normalized code strings (whitespace trimmed, empty removed)
-        
-    Note:
-        Returns empty list for None/NaN to simplify downstream processing.
-        Handles mixed delimiters (commas and spaces) in string inputs.
+        List[str]: List of normalized code strings
     """
-    # Handle None and NaN
-    if val is None or (isinstance(val, float) and pd.isna(val)): 
-        return []
-    
-    # Handle collection types
-    if isinstance(val, (list, tuple, set)): 
-        return [str(x).strip() for x in val if str(x).strip()]
-    
-    # Handle dictionary (extract keys as codes)
-    if isinstance(val, dict): 
-        return [str(k).strip() for k in val.keys() if str(k).strip()]
-    
-    # Handle string (split on commas and/or spaces)
-    if isinstance(val, str): 
-        return [p.strip() for p in val.replace(",", " ").split() if p.strip()]
-    
+    if val is None or (isinstance(val, float) and pd.isna(val)): return []
+    if isinstance(val, (list, tuple, set)): return [str(x).strip() for x in val if str(x).strip()]
+    if isinstance(val, dict): return [str(k).strip() for k in val.keys() if str(k).strip()]
+    if isinstance(val, str): return [p.strip() for p in val.replace(",", " ").split() if p.strip()]
     return []
-
 
 def _first_non_empty(row: pd.Series, candidates: List[str]) -> Any:
     """
     Extract first non-empty value from a list of column candidates.
     
-    Used for handling data with multiple possible column names for the same
-    information (e.g., different date field names across data sources).
+    Useful for handling different column naming conventions in data sources.
     
     Args:
         row: Pandas Series (DataFrame row)
         candidates: List of column names to check in order
         
     Returns:
-        Any: First non-empty value found, or None if all are empty/missing
-        
-    Note:
-        Checks for None, NaN, and empty strings. Order of candidates matters.
+        Any: First non-empty value found, or None
     """
     for c in candidates:
         if c in row and row[c] is not None:
             v = row[c]
-            # Skip NaN values
-            if isinstance(v, float) and pd.isna(v): 
-                continue
-            # Skip empty strings
-            if isinstance(v, str) and not v.strip(): 
-                continue
+            if isinstance(v, float) and pd.isna(v): continue
+            if isinstance(v, str) and not v.strip(): continue
             return v
     return None
-
 
 def _compute_age_completed_years(dob_iso: Optional[str], dos_iso: Optional[str]) -> Optional[int]:
     """
     Calculate age in completed years at date of service.
     
-    This is the standard age calculation used for insurance eligibility:
-    - Age increases on the birthday
-    - Uses completed years (not fractional age)
-    - Validates that DOS >= DOB
+    Standard insurance eligibility age calculation:
+    - Age increases on birthday
+    - Uses completed years (not fractional)
     
     Args:
         dob_iso: Date of birth in ISO format (YYYY-MM-DD)
         dos_iso: Date of service in ISO format (YYYY-MM-DD)
         
     Returns:
-        Optional[int]: Age in completed years, or None if dates are invalid/missing
-        
-    Note:
-        Returns None if DOS < DOB (invalid case) rather than raising an error,
-        allowing the system to route such cases for manual review.
+        Optional[int]: Age in completed years, or None if dates invalid
     """
     try:
-        if not dob_iso or not dos_iso: 
-            return None
-        
-        # Parse ISO dates
+        if not dob_iso or not dos_iso: return None
         dob = datetime.strptime(dob_iso, "%Y-%m-%d").date()
         dos = datetime.strptime(dos_iso, "%Y-%m-%d").date()
-        
-        # Validate DOS >= DOB
-        if dos < dob: 
-            return None
-        
-        # Calculate completed years
+        if dos < dob: return None  # Invalid: service before birth
         years = dos.year - dob.year
-        
-        # Subtract 1 if birthday hasn't occurred yet
         return years if (dos.month, dos.day) >= (dob.month, dob.day) else years - 1
     except Exception:
         return None
 
-
 def _to_float_usd(v: Any) -> Optional[float]:
     """
-    Normalize currency values to float for billed amounts.
+    Normalize currency values to float.
     
-    Handles various currency representations:
-    - Float/int: Direct conversion
-    - String with $ and commas: "$1,234.56" -> 1234.56
-    - String without symbols: "1234.56" -> 1234.56
+    Handles: float/int, strings with $, commas, and various currency symbols
     
     Args:
-        v: Value to convert (float, int, str, or None)
+        v: Value to convert
         
     Returns:
         Optional[float]: Normalized float value (USD), or None if conversion fails
-        
-    Note:
-        Negative values are allowed (for adjustments/refunds).
-        Returns None for unparseable values rather than raising exceptions.
     """
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
+    if v is None or (isinstance(v, float) and pd.isna(v)): return None
+    if isinstance(v, (int, float)): return float(v)
     if isinstance(v, str):
-        # Remove currency symbols and commas
-        s = v.strip().replace("$", "").replace(",", "")
-        try:
-            return float(s)
-        except Exception:
-            return None
+        s = v.strip().replace(",", "")
+        for sym in ["USD", "usd", "$", "₹"]: s = s.replace(sym, "")
+        try: return float(s.strip())
+        except Exception: return None
     return None
-
 
 # ============================================================================
 # PATIENT RECORD DATABASE CONSTRUCTION
 # ============================================================================
 
-def build_record_db(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+def build_patient_record_db_from_df(combined_records_df: pd.DataFrame,
+                                    key_priority: List[str] = None,
+                                    duplicate_policy: str = "last") -> Dict[str, Dict[str, Any]]:
     """
     Build normalized patient record database from raw DataFrame.
     
-    This function performs comprehensive data normalization and validation:
-    1. Extracts patient identifiers
-    2. Normalizes dates to ISO format
-    3. Computes age if not present
-    4. Normalizes demographic data (gender)
-    5. Splits and validates medical codes
-    6. Normalizes boolean fields (preauthorization)
-    7. Validates currency amounts
-    
-    The resulting database is optimized for:
-    - Fast lookup by patient ID
-    - Consistent data types for LLM processing
-    - Graceful handling of missing/malformed data
+    Performs comprehensive data normalization:
+    - Extracts patient identifiers (tries multiple field names)
+    - Normalizes dates to ISO format
+    - Computes age if not present
+    - Normalizes demographics, codes, booleans, amounts
+    - Handles missing/malformed data gracefully
     
     Args:
-        df: Raw DataFrame containing patient records
+        combined_records_df: Raw DataFrame containing patient records
+        key_priority: List of column names to try as record keys (in order)
+        duplicate_policy: How to handle duplicate keys ("first" or "last")
         
     Returns:
-        Dict[str, Dict[str, Any]]: Nested dictionary structure
-            {patient_id: {field: normalized_value, ...}}
-            
+        Dict[str, Dict[str, Any]]: Nested dictionary {record_key: {field: value}}
+        
     Key Fields in Output:
-        - patient_id: Unique identifier
-        - date_of_birth: ISO date (YYYY-MM-DD)
-        - date_of_service: ISO date (YYYY-MM-DD)
-        - age: Calculated age at DOS (int)
-        - gender: Normalized gender (str)
-        - diagnosis_codes: List of ICD-10 codes
-        - procedure_codes: List of CPT codes
-        - preauthorization_required: Boolean
-        - preauthorization_obtained: Boolean
+        - record_key: Unique identifier
+        - claim_id, patient_id: Various IDs
+        - name, gender: Demographics
+        - date_of_birth, date_of_service: ISO dates
+        - age: Calculated age at DOS
+        - diagnosis_codes, procedure_codes: Lists of codes
+        - preauthorization_required, preauthorization_obtained: Booleans
         - billed_amount_usd: Float
         - insurance_policy_id: Policy identifier
-        
-    Note:
-        Missing or malformed fields are set to None rather than raising errors,
-        allowing the system to process partial records and route edge cases
-        appropriately.
     """
-    db = {}
+    if key_priority is None:
+        key_priority = ["claim_id", "encounter_id", "visit_id", "bill_id", "patient_id"]
     
-    for _, row in df.iterrows():
-        # Extract patient identifier (try multiple possible column names)
-        pid_val = _first_non_empty(row, ["patient_id", "id", "record_id", "patient"])
-        if pid_val is None:
-            continue  # Skip records without identifiers
+    # Define possible column names for each field (handles various naming conventions)
+    name_cols       = ["name", "patient_name", "full_name"]
+    gender_cols     = ["gender", "sex"]
+    dob_cols        = ["date_of_birth", "dob", "birth_date"]
+    dos_cols        = ["date_of_service", "dos", "service_date", "encounter_date", "visit_date"]
+    policy_cols     = ["insurance_policy_id", "policy_id", "policyID", "insurance_policy"]
+    billed_cols     = ["billed_amount_usd", "amount_billed_usd", "billed_amount", "total_charge_usd", "total_charge", "amount"]
+    preauth_req_cols= ["preauthorization_required", "preauth_required", "prior_auth_required", "authorization_required"]
+    preauth_obt_cols= ["preauthorization_obtained", "preauth_obtained", "prior_auth_obtained", "authorization_obtained"]
+    diag_code_cols  = ["diagnosis_codes", "diagnoses", "icd10_codes", "icd10"]
+    proc_code_cols  = ["procedure_codes", "procedures", "cpt_codes", "cpt"]
+    
+    db: Dict[str, Dict[str, Any]] = {}
+    
+    for i, row_dict in enumerate(combined_records_df.to_dict(orient="records")):
+        row = pd.Series(row_dict)
         
-        pid = str(pid_val).strip()
-        if not pid:
-            continue
+        # Extract record key (try multiple column names in priority order)
+        record_key = None
+        for k in key_priority:
+            v = _first_non_empty(row, [k])
+            if v is not None:
+                record_key = str(v); break
+        if record_key is None: record_key = f"REC-{i+1:06d}"  # Generate key if none found
         
-        # Parse dates from multiple possible column names
-        dob_raw = _first_non_empty(row, ["date_of_birth", "dob", "birth_date"])
-        dos_raw = _first_non_empty(row, ["date_of_service", "dos", "service_date"])
-        dob_iso = _parse_date_to_iso(dob_raw)
-        dos_iso = _parse_date_to_iso(dos_raw)
+        # Parse dates
+        dob_iso = _parse_date_to_iso(_first_non_empty(row, dob_cols))
+        dos_iso = _parse_date_to_iso(_first_non_empty(row, dos_cols))
         
-        # Calculate age if not already present in the data
-        age_val = row.get("age")
-        if age_val is None or (isinstance(age_val, float) and pd.isna(age_val)):
-            age_val = _compute_age_completed_years(dob_iso, dos_iso)
-        else:
-            # Normalize existing age value to int
-            try:
-                age_val = int(age_val)
-            except Exception:
-                age_val = None
+        # Extract or calculate age
+        age_val = _first_non_empty(row, ["age", "patient_age"])
+        try:
+            age = int(age_val) if age_val is not None and str(age_val).strip().isdigit() else None
+        except Exception:
+            age = None
+        if age is None: age = _compute_age_completed_years(dob_iso, dos_iso)
         
-        # Normalize gender (case-insensitive, strip whitespace)
-        gender_val = _first_non_empty(row, ["gender", "sex"])
-        gender_str = str(gender_val).strip().upper() if gender_val is not None else None
-        
-        # Extract and split diagnosis codes (ICD-10)
-        # Handles multiple possible column names and formats
-        diag_raw = _first_non_empty(row, [
-            "diagnosis_codes", "diagnosis_code", "icd10", "diagnosis", "diagnoses"
-        ])
-        diagnosis_list = _split_codes(diag_raw)
-        
-        # Extract and split procedure codes (CPT)
-        proc_raw = _first_non_empty(row, [
-            "procedure_codes", "procedure_code", "cpt", "procedure", "procedures"
-        ])
-        procedure_list = _split_codes(proc_raw)
-        
-        # Normalize preauthorization flags (boolean)
-        preauth_req = _normalize_bool(
-            _first_non_empty(row, ["preauthorization_required", "preauth_required", "prior_auth_required"])
-        )
-        preauth_obt = _normalize_bool(
-            _first_non_empty(row, ["preauthorization_obtained", "preauth_obtained", "prior_auth_obtained"])
-        )
-        
-        # Normalize billed amount (currency to float)
-        billed_raw = _first_non_empty(row, ["billed_amount", "billed_amount_usd", "amount", "charge"])
-        billed_usd = _to_float_usd(billed_raw)
-        
-        # Extract insurance policy ID
-        policy_id = _first_non_empty(row, ["insurance_policy_id", "policy_id", "policy"])
-        if policy_id is not None:
-            policy_id = str(policy_id).strip()
-        
-        # Store normalized record in database
-        db[pid] = {
-            "patient_id": pid,
+        # Build normalized record
+        rec = {
+            "record_key": record_key,
+            "claim_id": _first_non_empty(row, ["claim_id", "encounter_id", "visit_id", "bill_id"]),
+            "patient_id": _first_non_empty(row, ["patient_id", "member_id", "beneficiary_id"]),
+            "name": _first_non_empty(row, name_cols),
+            "gender": _first_non_empty(row, gender_cols),
             "date_of_birth": dob_iso,
+            "age": age,
             "date_of_service": dos_iso,
-            "age": age_val,
-            "gender": gender_str,
-            "diagnosis_codes": diagnosis_list,
-            "procedure_codes": procedure_list,
-            "preauthorization_required": preauth_req,
-            "preauthorization_obtained": preauth_obt,
-            "billed_amount_usd": billed_usd,
-            "insurance_policy_id": policy_id,
+            "billed_amount_usd": _to_float_usd(_first_non_empty(row, billed_cols)),
+            "insurance_policy_id": _first_non_empty(row, policy_cols),
+            "diagnosis_codes": _split_codes(_first_non_empty(row, diag_code_cols)),
+            "procedure_codes": _split_codes(_first_non_empty(row, proc_code_cols)),
+            "preauthorization_required": _normalize_bool(_first_non_empty(row, preauth_req_cols)),
+            "preauthorization_obtained": _normalize_bool(_first_non_empty(row, preauth_obt_cols)),
         }
+        
+        # Handle duplicates according to policy
+        if duplicate_policy == "first" and record_key in db: continue
+        db[record_key] = rec
     
     return db
 
+# Combine validation and test records, then build database
+combined_records_df = pd.concat([validation_records_df, test_records_df], ignore_index=True)
+patient_record_db = build_patient_record_db_from_df(combined_records_df)
 
-# Build patient record database from test data
-patient_record_db = build_record_db(test_records_df)
-
-print(f"✅ Built patient record database with {len(patient_record_db)} records")
-
+print(len(patient_record_db))
 
 # ============================================================================
 # INSURANCE POLICY DATABASE CONSTRUCTION
 # ============================================================================
 
-def build_insurance_policies_db(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+def build_insurance_policies_db(insurance_policies_df) -> dict:
     """
     Build normalized insurance policy database from DataFrame.
     
-    Converts policy DataFrame into a dictionary structure optimized for:
-    1. Fast lookup by policy ID
-    2. Nested structure for coverage rules
-    3. Easy serialization for LLM prompts
+    Converts policy DataFrame into nested dictionary structure optimized for
+    fast lookup and LLM-friendly formatting.
     
     Args:
-        df: DataFrame containing insurance policies
+        insurance_policies_df: DataFrame containing insurance policies
         
     Returns:
-        Dict[str, Dict[str, Any]]: Nested dictionary
-            {policy_id: {plan_name: ..., covered_procedures: {...}}}
-            
+        dict: Nested dictionary {policy_id: {plan_name: ..., covered_procedures: {...}}}
+        
     Structure:
         {
             "POL1001": {
@@ -763,44 +560,41 @@ def build_insurance_policies_db(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
                     "99213": [  # CPT code
                         {
                             "covered_diagnoses": ["J20.9", "J44.0"],
+                            "age_range": (18, 65),
                             "gender": "Any",
-                            "age_range": [18, 65],
                             "requires_preauthorization": False,
-                            "notes": "Standard office visit coverage"
+                            "notes": "Coverage details"
                         }
                     ]
                 }
             }
         }
-        
-    Note:
-        Each procedure can have multiple coverage rules with different
-        eligibility criteria (age, gender, diagnosis).
     """
     db = {}
-    
-    for _, row in df.iterrows():
-        # Extract policy ID
-        pid = row.get("policy_id")
-        if pid is None or (isinstance(pid, float) and pd.isna(pid)):
-            continue
+    for _, row in insurance_policies_df.iterrows():
+        policy_id = str(row.get("policy_id"))
+        plan_name = row.get("plan_name")
         
-        pid = str(pid).strip()
-        if not pid:
-            continue
+        # Build procedure coverage map (group rules by procedure code)
+        proc_map = {}
+        for r in (row.get("covered_procedures") or []):
+            code = str(r.get("procedure_code"))
+            # Each procedure can have multiple coverage rules
+            proc_map.setdefault(code, []).append({
+                "covered_diagnoses": [str(x) for x in r.get("covered_diagnoses", [])],
+                "age_range": tuple(r.get("age_range") or (None, None)),
+                "gender": (r.get("gender") or "Any"),
+                "requires_preauthorization": bool(r.get("requires_preauthorization", False)),
+                "notes": r.get("notes", "")
+            })
         
-        # Store policy with all fields
-        # to_dict() preserves nested structures (covered_procedures, etc.)
-        db[pid] = row.to_dict()
+        db[policy_id] = {"plan_name": plan_name, "covered_procedures": proc_map}
     
     return db
 
-
-# Build insurance policy database
 insurance_policies_db = build_insurance_policies_db(insurance_policies_df)
 
-print(f"✅ Built insurance policy database with {len(insurance_policies_db)} policies")
-
+print(list(insurance_policies_db.keys())[:5])
 
 # ============================================================================
 # TOOL 1: PATIENT RECORD SUMMARIZATION
@@ -809,11 +603,11 @@ print(f"✅ Built insurance policy database with {len(insurance_policies_db)} po
 @tool
 def summarize_patient_record(record_key: str) -> dict:
     """
-    Generate a structured summary of a patient's medical claim record.
+    Generate structured summary of patient's medical claim record.
     
-    This tool serves as the first step in the ReAct agent's workflow, providing
-    essential patient information in a format optimized for LLM interpretation.
-    The summary includes all information needed for coverage determination.
+    First step in ReAct workflow - provides patient information needed for
+    coverage evaluation. Summary includes demographics, diagnoses, procedures,
+    and preauthorization status.
     
     Args:
         record_key: Unique patient record identifier (e.g., "P011", "S001")
@@ -821,63 +615,31 @@ def summarize_patient_record(record_key: str) -> dict:
     Returns:
         dict: Contains "summary" key with formatted text or "error" key if not found
         
-    Summary Format:
-        1) Patient Demographics: ID, DOB, age, gender
-        2) Insurance Policy ID: For policy lookup in next step
-        3) Diagnoses and Descriptions: ICD-10 codes with human-readable names
-        4) Procedures and Descriptions: CPT codes with descriptions
-        5) Preauthorization Status: Required and obtained flags
-        6) Billed Amount: In USD
-        7) Date of Service: When the procedure occurred
-        
-    Design Rationale:
-        - Numbered sections guide LLM parsing
-        - Human-readable descriptions reduce LLM hallucination
-        - Explicit "Not provided" for missing data helps LLM handle edge cases
-        - Structured format ensures consistent extraction of Policy ID for next tool
-        
-    Example:
-        >>> summarize_patient_record("P011")
-        {
-            "summary": "1) Patient Demographics\n- ID: P011\n- DOB: 1985-03-15..."
-        }
+    Summary includes:
+        1) Patient Demographics (name, gender, age)
+        2) Insurance Policy ID
+        3) Diagnoses with descriptions
+        4) Procedures with descriptions
+        5) Preauthorization status
+        6) Billed amount
+        7) Date of service
     """
-    # Lookup record in database
     record = patient_record_db.get(record_key)
-    
     if not record:
-        return {"error": f"Patient record {record_key} not found in database."}
+        return {"error": f"Record {record_key} not found."}
     
-    # Build diagnosis list with descriptions
-    # Format: "CODE: Description" for LLM readability
-    diagnoses = []
-    for dcode in (record.get("diagnosis_codes") or []):
-        # Lookup description in diagnosis_codes_db
-        desc = diagnosis_codes_db.get(dcode, "Description not found")
-        diagnoses.append(f"- {dcode}: {desc}")
+    # Build diagnosis list with human-readable descriptions
+    diagnoses = [f"- {code}: {diagnosis_codes_db.get(code, 'Description not found')}" for code in record.get("diagnosis_codes", [])] or ["- Not provided"]
     
-    # If no diagnoses, indicate explicitly
-    if not diagnoses:
-        diagnoses = ["- Not provided"]
+    # Build procedure list with human-readable descriptions
+    procedures = [f"- {code}: {procedure_codes_db.get(code, 'Description not found')}" for code in record.get("procedure_codes", [])] or ["- Not provided"]
     
-    # Build procedure list with descriptions
-    procedures = []
-    for pcode in (record.get("procedure_codes") or []):
-        # Lookup description in procedure_codes_db
-        desc = procedure_codes_db.get(pcode, "Description not found")
-        procedures.append(f"- {pcode}: {desc}")
-    
-    if not procedures:
-        procedures = ["- Not provided"]
-    
-    # Format structured summary
-    # Design: Each section numbered for easy reference in LLM prompts
+    # Format structured summary (numbered sections for easy LLM parsing)
     summary = f"""
 1) Patient Demographics
-- Patient ID: {record.get('patient_id', 'Not provided')}
-- Date of Birth: {record.get('date_of_birth', 'Not provided')}
-- Age: {record.get('age', 'Not provided')} years
+- Name: {record.get('name', 'Not provided')}
 - Gender: {record.get('gender', 'Not provided')}
+- Age: {record.get('age', 'Not provided')}
 
 2) Insurance Policy ID
 - {record.get('insurance_policy_id', 'Not provided')}
@@ -898,13 +660,9 @@ def summarize_patient_record(record_key: str) -> dict:
 7) Date of Service
 - {record.get('date_of_service', 'Not provided')}
 """.strip()
-    
     return {"summary": summary}
 
-
-# Test the tool
 rec_out = summarize_patient_record("S010")
-
 
 # ============================================================================
 # TOOL 2: POLICY GUIDELINE SUMMARIZATION
@@ -913,11 +671,10 @@ rec_out = summarize_patient_record("S010")
 @tool
 def summarize_policy_guideline(policy_id: str) -> dict:
     """
-    Generate a structured summary of insurance policy coverage rules.
+    Generate structured summary of insurance policy coverage rules.
     
-    This tool serves as the second step in the ReAct workflow, retrieving the
-    policy coverage criteria needed to evaluate the patient's claim. The summary
-    explicitly lists all conditions that must be met for coverage approval.
+    Second step in ReAct workflow - provides policy criteria needed to evaluate
+    patient's claim. Lists all conditions that must be met for coverage.
     
     Args:
         policy_id: Insurance policy identifier (e.g., "POL1001")
@@ -925,156 +682,55 @@ def summarize_policy_guideline(policy_id: str) -> dict:
     Returns:
         dict: Contains "summary" key with formatted text or "error" key if not found
         
-    Summary Format:
-        • Policy Details: Policy ID and plan name
-        • Covered Procedures: For each procedure:
-            - Procedure code and description
-            - Covered diagnoses (ICD-10 codes with descriptions)
-            - Gender restrictions
-            - Age range requirements
-            - Preauthorization requirements
-            - Additional notes on coverage
-            
-    Design Rationale:
-        - Bullet points for clear hierarchical structure
-        - All eligibility criteria explicitly stated for LLM evaluation
-        - Human-readable descriptions reduce confusion
-        - "Not specified" for optional criteria (e.g., no age restriction)
-        - Multiple rules per procedure supported (different diagnoses/age ranges)
-        
-    Coverage Rule Structure:
-        Each procedure may have multiple rule sets. Coverage is approved if the
-        claim matches ANY of the rule sets for that procedure.
-        
-    Note:
-        Handles both list and dictionary formats for covered_procedures field
-        to accommodate different data source structures.
-        
-    Example:
-        >>> summarize_policy_guideline("POL1001")
-        {
-            "summary": "• Policy Details
-- Policy ID: POL1001
-- Plan Name: ..."
-        }
+    Summary includes:
+        - Policy details (ID, plan name)
+        - Covered procedures with:
+          * Covered diagnoses (with descriptions)
+          * Gender restrictions
+          * Age range requirements
+          * Preauthorization requirements
+          * Coverage notes
     """
-    # Lookup policy in database
     policy = insurance_policies_db.get(policy_id)
-    
     if not policy:
         return {"error": f"Policy {policy_id} not found."}
     
     plan_name = policy.get("plan_name", "Not provided")
-    proc_rules_raw = policy.get("covered_procedures", [])
+    proc_rules = policy.get("covered_procedures", {}) or {}
     
-    # Helper function to format yes/no
-    def yes_no(v): 
-        return "Yes" if bool(v) else "No"
+    # Helper functions for formatting
+    def yes_no(v): return "Yes" if bool(v) else "No"
     
-    # Helper function to format age range
     def age_range_str(rule):
+        """Format age range for display"""
         rng = rule.get("age_range") or (None, None)
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
             lo, hi = rng
         else:
             lo, hi = (None, None)
-        
-        # Handle case where no age restriction
-        if lo is None and hi is None: 
-            return "Not specified"
-        
-        # Format range with dash (e.g., "18–65 years")
+        if lo is None and hi is None: return "Not specified"
         return f"{'' if lo is None else lo}–{'' if hi is None else hi} years".strip("–")
     
     # Build procedure coverage entries
     entries = []
-    
-    # ========================================================================
-    # HANDLE MULTIPLE DATA FORMATS FOR COVERED_PROCEDURES
-    # ========================================================================
-    # Format 1: Dictionary structure {procedure_code: [rules]}
-    # Example: {"99213": [{"covered_diagnoses": [...], "age_range": [...]}]}
-    if isinstance(proc_rules_raw, dict):
-        for pcode, rules in proc_rules_raw.items():
-            # Lookup procedure description
-            pdesc = procedure_codes_db.get(pcode, "Description not found")
+    for pcode, rules in proc_rules.items():
+        pdesc = procedure_codes_db.get(pcode, "Description not found")
+        
+        # Each procedure may have multiple coverage rule sets
+        for r in (rules or []):
+            diags = r.get("covered_diagnoses", []) or []
+            diag_lines = "\n".join(f"  - {d}: {diagnosis_codes_db.get(d, 'Description not found')}" for d in diags) or "  - Not provided"
             
-            # Each procedure may have multiple coverage rule sets
-            for r in (rules or []):
-                # Extract covered diagnoses for this rule
-                diags = r.get("covered_diagnoses", []) or []
-                diag_lines = "
-".join(
-                    f"  - {d}: {diagnosis_codes_db.get(d, 'Description not found')}" 
-                    for d in diags
-                ) or "  - Not provided"
-                
-                # Format this rule entry
-                entries.append(
-                    f"- Procedure: {pcode} — {pdesc}
-"
-                    f"  - Covered Diagnoses and Descriptions:
-"
-                    f"{diag_lines}
-"
-                    f"  - Gender Restriction: {r.get('gender', 'Any')}
-"
-                    f"  - Age Range: {age_range_str(r)}
-"
-                    f"  - Preauthorization Requirement: {yes_no(r.get('requires_preauthorization', False))}
-"
-                    f"  - Notes on Coverage: {r.get('notes', 'None') or 'None'}
-"
-                )
-    
-    # Format 2: List structure [{"procedure_code": "99213", ...rules...}]
-    # Each list item is a complete rule with procedure code embedded
-    elif isinstance(proc_rules_raw, list):
-        for rule in proc_rules_raw:
-            if not isinstance(rule, dict):
-                continue
-            
-            # Extract procedure code from the rule (try multiple field names)
-            pcode = rule.get("procedure_code") or rule.get("procedure") or rule.get("code")
-            if not pcode:
-                continue
-            
-            pcode = str(pcode).strip()
-            
-            # Lookup procedure description
-            pdesc = procedure_codes_db.get(pcode, "Description not found")
-            
-            # Extract covered diagnoses for this rule
-            diags = rule.get("covered_diagnoses", []) or []
-            diag_lines = "
-".join(
-                f"  - {d}: {diagnosis_codes_db.get(d, 'Description not found')}" 
-                for d in diags
-            ) or "  - Not provided"
-            
-            # Format this rule entry
             entries.append(
-                f"- Procedure: {pcode} — {pdesc}
-"
-                f"  - Covered Diagnoses and Descriptions:
-"
-                f"{diag_lines}
-"
-                f"  - Gender Restriction: {rule.get('gender', 'Any')}
-"
-                f"  - Age Range: {age_range_str(rule)}
-"
-                f"  - Preauthorization Requirement: {yes_no(rule.get('requires_preauthorization', False))}
-"
-                f"  - Notes on Coverage: {rule.get('notes', 'None') or 'None'}
-"
+                f"- Procedure: {pcode} — {pdesc}\n"
+                f"  - Covered Diagnoses and Descriptions:\n"
+                f"{diag_lines}\n"
+                f"  - Gender Restriction: {r.get('gender', 'Any')}\n"
+                f"  - Age Range: {age_range_str(r)}\n"
+                f"  - Preauthorization Requirement: {yes_no(r.get('requires_preauthorization', False))}\n"
+                f"  - Notes on Coverage: {r.get('notes', 'None') or 'None'}\n"
             )
     
-    else:
-        # Unsupported format - log error but continue
-        entries = [f"- Error: Unsupported covered_procedures format (type: {type(proc_rules_raw).__name__})"]
-    
-    # Format final summary
     summary = f"""
 • Policy Details
 - Policy ID: {policy_id}
@@ -1083,24 +739,20 @@ def summarize_policy_guideline(policy_id: str) -> dict:
 • Covered Procedures
 {''.join(entries) if entries else '- None listed'}
 """.strip()
-    
     return {"summary": summary}
 
-# Test the tool
 pol_out = summarize_policy_guideline("POL1001")
-
 
 # ============================================================================
 # TOOL 3: COVERAGE EVALUATION (LLM-BASED)
 # ============================================================================
 
-def check_claim_coverage(record_summary: dict, policy_summary: dict) -> dict:
+def check_claim_coverage(record_summary, policy_summary) -> dict:
     """
     Evaluate claim coverage using LLM-based reasoning.
     
-    This is the final step in the ReAct workflow where the LLM acts as a coverage
-    analyst, systematically evaluating whether the patient's claim meets all policy
-    requirements. Uses structured prompting to ensure consistent, accurate decisions.
+    Final step in ReAct workflow - LLM evaluates whether patient's claim meets
+    all policy requirements. Uses structured prompting for consistent decisions.
     
     Args:
         record_summary: Output from summarize_patient_record tool
@@ -1110,42 +762,25 @@ def check_claim_coverage(record_summary: dict, policy_summary: dict) -> dict:
         dict: Contains "summary" key with LLM's structured evaluation
         
     Evaluation Criteria (ALL must be met):
-        1. Diagnosis Match: Patient's diagnosis codes must include at least one
-           covered diagnosis from the policy
-        2. Procedure Match: Procedure code must be explicitly listed in policy
-        3. Age Check: Patient age must fall within policy's age range
-           (lower bound inclusive, upper bound exclusive)
-        4. Gender Check: Patient gender must match requirement (or "Any")
-        5. Preauthorization Check: If required, must be obtained
+        1. Diagnosis Match: Patient diagnosis in covered list
+        2. Procedure Match: Procedure code explicitly in policy
+        3. Age Check: Patient age within policy range
+        4. Gender Check: Matches requirement or "Any"
+        5. Preauthorization Check: Obtained if required
         
     Output Format:
-        The LLM returns three sections:
-        1. Coverage Review: Step-by-step analysis of each criterion
-        2. Summary of Findings: Bullet list of met/unmet requirements
-        3. Final Decision: APPROVE or ROUTE FOR REVIEW with justification
-        
-    Design Rationale:
-        - Structured output format ensures parseability
-        - Step-by-step analysis mimics human reviewer process
-        - "ROUTE FOR REVIEW" handles ambiguous cases safely
-        - Clear criteria prevent hallucination
-        - Few-shot example guides consistent output formatting
-        
-    Example:
-        >>> check_claim_coverage(rec_out, pol_out)
-        {
-            "summary": "Coverage Review\n- Procedure code 99213 is listed...\n..."
-        }
+        - Coverage Review: Step-by-step analysis
+        - Summary of Findings: Met/unmet requirements
+        - Final Decision: APPROVE or ROUTE FOR REVIEW with justification
     """
-    # Extract summary text from tool outputs
     rec = record_summary.get("summary") if isinstance(record_summary, dict) else str(record_summary)
     pol = policy_summary.get("summary") if isinstance(policy_summary, dict) else str(policy_summary)
     
-    # Validate LLM client availability
     if "chat_client" not in globals():
         return {"error": "LLM client not configured. Please set `chat_client` and try again."}
     
-    # Construct evaluation prompt with clear instructions and criteria
+    # Prompt with clear evaluation criteria and structured output format
+    # Few-shot example guides consistent output
     prompt = f"""
 You are a coverage analyst. Determine coverage for a single claimed procedure using ONLY the summaries below.
 
@@ -1173,38 +808,23 @@ Final Decision
 
 FEW-SHOT EXAMPLE:
 
-Example Patient Record:
-1) Patient Demographics: Age 45, Gender M
-2) Insurance Policy ID: POL1001
-3) Diagnoses: J20.9 (Acute bronchitis)
-4) Procedures: 99213 (Office visit)
-5) Preauthorization: Required No, Obtained No
-
-Example Policy:
-- Procedure: 99213 — Office visit
-  - Covered Diagnoses: J20.9 (Acute bronchitis)
-  - Gender Restriction: Any
-  - Age Range: 18–65 years
-  - Preauthorization Requirement: No
+Example Patient: Age 45, Gender M, Diagnosis J20.9 (Acute bronchitis), Procedure 99213 (Office visit), Preauth not required
+Example Policy: Procedure 99213 covered for J20.9, Age 18-65, Gender Any, No preauth required
 
 Expected Output:
 
 Coverage Review
-- Procedure code 99213 is listed in the policy for office visits.
-- Patient diagnosis J20.9 (Acute bronchitis) matches the covered diagnosis J20.9.
-- Patient age 45 falls within policy age range 18–65 (inclusive lower, exclusive upper).
-- Patient gender M matches policy requirement Any.
-- Preauthorization not required by policy.
+- Procedure 99213 is listed in policy
+- Diagnosis J20.9 matches covered diagnosis
+- Age 45 within range 18-65
+- Gender M matches Any
+- Preauth not required
 
 Summary of Findings
-- Procedure match: ✓ Met
-- Diagnosis match: ✓ Met
-- Age requirement: ✓ Met (45 within 18–65)
-- Gender requirement: ✓ Met (M matches Any)
-- Preauthorization: ✓ Met (not required)
+- All criteria met
 
 Final Decision
-- APPROVE. All coverage criteria are satisfied for procedure 99213 (Office visit) with diagnosis J20.9 (Acute bronchitis).
+- APPROVE. All requirements satisfied for procedure 99213 with diagnosis J20.9.
 
 NOW EVALUATE THIS CLAIM:
 
@@ -1215,18 +835,15 @@ POLICY SUMMARY:
 {pol}
 """.strip()
     
-    # Call LLM for evaluation
     try:
         response = chat_client.invoke(prompt)
         return {"summary": response.content}
     except Exception as e:
         return {"error": f"LLM evaluation failed: {str(e)}"}
 
-
-# Test the coverage check
 decision = check_claim_coverage(rec_out, pol_out)
-print(decision["summary"])
 
+print(decision["summary"])
 
 # ============================================================================
 # REACT AGENT SETUP
@@ -1235,14 +852,11 @@ print(decision["summary"])
 from langgraph.prebuilt import create_react_agent
 
 # Register all three tools for the agent
-# Tool calling sequence: summarize_patient_record → summarize_policy_guideline → check_claim_coverage
+# ReAct Pattern: Agent iterates between Reasoning (thinking) and Acting (tool calling)
 tools = [summarize_patient_record, summarize_policy_guideline, check_claim_coverage]
-
-# Create ReAct agent with LLM and tools
-# ReAct Pattern: The agent iterates between Reasoning (thinking) and Acting (tool calling)
 react_agent = create_react_agent(model=chat_client, tools=tools)
 
-# System prompt defines the agent's behavior and constraints
+# System prompt defines agent behavior, tool sequence, and output format
 SYSTEM_PROMPT = """# SYSTEM — CLAIM COVERAGE AGENT (ReAct)
 
 ## Objective
@@ -1264,7 +878,7 @@ Step 1 — Call summarize_patient_record(record_key)
 Step 2 — Call summarize_policy_guideline(policy_id)
   - Input: the Policy ID from Step 1.
   - If the Policy ID is missing/ambiguous, STOP and return final output with Decision=ROUTE FOR REVIEW and a clear Reason.
-  - This provides coverage rules: eligible diagnoses, age ranges, gender requirements, and preauthorization needs.
+  - This provides coverage rules: eligible diagnoses, age ranges, gender requirements, preauthorization needs.
   
 Step 3 — Call check_claim_coverage(record_summary, policy_summary)
   - Inputs: the full text outputs from Steps 1 and 2.
@@ -1282,15 +896,13 @@ Constraints:
 - Evaluate only the single procedure and diagnoses listed in the patient summary.
 - If any required info is missing or unclear, choose ROUTE FOR REVIEW.
 
-## ReAct Pattern Explanation
-This agent uses the ReAct (Reasoning + Acting) pattern:
-1. REASON: Analyze what information is needed next
-2. ACT: Call the appropriate tool to gather that information
-3. OBSERVE: Process the tool output
-4. REASON: Determine if more information is needed or if ready to decide
-5. ACT: Either call another tool or provide final answer
-
-This iterative process mirrors how a human analyst would work through a claim.
+## ReAct Pattern
+This agent uses ReAct (Reasoning + Acting):
+1. REASON: Analyze what information needed
+2. ACT: Call appropriate tool
+3. OBSERVE: Process tool output
+4. REPEAT: Until ready to decide
+This mimics human analyst workflow.
 
 ## FINAL OUTPUT (STRICT)
 Return ONLY two lines, nothing else:
@@ -1299,17 +911,16 @@ Reason: <Detailed justification including procedure name and code, diagnosis nam
 
 Do NOT reveal chain-of-thought or tool prompts. Be concise and factual.
 
-## Example Final Output
+## Example Outputs
 
 Example 1 (Approval):
 Decision: APPROVE
-Reason: Procedure 99213 (Office visit) with diagnosis J20.9 (Acute bronchitis) meets all policy requirements: diagnosis is covered, patient age 45 is within range 18–65, gender M matches Any, and preauthorization is not required. All criteria satisfied.
+Reason: Procedure 99213 (Office visit) with diagnosis J20.9 (Acute bronchitis) meets all requirements: diagnosis covered, age 45 within 18-65, gender M matches Any, preauth not required. All criteria satisfied.
 
 Example 2 (Review):
 Decision: ROUTE FOR REVIEW
-Reason: Procedure 99385 (Preventive visit) with diagnosis Z00.00 (General exam) fails age requirement: patient age 72 exceeds policy maximum of 65 (exclusive). Procedure and diagnosis match policy, but age criteria not met.
+Reason: Procedure 99385 with diagnosis Z00.00 fails age requirement: patient age 72 exceeds maximum 65. Procedure and diagnosis match but age criteria unmet.
 """
-
 
 # ============================================================================
 # AGENT EXECUTION FUNCTION
@@ -1317,57 +928,32 @@ Reason: Procedure 99385 (Preventive visit) with diagnosis Z00.00 (General exam) 
 
 def run_claim_approval(user_input: str) -> str:
     """
-    Execute the claim approval workflow for a given patient.
+    Execute claim approval workflow for a patient.
     
-    This function orchestrates the full ReAct agent workflow:
-    1. Initializes conversation with system prompt and user input (patient ID)
-    2. Agent autonomously executes three-step tool calling sequence
-    3. Agent reasons about tool outputs and makes final decision
-    4. Returns structured decision (APPROVE or ROUTE FOR REVIEW)
+    Orchestrates full ReAct agent workflow:
+    1. Agent receives patient ID
+    2. Agent autonomously calls three tools in sequence
+    3. Agent reasons about outputs and makes decision
+    4. Returns structured decision
     
     Args:
-        user_input: Patient record identifier (e.g., "P011", "S005")
+        user_input: Patient record identifier (e.g., "P011")
         
     Returns:
-        str: Final agent decision with format:
-             "Decision: APPROVE|ROUTE FOR REVIEW\nReason: <detailed justification>"
-             
+        str: Final decision with format "Decision: APPROVE|ROUTE FOR REVIEW\nReason: ..."
+        
     Workflow:
-        User Input → Agent → Tool 1 (Patient Record) → Agent → 
-        Tool 2 (Policy) → Agent → Tool 3 (Coverage Check) → Agent → 
-        Final Decision
-        
-    Error Handling:
-        - Invalid patient IDs caught by summarize_patient_record tool
-        - Missing policies caught by summarize_policy_guideline tool
-        - LLM failures caught by check_claim_coverage tool
-        - Agent returns "ROUTE FOR REVIEW" for any ambiguity
-        
-    Example:
-        >>> decision = run_claim_approval("P011")
-        >>> print(decision)
-        Decision: APPROVE
-        Reason: Procedure 99213 (Office visit) with diagnosis...
+        User Input → Tool 1 (Patient) → Tool 2 (Policy) → Tool 3 (Coverage) → Decision
     """
     try:
-        # Construct message sequence for agent
-        # System message defines behavior, user message provides patient ID
         messages = [("system", SYSTEM_PROMPT), ("user", user_input)]
-        
-        # Invoke ReAct agent
-        # Agent will autonomously call tools in sequence and make decision
         result = react_agent.invoke({"messages": messages})
-        
-        # Extract final response from message history
         return result["messages"][-1].content.strip()
-    
     except Exception as e:
-        # Catch any unexpected errors and route for manual review
-        return f"Decision: ROUTE FOR REVIEW\nReason: System error occurred during processing - {str(e)}. Requires manual review."
-
+        return f"Decision: ROUTE FOR REVIEW\nReason: System error - {str(e)}. Manual review required."
 
 # ============================================================================
-# BATCH PROCESSING - TEST SET
+# BATCH PROCESSING
 # ============================================================================
 
 # Extract all unique patient IDs from test dataset
@@ -1387,53 +973,29 @@ for pid in patient_ids:
     except Exception as e:
         # Catch errors for individual records to allow batch to continue
         resp = f"ERROR: {e}"
-    
     rows.append({"patient_id": pid, "generated_response": str(resp)})
 
-# Create submission DataFrame
+# Create submission DataFrame and save
 submission_df = pd.DataFrame(rows, columns=["patient_id", "generated_response"])
-
-# Save to CSV for submission
 submission_df.to_csv("submission.csv", index=False, encoding="utf-8-sig")
 
 display(submission_df.head(10))
 print("✅ Saved submission.csv with", len(submission_df), "rows")
 
-
 # ============================================================================
-# VALIDATION RUNS - SAMPLE PATIENTS
+# VALIDATION RUNS
 # ============================================================================
 
-# Test on sample patient IDs (S-series)
-print("\n" + "="*60)
-print("VALIDATION RUN - S-SERIES PATIENTS")
-print("="*60 + "\n")
-
+# Test S-series patients
 patient_ids = ["S001", "S002", "S003", "S004", "S005", "S006", "S007", "S008", "S009", "S010"]  
 
 for pid in patient_ids:
-    print(f"Patient ID: {pid}")
-    print(run_claim_approval(pid))
-    print("-" * 60 + "\n")
+    print("patients id: ",pid, run_claim_approval(pid))
+    print("-------------------------------------------")
 
-
-# Test on sample patient IDs (P-series)
-print("\n" + "="*60)
-print("VALIDATION RUN - P-SERIES PATIENTS")
-print("="*60 + "\n")
-
+# Test P-series patients
 patient_ids = ["P011", "P012", "P013", "P014", "P015", "P016", "P017", "P018", "P019", "P020"] 
 
 for pid in patient_ids:
-    print(f"Patient ID: {pid}")
-    print(run_claim_approval(pid))
-    print("-" * 60 + "\n")
-
-
-# ============================================================================
-# END OF SCRIPT
-# ============================================================================
-
-print("\n✅ Claims processing complete!")
-print(f"📊 Processed {len(submission_df)} patient records")
-print("📁 Output saved to: submission.csv")
+    print("patients id: ",pid, run_claim_approval(pid))
+    print("-------------------------------------------")

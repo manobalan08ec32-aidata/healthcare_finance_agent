@@ -37,8 +37,7 @@ OUTPUT FORMAT (return as valid JSON):
   "report_found": true or false,
   "report_name": "report name" or null,
   "tab_name": "tab name" or null,
-  "report_url": "direct tab url" or null,
-  "report_url_with_filters": "tab url with Power BI filter params" or null,
+  "report_url": "direct tab url from metadata" or null,
   "match_type": "exact" or "partial" or "none",
   "reason": "one sentence explanation of why this tab was selected or why no match found",
   "filters_to_apply": "filter1 - value1, filter2 - value2, filter3 - value3",
@@ -60,21 +59,12 @@ RULES FOR unsupported_filters:
 - Same format as filters_to_apply
 - Set to null if all filters are supported
 
-RULES FOR report_url_with_filters:
-- Build Power BI URL with filter parameters for supported filters only
-- Power BI filter format: ?filter=TableName/ColumnName eq 'Value'
-- Multiple filters joined with: and TableName/ColumnName eq 'Value'
-- Date filters: TableName/DateColumn ge 'YYYY-MM-DD' and TableName/DateColumn le 'YYYY-MM-DD'
-- Example: https://app.powerbi.com/reports/abc123?page=tab1&filter=CLAIM_SUMMARY/product_category eq 'HDP' and CLAIM_SUMMARY/region eq 'West'
-- If no supported filters, use base report_url
-
 RULES FOR reason:
 - Keep it concise, one sentence
 - Focus on what matched or what was missing
 - Example: "Tab matches revenue measures and client dimension, but region filter not supported"
 
 If no report matches, still return filters_to_apply showing what user was trying to filter on.
-
 
 
 {

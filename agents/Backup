@@ -1,140 +1,73 @@
-You are a Power BI Report Matcher. Your job is to analyze a SQL query and determine if any available Power BI report tab can answer the same question.
-
-MATCHING RULES (apply in order):
-
-1. TABLE MATCH (required)
-   - The report must use the same table(s) as the SQL query
-   - If no table overlap, report_found = false
-
-2. MEASURE MATCH (required)
-   - SQL aggregations (SUM, COUNT, AVG) must align with report measures
-   - Example: SQL has SUM(revenue) -> report must have revenue-related measure
-
-3. DIMENSION MATCH (required)
-   - SQL GROUP BY columns must exist in report dimensions
-   - SQL SELECT columns must be available in report
-
-4. FILTER COMPATIBILITY (partial match allowed)
-   - SQL WHERE clause filters should align with report supported_filters
-   - If SQL filter exists but report does not support it -> partial match, note in reason
-
-5. GRAIN COMPATIBILITY (check for mismatch)
-   - If SQL uses daily data but report is monthly -> note in reason
-   - This is a warning, not a disqualifier
-
-6. VALUE MATCH (best effort)
-   - Check if SQL filter values exist in report dimension values
-   - Handle synonyms: HDP = Home Delivery, Mail Order = Home Delivery
-
-MATCHING PRIORITY:
-- If multiple tabs match, prefer the one with more filter/dimension overlap
-- If tie, prefer the tab whose sample_questions are most similar to SQL intent
-- Always include partial matches - let the user decide if it meets their needs
-
-OUTPUT FORMAT (return as valid JSON):
-
 {
-  "report_found": true or false,
-  "report_name": "report name" or null,
-  "tab_name": "tab name" or null,
-  "report_url": "direct tab url from metadata" or null,
-  "match_type": "exact" or "partial" or "none",
-  "reason": "one sentence explanation of why this tab was selected or why no match found",
-  "filters_to_apply": "filter1 - value1, filter2 - value2, filter3 - value3",
-  "unsupported_filters": "filter1 - value1, filter2 - value2" or null,
-  "warnings": ["list of any grain mismatches or notes"] or []
-}
-
-RULES FOR filters_to_apply:
-- Extract ALL filter conditions from SQL WHERE clause
-- Format as comma-separated pairs: "column_name - value"
-- For date ranges use friendly format: "date_range - Jan 2024 to Mar 2024" or "date_range - Q1 2024"
-- Only include filters that ARE supported by the report
-- Examples:
-  - "product_category - HDP, client - Medova, date_range - July 2025"
-  - "region - West, product_category - Specialty"
-
-RULES FOR unsupported_filters:
-- Include filters from SQL that the report does NOT support
-- Same format as filters_to_apply
-- Set to null if all filters are supported
-
-RULES FOR reason:
-- Keep it concise, one sentence
-- Focus on what matched or what was missing
-- Example: "Tab matches revenue measures and client dimension, but region filter not supported"
-
-If no report matches, still return filters_to_apply showing what user was trying to filter on.
-
-
-{
-  "table_name": "CLAIM_SUMMARY",
-  "table_description": "Transactional claim-level data for all pharmacy channels",
+  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+  "table_description": "This table contains actuals vs forecast data",
   "reports": [
     {
-      "report_name": "HDP Revenue Variance Dashboard",
-      "report_url": "https://app.powerbi.com/reports/abc123",
-      "report_description": "Executive dashboard for Home Delivery revenue analysis",
-      "tabs": [
-        {
-          "tab_name": "Revenue Overview",
-          "tab_url": "https://app.powerbi.com/reports/abc123?page=revenue_overview",
-          "tab_description": "High-level revenue trends and YoY variance by product category",
-          "dimensions": {
-            "product_category": ["HDP", "Specialty", "Network"],
-            "time_period": ["Monthly", "Quarterly", "YTD"],
-            "client_name": ["Sample: ClientA", "ClientB", "..."]
+      "report_name": "OptumRX Financial Reporting Hub - Snapshot",
+      "report_description": "This report contains actuals vs forecast at high level by product , line of business ",
+      
+          "Slicers-Dims": {
+            "product": ["Home Delivery", "Specialty", "PBM or PBM Services"],
+            "time_period": ["Monthly","Yearly"],
+            "customer (Line of business)": ["External", "Optum", "E&I","M&R","C&S"]
+			"forecast":"5+7,9+3,8+4,2+10",
           },
-          "measures": ["gross_revenue", "net_revenue", "variance_amt", "variance_pct"],
-          "supported_filters": ["date_range", "product_category", "client_name"],
-          "grain": "monthly",
+          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
           "sample_questions": [
             "What is the revenue variance for HDP this quarter?",
             "Show YoY revenue trend for Home Delivery"
           ]
+		  ]
         },
         {
-          "tab_name": "Client Drill-Down",
-          "tab_url": "https://app.powerbi.com/reports/abc123?page=client_drill",
-          "tab_description": "Client-level revenue breakdown with drill-through to claim details",
-          "dimensions": {
-            "client_name": ["Sample: ClientA", "ClientB", "..."],
-            "region": ["East", "West", "Central", "South"],
-            "product_category": ["HDP", "Specialty", "Network"]
+      "report_name": "OptumRX Financial Reporting Hub - Customer Report",
+      "report_description": "This report contains actuals vs forecast exclusively for Clients  and line of business (customer) ",
+      
+          "Slicers-Dims": {
+            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
+            "time_period": ["Monthly","Yearly"],
+            "customer Tree (Line of business)": ["External", "Optum", "E&I","M&R","C&S"],
+			"forecast":"5+7,9+3,8+4,2+10"
           },
-          "measures": ["revenue", "claim_count", "avg_claim_value", "member_count"],
-          "supported_filters": ["date_range", "client_name", "region", "product_category"],
-          "grain": "daily",
+          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
           "sample_questions": [
-            "Which clients have the highest claim volume for HDP?",
-            "Break down revenue by region for ClientA"
+            "What is the revenue variance for HDP this quarter?",
+            "Show YoY revenue trend for Home Delivery"
           ]
-        }
-      ]
-    },
-    {
-      "report_name": "Specialty Pharmacy Operations",
-      "report_url": "https://app.powerbi.com/reports/def456",
-      "report_description": "Operational metrics for specialty pharmacy fulfillment",
-      "tabs": [
-        {
-          "tab_name": "Fulfillment Metrics",
-          "tab_url": "https://app.powerbi.com/reports/def456?page=fulfillment",
-          "tab_description": "Order processing times, fill rates, and operational KPIs",
-          "dimensions": {
-            "product_category": ["Specialty"],
-            "fulfillment_center": ["FC-East", "FC-West"],
-            "time_period": ["Daily", "Weekly"]
+		  ]
+        },
+		{
+      "report_name": "OptumRX Financial Reporting Hub - Customer Trend Report",
+      "report_description": "This report contains actuals alone exclusively for Clients  and line of business (customer) ",
+      
+          "Slicers-Dims": {
+            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
+            "time_period": ["Monthly","Yearly"],
+            "customer Tree (Line of business)": ["External", "Optum", "E&I","M&R","C&S"],
           },
-          "measures": ["fill_rate", "avg_processing_time", "order_count", "rejection_rate"],
-          "supported_filters": ["date_range", "fulfillment_center"],
-          "grain": "daily",
+          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
           "sample_questions": [
-            "What is the fill rate for specialty orders this week?",
-            "Compare processing times across fulfillment centers"
+            "What is the revenue variance for HDP this quarter?",
+            "Show YoY revenue trend for Home Delivery"
           ]
-        }
-      ]
-    }
-  ]
-}
+		  ]
+        },
+		
+		{
+      "report_name": "OptumRX Financial Reporting Hub - Trend",
+      "report_description": "This report contains either actual or forecast values trends monthly level.Use it for high level and not for actuals vs forecast comparison ",
+      
+         "Slicers-Dims": {
+            "product": ["Home Delivery", "Specialty", "PBM or PBM Services"],
+            "time_period": ["Monthly","Yearly"],
+            "customer (Line of business)": ["External", "Optum", "E&I","M&R","C&S"]
+			"forecast":"5+7,9+3,8+4,2+10",
+          },
+          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
+          "sample_questions": [
+            "What is the revenue variance for HDP this quarter?",
+            "Show YoY revenue trend for Home Delivery"
+          ]
+		  ]
+        },
+       

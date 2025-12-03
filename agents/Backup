@@ -1,4 +1,14 @@
 {
+    "prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
+"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
+    ],
+    "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims": [
+
+"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
+]
+}
+
+{
   "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
   "table_description": "This table contains actuals vs forecast data",
   "reports": [

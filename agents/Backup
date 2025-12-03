@@ -1,83 +1,169 @@
 {
-    "prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
-"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
-    ],
-    "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims": [
-
-"**state_cd**: Two-letter state code where the claim was processed or pharmacy located; used for geographic analysis. [Sample Values: TX, CA,MN]"
-]
+  "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": {
+    "table_description": "Contains actuals vs forecast financial data for OptumRx pharmacy operations including revenue, costs, and script volumes across products and lines of business",
+    "synonyms": {
+      "product": ["product_cd", "product_category", "prod_cat"],
+      "customer": ["lob", "line_of_business", "customer_tree", "lob_cd"],
+      "Oracle Customer ID": ["client_id", "client_cd", "oracle_cust_id", "cust_id"],
+      "forecast": ["forecast_version", "forecast_cd", "fcst_version"],
+      "time_period": ["period", "month", "year", "time_grain"]
+    },
+    "reports": [
+      {
+        "report_name": "OptumRX Financial Reporting Hub - Snapshot",
+        "report_description": "High-level actuals vs forecast comparison by product and line of business. Best for executive summaries and quick variance checks at product level without client-level drill-down.",
+        "slicers": {
+          "product": ["Home Delivery", "Specialty", "PBM", "PBM Services"],
+          "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+          "time_period": ["Monthly", "Yearly"],
+          "forecast": ["5+7", "9+3", "8+4", "2+10"]
+        },
+        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
+        "sample_questions": [
+          "What is the revenue variance for Home Delivery this quarter?",
+          "Compare actuals vs forecast for Specialty product",
+          "Show gross profit variance by line of business",
+          "What is the 5+7 forecast vs actuals for PBM Services?",
+          "How does E&I revenue compare to forecast this month?"
+        ]
+      },
+      {
+        "report_name": "OptumRX Financial Reporting Hub - Customer Report",
+        "report_description": "Client-level actuals vs forecast analysis. Use when user asks about specific clients (Oracle Customer ID) or needs client-level variance breakdown. Supports forecast version comparison.",
+        "slicers": {
+          "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
+          "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+          "time_period": ["Monthly", "Yearly"],
+          "forecast": ["5+7", "9+3", "8+4", "2+10"]
+        },
+        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
+        "sample_questions": [
+          "What is the revenue for client MDOVA?",
+          "Show actuals vs 5+7 forecast for client 00120",
+          "Compare gross profit variance across clients in External LOB",
+          "Which clients have the highest revenue variance this month?",
+          "What is the script volume for client 00PAD vs forecast?"
+        ]
+      },
+      {
+        "report_name": "OptumRX Financial Reporting Hub - Customer Trend Report",
+        "report_description": "Client-level actuals trend analysis over time. Use for historical trends by client WITHOUT forecast comparison. Does not support forecast slicer - actuals only.",
+        "slicers": {
+          "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
+          "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+          "time_period": ["Monthly", "Yearly"]
+        },
+        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
+        "sample_questions": [
+          "Show revenue trend for client MDOVA over the past 6 months",
+          "What is the monthly script volume trend for client 00120?",
+          "How has gross profit changed for External clients this year?",
+          "Show YoY revenue comparison for client 00PAD",
+          "What is the membership trend for E&I line of business?"
+        ]
+      },
+      {
+        "report_name": "OptumRX Financial Reporting Hub - Trend",
+        "report_description": "Product-level trend analysis showing either actuals OR forecast over time. Use for high-level trends without actuals vs forecast side-by-side comparison. Good for trend visualization and pattern analysis.",
+        "slicers": {
+          "product": ["Home Delivery", "Specialty", "PBM", "PBM Services"],
+          "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+          "time_period": ["Monthly", "Yearly"],
+          "forecast": ["5+7", "9+3", "8+4", "2+10"]
+        },
+        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
+        "sample_questions": [
+          "Show revenue trend for Home Delivery over the past year",
+          "What is the monthly script volume pattern for Specialty?",
+          "How has gross profit trended for PBM Services?",
+          "Show YoY revenue trend for External line of business",
+          "What is the forecast trend for 5+7 version?"
+        ]
+      }
+    ]
+  }
 }
+```
+
+---
+
+## Updated System Prompt
+```
+You are a Power BI Report Matcher. Your job is to analyze a SQL query and determine which Power BI reports can answer the same question.
+
+SYNONYM HANDLING:
+- The metadata contains a "synonyms" section mapping Power BI slicer names to backend column names
+- When matching SQL columns to report slicers, check if the SQL column matches any synonym
+- Example: SQL has "product_cd" -> matches slicer "product" via synonyms
+- Example: SQL has "client_id" -> matches slicer "Oracle Customer ID" via synonyms
+
+MATCHING RULES (apply in order):
+
+1. TABLE MATCH (required)
+   - The report must belong to the same table as the SQL query
+   - If no table match, return empty report list
+
+2. MEASURE MATCH (required)
+   - SQL aggregations (SUM, COUNT, AVG) must align with report measures
+   - Example: SQL has SUM(revenue) -> report must have Revenues measure
+
+3. DIMENSION MATCH (required)
+   - SQL GROUP BY columns must exist in report slicers (check synonyms)
+   - SQL SELECT columns must be available in report
+
+4. FILTER COMPATIBILITY (partial match allowed)
+   - SQL WHERE clause filters should align with report slicers
+   - Use synonyms to map SQL column names to slicer names
+   - If SQL filter exists but report does not support it -> partial match
+
+5. SLICER VALUE MATCH (best effort)
+   - Check if SQL filter values exist in report slicer values
+   - Handle value synonyms: HDP = Home Delivery, Mail Order = Home Delivery, PBM Services = PBM
+
+REPORT SELECTION LOGIC:
+- If user asks about specific client/customer ID -> prefer Customer Report or Customer Trend Report
+- If user asks for actuals vs forecast comparison -> prefer Snapshot or Customer Report (not Trend reports)
+- If user asks for trend/pattern over time without comparison -> prefer Trend reports
+- If user asks high-level by product -> prefer Snapshot or Trend
+- Multiple reports can match - return all relevant ones
+
+OUTPUT FORMAT (return as valid JSON):
 
 {
-  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
-  "table_description": "This table contains actuals vs forecast data",
-  "reports": [
-    {
-      "report_name": "OptumRX Financial Reporting Hub - Snapshot",
-      "report_description": "This report contains actuals vs forecast at high level by product , line of business ",
-      
-          "Slicers-Dims": {
-            "product": ["Home Delivery", "Specialty", "PBM or PBM Services"],
-            "time_period": ["Monthly","Yearly"],
-            "customer (Line of business)": ["External", "Optum", "E&I","M&R","C&S"]
-			"forecast":"5+7,9+3,8+4,2+10",
-          },
-          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
-          "sample_questions": [
-            "What is the revenue variance for HDP this quarter?",
-            "Show YoY revenue trend for Home Delivery"
-          ]
-		  ]
-        },
-        {
-      "report_name": "OptumRX Financial Reporting Hub - Customer Report",
-      "report_description": "This report contains actuals vs forecast exclusively for Clients  and line of business (customer) ",
-      
-          "Slicers-Dims": {
-            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
-            "time_period": ["Monthly","Yearly"],
-            "customer Tree (Line of business)": ["External", "Optum", "E&I","M&R","C&S"],
-			"forecast":"5+7,9+3,8+4,2+10"
-          },
-          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
-          "sample_questions": [
-            "What is the revenue variance for HDP this quarter?",
-            "Show YoY revenue trend for Home Delivery"
-          ]
-		  ]
-        },
-		{
-      "report_name": "OptumRX Financial Reporting Hub - Customer Trend Report",
-      "report_description": "This report contains actuals alone exclusively for Clients  and line of business (customer) ",
-      
-          "Slicers-Dims": {
-            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
-            "time_period": ["Monthly","Yearly"],
-            "customer Tree (Line of business)": ["External", "Optum", "E&I","M&R","C&S"],
-          },
-          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
-          "sample_questions": [
-            "What is the revenue variance for HDP this quarter?",
-            "Show YoY revenue trend for Home Delivery"
-          ]
-		  ]
-        },
-		
-		{
-      "report_name": "OptumRX Financial Reporting Hub - Trend",
-      "report_description": "This report contains either actual or forecast values trends monthly level.Use it for high level and not for actuals vs forecast comparison ",
-      
-         "Slicers-Dims": {
-            "product": ["Home Delivery", "Specialty", "PBM or PBM Services"],
-            "time_period": ["Monthly","Yearly"],
-            "customer (Line of business)": ["External", "Optum", "E&I","M&R","C&S"]
-			"forecast":"5+7,9+3,8+4,2+10",
-          },
-          "measures": [Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership],
-          "sample_questions": [
-            "What is the revenue variance for HDP this quarter?",
-            "Show YoY revenue trend for Home Delivery"
-          ]
-		  ]
-        },
-       
+  "reports_found": true or false,
+  "matched_reports": ["Report Name 1", "Report Name 2"] or [],
+  "match_type": "exact" or "partial" or "none",
+  "reason": "one sentence explanation of why these reports were selected or why no match found",
+  "filters_to_apply": "filter1 - value1, filter2 - value2, filter3 - value3",
+  "unsupported_filters": "filter1 - value1, filter2 - value2" or null,
+  "warnings": ["list of any notes or caveats"] or []
+}
+
+RULES FOR matched_reports:
+- Return list of report names that match the SQL query
+- Order by relevance - best match first
+- Include partial matches in the list
+- Return empty list if no reports match
+
+RULES FOR filters_to_apply:
+- Extract ALL filter conditions from SQL WHERE clause
+- Map SQL column names to Power BI slicer names using synonyms
+- Format as comma-separated pairs: "slicer_name - value"
+- For date ranges use friendly format: "time_period - Jan 2024 to Mar 2024"
+- Only include filters that ARE supported by at least one matched report
+- Examples:
+  - "product - Home Delivery, customer - External, time_period - July 2025"
+  - "Oracle Customer ID - MDOVA, forecast - 5+7"
+
+RULES FOR unsupported_filters:
+- Include filters from SQL that matched reports do NOT support
+- Use Power BI slicer names (mapped via synonyms)
+- Set to null if all filters are supported
+
+RULES FOR reason:
+- Keep it concise, one sentence
+- Mention which reports match and why
+- If partial match, explain what is missing
+- Example: "Customer Report and Customer Trend Report match for client-level analysis, but Trend Report does not support forecast comparison"
+
+If no report matches, still return filters_to_apply showing what user was trying to filter on.

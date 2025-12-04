@@ -1,4 +1,106 @@
-{"prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast":{"table_description":"Contains actuals vs forecast financial data for OptumRx pharmacy operations including revenue, costs, and script volumes across products, clients, and lines of business","common":{"measures":"Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership","synonyms":{"product_category":"product","lob":"customer (Line of Business)","line_of_business":"customer (Line of Business)","customer_tree":"customer Tree (Line of Business)","client_id":"Oracle Customer ID (Client ID)","client":"Oracle Customer ID (Client ID)","oracle_cust_id":"Oracle Customer ID (Client ID)","PBM":"PBM Services"}},"report":{"report_name":"OptumRX Financial Reporting Hub","tabs":[{"tab_name":"Snapshot","slicer_mode":"comparison","granularity":"product_lob","tab_description":"Product and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against one or two forecast versions (e.g., 5+7 vs 9+3). Best for variance analysis and comparing forecast versions at product level. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"forecast 1":["5+7","9+3","8+4","2+10"],"forecast 2":["5+7","9+3","8+4","2+10"]},"use_when":"Product-level actuals vs forecast comparison OR comparing two forecast versions","do_not_use_when":"Client-level analysis needed"},{"tab_name":"Oracle Client LOB","slicer_mode":"comparison","granularity":"client_lob","tab_description":"Client and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against a forecast version for specific clients. Use for client variance analysis. No product slicer available.","slicers":{"Oracle Customer ID (Client ID)":["MDOVA","00120","00PAD","..."],"customer Tree (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"Ledger 2":["5+7","9+3","8+4","2+10"]},"use_when":"Client-level actuals vs forecast comparison","do_not_use_when":"Client trend without forecast comparison OR product-level analysis"},{"tab_name":"Oracle Client Trend","slicer_mode":"single_view","granularity":"client_lob","tab_description":"Client and LOB level actuals trend over time. Shows historical performance for specific clients using GAAP actuals only. Use for MoM or YoY client trends. No forecast slicer - cannot compare actuals to forecast. No product slicer available.","slicers":{"Oracle Customer ID (Client ID)":["MDOVA","00120","00PAD","..."],"customer Tree (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"]},"use_when":"Client-level trend or historical analysis without forecast comparison","do_not_use_when":"Actuals vs forecast comparison needed OR product-level analysis"},{"tab_name":"Trend","slicer_mode":"single_view","granularity":"product_lob","tab_description":"Product and LOB level single metric trend over time. Shows actuals OR a single forecast version trending over months/years. Use for product trend, pattern, or seasonality analysis. Single ledger slicer - pick GAAP or one forecast, cannot compare side-by-side. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"ledger":["GAAP","5+7","9+3","8+4","2+10"]},"use_when":"Product-level trend or historical analysis without side-by-side comparison","do_not_use_when":"Actuals vs forecast comparison needed OR client-level analysis"},{"tab_name":"LOB","slicer_mode":"comparison","granularity":"product_lob","tab_description":"Product and LOB level actuals vs forecast comparison with LOB-centric view. Shows GAAP actuals side-by-side against a forecast version. Similar to Snapshot but single forecast comparison (Ledger 1 vs Ledger 2). Use when LOB breakdown is primary focus. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"Ledger 2":["5+7","9+3","8+4","2+10"]},"use_when":"Product and LOB level actuals vs single forecast comparison with LOB emphasis","do_not_use_when":"Comparing two forecast versions OR client-level analysis"}]}}}
+{
+  "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": {
+    "table_description": "Contains actuals vs forecast financial data for OptumRx pharmacy operations including revenue, costs, and script volumes across products, clients, and lines of business",
+    "common": {
+      "measures": "Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership",
+      "synonyms": {
+        "product_category": "product",
+        "lob": "customer (Line of Business)",
+        "line_of_business": "customer (Line of Business)",
+        "customer_tree": "customer Tree (Line of Business)",
+        "client_id": "Oracle Customer ID (Client ID)",
+        "client": "Oracle Customer ID (Client ID)",
+        "oracle_cust_id": "Oracle Customer ID (Client ID)",
+        "PBM": "PBM Services"
+      }
+    },
+    "report": {
+      "report_name": "OptumRX Financial Reporting Hub",
+      "tabs": [
+        {
+          "tab_name": "Trend",
+          "slicer_mode": "single_view",
+          "granularity": "product_lob",
+          "tab_description": "Product and LOB level single metric trend over time. Shows actuals OR a single forecast version trending over months/years. Use for product trend, pattern, or seasonality analysis. Single ledger slicer - pick GAAP or one forecast, cannot compare side-by-side. No client slicer available.",
+          "slicers": {
+            "product": ["Home Delivery", "Specialty", "PBM Services"],
+            "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+            "Year": ["2024", "2025"],
+            "Month": ["Jan to Dec"],
+            "ledger": ["GAAP", "5+7", "9+3", "8+4", "2+10"]
+          },
+          "use_when": "Product-level trend or historical analysis without side-by-side comparison",
+          "do_not_use_when": "Actuals vs forecast comparison needed OR client-level analysis"
+        },
+        {
+          "tab_name": "Oracle Client Trend",
+          "slicer_mode": "single_view",
+          "granularity": "client_lob",
+          "tab_description": "Client and LOB level actuals trend over time. Shows historical performance for specific clients using GAAP actuals only. Use for MoM or YoY client trends. No forecast slicer - cannot compare actuals to forecast. No product slicer available.",
+          "slicers": {
+            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD", "..."],
+            "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+            "Year": ["2024", "2025"],
+            "Month": ["Jan to Dec"],
+            "Ledger 1": ["GAAP"]
+          },
+          "use_when": "Client-level trend or historical analysis without forecast comparison",
+          "do_not_use_when": "Actuals vs forecast comparison needed OR product-level analysis"
+        },
+        {
+          "tab_name": "Snapshot",
+          "slicer_mode": "comparison",
+          "granularity": "product_lob",
+          "tab_description": "Product and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against one or two forecast versions (e.g., 5+7 vs 9+3). Best for variance analysis and comparing forecast versions at product level. No client slicer available.",
+          "slicers": {
+            "product": ["Home Delivery", "Specialty", "PBM Services"],
+            "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+            "Year": ["2024", "2025"],
+            "Month": ["Jan to Dec"],
+            "Ledger 1": ["GAAP"],
+            "forecast 1": ["5+7", "9+3", "8+4", "2+10"],
+            "forecast 2": ["5+7", "9+3", "8+4", "2+10"]
+          },
+          "use_when": "Product-level actuals vs forecast comparison OR comparing two forecast versions",
+          "do_not_use_when": "Client-level analysis needed"
+        },
+        {
+          "tab_name": "Oracle Client LOB",
+          "slicer_mode": "comparison",
+          "granularity": "client_lob",
+          "tab_description": "Client and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against a forecast version for specific clients. Use for client variance analysis. No product slicer available.",
+          "slicers": {
+            "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD", "..."],
+            "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+            "Year": ["2024", "2025"],
+            "Month": ["Jan to Dec"],
+            "Ledger 1": ["GAAP"],
+            "Ledger 2": ["5+7", "9+3", "8+4", "2+10"]
+          },
+          "use_when": "Client-level actuals vs forecast comparison",
+          "do_not_use_when": "Client trend without forecast comparison OR product-level analysis"
+        },
+        {
+          "tab_name": "LOB",
+          "slicer_mode": "comparison",
+          "granularity": "product_lob",
+          "tab_description": "Product and LOB level actuals vs forecast comparison with LOB-centric view. Shows GAAP actuals side-by-side against a forecast version. Similar to Snapshot but single forecast comparison (Ledger 1 vs Ledger 2). Use when LOB breakdown is primary focus. No client slicer available.",
+          "slicers": {
+            "product": ["Home Delivery", "Specialty", "PBM Services"],
+            "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
+            "Year": ["2024", "2025"],
+            "Month": ["Jan to Dec"],
+            "Ledger 1": ["GAAP"],
+            "Ledger 2": ["5+7", "9+3", "8+4", "2+10"]
+          },
+          "use_when": "Product and LOB level actuals vs single forecast comparison with LOB emphasis",
+          "do_not_use_when": "Comparing two forecast versions OR client-level analysis"
+        }
+      ]
+    }
+  }
+}
+
 
 You are a Power BI Tab Matcher. Your job is to analyze a SQL query and determine which Power BI report tab(s) can answer the same question.
 

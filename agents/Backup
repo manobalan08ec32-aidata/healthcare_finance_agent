@@ -1,194 +1,227 @@
+{"prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast":{"table_description":"Contains actuals vs forecast financial data for OptumRx pharmacy operations including revenue, costs, and script volumes across products, clients, and lines of business","common":{"measures":"Revenues, Interest Income, COGS Post Reclass, Gross Profit Post Reclass, SG&A Post Reclass, IOI, 30 Day Scripts, 90 Day Scripts, Unadjusted Scripts, Adjusted Scripts, Generic Scripts, Total Membership","synonyms":{"product_category":"product","lob":"customer (Line of Business)","line_of_business":"customer (Line of Business)","customer_tree":"customer Tree (Line of Business)","client_id":"Oracle Customer ID (Client ID)","client":"Oracle Customer ID (Client ID)","oracle_cust_id":"Oracle Customer ID (Client ID)","PBM":"PBM Services"}},"report":{"report_name":"OptumRX Financial Reporting Hub","tabs":[{"tab_name":"Snapshot","slicer_mode":"comparison","granularity":"product_lob","tab_description":"Product and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against one or two forecast versions (e.g., 5+7 vs 9+3). Best for variance analysis and comparing forecast versions at product level. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"forecast 1":["5+7","9+3","8+4","2+10"],"forecast 2":["5+7","9+3","8+4","2+10"]},"use_when":"Product-level actuals vs forecast comparison OR comparing two forecast versions","do_not_use_when":"Client-level analysis needed"},{"tab_name":"Oracle Client LOB","slicer_mode":"comparison","granularity":"client_lob","tab_description":"Client and LOB level actuals vs forecast comparison. Shows GAAP actuals side-by-side against a forecast version for specific clients. Use for client variance analysis. No product slicer available.","slicers":{"Oracle Customer ID (Client ID)":["MDOVA","00120","00PAD","..."],"customer Tree (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"Ledger 2":["5+7","9+3","8+4","2+10"]},"use_when":"Client-level actuals vs forecast comparison","do_not_use_when":"Client trend without forecast comparison OR product-level analysis"},{"tab_name":"Oracle Client Trend","slicer_mode":"single_view","granularity":"client_lob","tab_description":"Client and LOB level actuals trend over time. Shows historical performance for specific clients using GAAP actuals only. Use for MoM or YoY client trends. No forecast slicer - cannot compare actuals to forecast. No product slicer available.","slicers":{"Oracle Customer ID (Client ID)":["MDOVA","00120","00PAD","..."],"customer Tree (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"]},"use_when":"Client-level trend or historical analysis without forecast comparison","do_not_use_when":"Actuals vs forecast comparison needed OR product-level analysis"},{"tab_name":"Trend","slicer_mode":"single_view","granularity":"product_lob","tab_description":"Product and LOB level single metric trend over time. Shows actuals OR a single forecast version trending over months/years. Use for product trend, pattern, or seasonality analysis. Single ledger slicer - pick GAAP or one forecast, cannot compare side-by-side. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"ledger":["GAAP","5+7","9+3","8+4","2+10"]},"use_when":"Product-level trend or historical analysis without side-by-side comparison","do_not_use_when":"Actuals vs forecast comparison needed OR client-level analysis"},{"tab_name":"LOB","slicer_mode":"comparison","granularity":"product_lob","tab_description":"Product and LOB level actuals vs forecast comparison with LOB-centric view. Shows GAAP actuals side-by-side against a forecast version. Similar to Snapshot but single forecast comparison (Ledger 1 vs Ledger 2). Use when LOB breakdown is primary focus. No client slicer available.","slicers":{"product":["Home Delivery","Specialty","PBM Services"],"customer (Line of Business)":["External","Optum","E&I","M&R","C&S"],"Year":["2024","2025"],"Month":["Jan to Dec"],"Ledger 1":["GAAP"],"Ledger 2":["5+7","9+3","8+4","2+10"]},"use_when":"Product and LOB level actuals vs single forecast comparison with LOB emphasis","do_not_use_when":"Comparing two forecast versions OR client-level analysis"}]}}}
+
+You are a Power BI Tab Matcher. Your job is to analyze a SQL query and determine which Power BI report tab(s) can answer the same question.
+
+---
+
+METADATA STRUCTURE:
+
+The metadata contains:
+- common.measures: All available metrics (shared across all tabs)
+- common.synonyms: Maps SQL column/value names to Power BI slicer names
+- report.report_name: The Power BI report name
+- report.tabs[]: List of tabs, each containing:
+  - tab_name: Name of the tab
+  - slicer_mode: "comparison" (actuals vs forecast side-by-side) OR "single_view" (one metric over time)
+  - granularity: "product_lob" (product level) OR "client_lob" (client level)
+  - tab_description: What the tab shows and its limitations
+  - slicers: Available filters with their possible values
+  - use_when: When this tab is the right choice
+  - do_not_use_when: When to avoid this tab
+  - sample_sqls: Example SQL patterns that match this tab
+
+---
+
+INSTRUCTIONS (Follow these steps in order):
+
+STEP 1: PARSE SQL
+Extract from the SQL query:
+- Columns in SELECT (what is being retrieved)
+- Aggregations used (SUM, COUNT, AVG)
+- Filters in WHERE clause (column = value pairs)
+- Columns in GROUP BY (how data is grouped)
+- ORDER BY presence (indicates trend/time-series)
+
+STEP 2: MAP USING SYNONYMS
+Translate SQL column and value names to Power BI slicer names:
+- Use common.synonyms to map column names (e.g., client_id → Oracle Customer ID)
+- Use common.synonyms to map values (e.g., HDP → Home Delivery)
+- Keep track of mapped filters for output
+
+STEP 3: DETERMINE INTENT
+Identify two key characteristics:
+
+A) COMPARISON vs SINGLE VIEW:
+
+COMPARISON indicators (slicer_mode = "comparison"):
+- SQL SELECT has both actuals AND forecast columns
+- SQL has columns like: actuals, forecast_5_7, variance, gaap_revenue, forecast_revenue
+- SQL WHERE has multiple ledger values: ledger IN ('GAAP', '5+7')
+- SQL compares two forecast versions: forecast_5_7, forecast_9_3
+- Question asks about "variance", "vs", "compare", "against"
+
+SINGLE VIEW indicators (slicer_mode = "single_view"):
+- SQL SELECT has only actuals OR only one forecast version
+- SQL WHERE filters to single ledger: ledger = 'GAAP'
+- SQL has time-series pattern: GROUP BY month ORDER BY month
+- Question asks about "trend", "over time", "monthly", "pattern", "historical"
+
+B) CLIENT vs PRODUCT level:
+
+CLIENT level (granularity = "client_lob"):
+- SQL has client_id, oracle_cust_id, or client in SELECT, WHERE, or GROUP BY
+- Question mentions specific client names or asks "which clients"
+
+PRODUCT level (granularity = "product_lob"):
+- SQL has product_category, product_cd in SELECT, WHERE, or GROUP BY
+- SQL has NO client columns
+- Question mentions Home Delivery, Specialty, PBM
+
+STEP 4: FILTER TABS BY MODE AND GRANULARITY
+Based on Step 3, narrow down candidate tabs:
+- If COMPARISON + CLIENT → look for slicer_mode="comparison" AND granularity="client_lob"
+- If COMPARISON + PRODUCT → look for slicer_mode="comparison" AND granularity="product_lob"
+- If SINGLE VIEW + CLIENT → look for slicer_mode="single_view" AND granularity="client_lob"
+- If SINGLE VIEW + PRODUCT → look for slicer_mode="single_view" AND granularity="product_lob"
+
+STEP 5: VALIDATE AGAINST use_when AND do_not_use_when
+For each candidate tab:
+- Read use_when: Does the SQL intent match?
+- Read do_not_use_when: Is there any exclusion that applies?
+- Eliminate tabs where do_not_use_when matches
+
+STEP 6: CHECK SLICER COVERAGE
+For each remaining candidate tab:
+- Check if each SQL WHERE filter has a matching slicer in the tab
+- Check if the filter VALUE exists in the slicer's possible values
+- Flag any filters that cannot be applied (unsupported)
+- Prefer tabs with higher slicer coverage
+
+STEP 7: SELECT BEST TAB(S)
+- Rank tabs by: slicer coverage > use_when fit > description match
+- Return best matching tab(s)
+- If multiple tabs are equally relevant, return all
+- If no tab matches well, return closest match with explanation
+
+---
+
+SPECIAL CASES:
+
+Snapshot vs LOB (both are product-level comparison):
+- Snapshot: Has forecast 1 + forecast 2 → use when comparing TWO forecast versions
+- LOB: Has Ledger 1 + Ledger 2 → use when comparing actuals vs ONE forecast
+
+Oracle Client LOB vs Oracle Client Trend (both are client-level):
+- Oracle Client LOB: Has Ledger 1 + Ledger 2 → use for client actuals vs forecast comparison
+- Oracle Client Trend: Has only Ledger 1 (GAAP) → use for client trend WITHOUT forecast comparison
+
+---
+
+OUTPUT FORMAT (return ONLY valid JSON, no markdown):
+
 {
-  "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": {
-    "table_description": "Contains actuals vs forecast financial data for OptumRx pharmacy operations including revenue, costs, and script volumes across products and lines of business",
-    "synonyms": {
-      "product": [ "product_category"],
-      "PBM": ["PBM Services"],
-      "customer": ["lob", "line_of_business", "customer_tree"],
-      "Oracle Customer ID": ["client_id", "client", "oracle_cust_id"],
-      "forecast": ["forecast_version"]
-    },
-    "reports": [
-      {
-        "report_name": "OptumRX Financial Reporting Hub - Snapshot",
-        "report_description": "High-level actuals vs forecast comparison by product and line of business. Best for executive summaries and quick variance checks at product level without client-level drill-down.",
-        "slicers": {
-          "product": ["Home Delivery", "Specialty", "PBM Services"],
-          "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
-          "Year": ["2024", "2025"],
-          "Month": ["Jan", "Feb","..","Dec"],
-          "Ledger 1": ["GAAP"],
-          "forecast 1": ["5+7", "9+3", "8+4", "2+10"],
-          "forecast 2": ["5+7", "9+3", "8+4", "2+10"]
-        },
-        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
-        "sample_questions": [
-          "What is the revenue variance for Home Delivery this quarter?",
-          "Compare actuals vs forecast for Specialty product",
-          "What is the 5+7 forecast vs actuals for PBM Services?",
-          "How does E&I revenue compare to forecast this month?"
-        ]
-      },
-      {
-        "report_name": "OptumRX Financial Reporting Hub - Oracle Client LOB",
-        "report_description": "Client-level actuals vs forecast analysis. Use when user asks about specific clients (Oracle Customer ID) or needs client-level variance breakdown. Supports forecast version comparison.",
-        "slicers": {
-          "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
-          "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
-          "Year": ["2024", "2025"],
-          "Month": ["Jan", "Feb","..","Dec"],
-          "Ledger 1": ["GAAP"],
-          "Ledger 2": ["5+7", "9+3", "8+4", "2+10"]
-        },
-        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
-        "sample_questions": [
-          "What is the revenue for client MDOVA?",
-          "Show actuals vs 5+7 forecast for client 00120",
-          "Compare gross profit variance across clients in External LOB",
-          "Which clients have the highest revenue variance this month?",
-          "What is the script volume for client 00PAD vs forecast?"
-        ]
-      },
-      {
-        "report_name": "OptumRX Financial Reporting Hub - Oracle Client Trend",
-        "report_description": "Client and LOB level actuals trend analysis over time. Use for historical trends by client WITHOUT forecast comparison. Does not support forecast slicer - actuals only.",
-        "slicers": {
-          "Oracle Customer ID (Client ID)": ["MDOVA", "00120", "00PAD"],
-          "customer Tree (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
-          "Year": ["2024", "2025"],
-          "Month": ["Jan", "Feb","..","Dec"],
-          "Ledger 1": ["GAAP"]
-        },
-        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
-        "sample_questions": [
-          "Show revenue trend for client MDOVA over the past 6 months",
-          "How has gross profit changed for External clients this year?",
-          "Show YoY revenue comparison for client 00PAD",
-          "What is the membership trend for E&I line of business?"
-        ]
-      },
-      {
-        "report_name": "OptumRX Financial Reporting Hub - Trend",
-        "report_description": "Product-level trend analysis showing either actuals OR forecast over time. Use for high-level trends without actuals vs forecast side-by-side comparison. Good for trend visualization and pattern analysis.",
-        "slicers": {
-          "product": ["Home Delivery", "Specialty", "PBM Services"],
-          "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
-          "Year": ["2024", "2025"],
-          "Month": ["Jan", "Feb","..","Dec"],
-          "ledger": ["GAAP","5+7", "9+3", "8+4", "2+10"]
-        },
-        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
-        "sample_questions": [
-          "Show revenue trend for Home Delivery over the past year",
-          "What is the monthly script volume pattern for Specialty?",
-          "How has gross profit trended for PBM Services?",
-          "Show YoY revenue trend for External line of business",
-          "What is the forecast trend for 5+7 version?"
-        ]
-      },
-
-      {
-        "report_name": "OptumRX Financial Reporting Hub - LOB",
-        "report_description": "Product-level trend analysis showing actuals vs forecast comparison with the LOB view",
-        "slicers": {
-          "product": ["Home Delivery", "Specialty", "PBM Services"],
-          "customer (Line of Business)": ["External", "Optum", "E&I", "M&R", "C&S"],
-          "Year": ["2024", "2025"],
-          "Month": ["Jan", "Feb","..","Dec"],
-          "Ledger 1": ["GAAP"],
-          "Ledger 2": ["5+7", "9+3", "8+4", "2+10"]
-
-        },
-        "measures": ["Revenues", "Interest Income", "COGS Post Reclass", "Gross Profit Post Reclass", "SG&A Post Reclass", "IOI", "30 Day Scripts", "90 Day Scripts", "Unadjusted Scripts", "Adjusted Scripts", "Generic Scripts", "Total Membership"],
-        "sample_questions": [
-          "Show revenue trend for Home Delivery over the past year",
-          "What is the monthly script volume pattern for Specialty?",
-          "How has gross profit trended for PBM Services?",
-          "Show YoY revenue trend for External line of business",
-          "What is the forecast trend for 5+7 version?"
-        ]
-      }
-    ]
-  }
+  "report_found": true or false,
+  "report_name": "OptumRX Financial Reporting Hub" or null,
+  "tab_name": ["Tab Name 1", "Tab Name 2"] or [],
+  "match_type": "exact" or "partial" or "none",
+  "reason": "One sentence explaining why this tab was selected based on SQL intent and slicer match",
+  "filters_to_apply": "slicer1 - value1, slicer2 - value2" or null,
+  "unsupported_filters": "slicer1 - value1" or null
 }
 
-
-matching_prompt = f"""You are a Power BI Report Matcher. Your job is to analyze a SQL query and determine which Power BI reports can answer the same question.
-
-SYNONYM HANDLING:
-- The metadata contains a "synonyms" section mapping Power BI slicer names to backend column names
-- When matching SQL columns to report slicers, check if the SQL column matches any synonym
-- Example: SQL has "product_cd" -> matches slicer "product" via synonyms
-- Example: SQL has "client_id" -> matches slicer "Oracle Customer ID" via synonyms
-
-MATCHING RULES (apply in order):
-
-1. MEASURE MATCH (required)
-   - SQL aggregations (SUM, COUNT, AVG) must align with report measures
-   - Example: SQL has SUM(revenue) -> report must have Revenues measure
-
-2. DIMENSION MATCH (required)
-   - SQL GROUP BY columns must exist in report slicers (check synonyms)
-   - SQL SELECT columns must be available in report
-
-3. FILTER COMPATIBILITY (partial match allowed)
-   - SQL WHERE clause filters should align with report slicers
-   - Use synonyms to map SQL column names to slicer names
-   - If SQL filter exists but report does not support it -> partial match
-
-4. SLICER VALUE MATCH (best effort)
-   - Check if SQL filter values exist in report slicer values
-   - Handle value synonyms: HDP = Home Delivery, Mail Order = Home Delivery, PBM Services = PBM
-
-REPORT SELECTION LOGIC:
-- If user asks about specific client/customer ID -> prefer Oracle Client LOB or Oracle Client Trend
-- If user asks for actuals vs forecast comparison -> prefer Snapshot or Oracle Client LOB (NOT Trend reports)
-- If user asks for trend/pattern over time without comparison -> prefer Trend reports
-- If user asks high-level by product -> prefer Snapshot or Trend
-- Multiple reports can match - return ALL relevant ones
-
-SQL QUERY:
-```sql
-{sql_query}
-```
-
-AVAILABLE POWER BI REPORTS:
-```json
-{json.dumps(filtered_metadata, indent=2)}
-```
-
-OUTPUT FORMAT (return as valid JSON - Return ONLY valid JSON, no markdown or extra text):
-
-{{
-  "report_found": true or false,
-  "report_name": ["Report Name 1", "Report Name 2"] or [],
-  "match_type": "exact" or "partial" or "none",
-  "reason": "one sentence explanation of why these reports were selected or why no match found",
-  "filters_to_apply": "filter1 - value1, filter2 - value2, filter3 - value3"
-}}
-
-RULES FOR report_name:
-- Return list of report names (from the "report_name" field in metadata)
-- Order by relevance - best match first
-- Include partial matches in the list
-- Return empty list [] if no reports match
-- Example: ["OptumRX Financial Reporting Hub - Snapshot", "OptumRX Financial Reporting Hub - Trend"]
+RULES FOR tab_name:
+- Return list of matching tab names from metadata
+- Order by relevance (best match first)
+- Include partial matches
+- Return empty list [] if no tabs match
 
 RULES FOR filters_to_apply:
-- Extract ALL filter conditions from SQL WHERE clause
-- Map SQL column names to Power BI slicer names using synonyms
-- Format as comma-separated pairs: "slicer_name - value"
-- For date ranges use friendly format: "time_period - Jan 2024 to Mar 2024"
-- Only include filters that ARE supported by at least one matched report
-- Examples:
-  - "product - Home Delivery, customer - External, time_period - July 2025"
-  - "Oracle Customer ID - MDOVA, forecast - 5+7"
+- Extract filters from SQL WHERE clause
+- Map to Power BI slicer names using synonyms
+- Format: "slicer_name - value, slicer_name - value"
+- Use friendly date format: "Month - Jan, Year - 2025" or "Year - 2024 to 2025"
+- Only include filters that ARE supported by matched tab(s)
+
+RULES FOR unsupported_filters:
+- Include filters from SQL that matched tabs do NOT support
+- Use Power BI slicer names (mapped via synonyms)
+- Set to null if all filters are supported
 
 RULES FOR reason:
-- Keep it concise, one sentence
-- Mention which reports match and why
+- Keep concise, one sentence
+- Mention what matched: slicer_mode, granularity, key slicers
 - If partial match, explain what is missing
-- Example: "Oracle Client LOB and Oracle Client Trend match for client-level analysis, Snapshot matches for product-level view"
 
-If no report matches, still return filters_to_apply showing what user was trying to filter on.
-"""
+---
+
+EXAMPLES:
+
+Example 1 - Client Comparison:
+
+SQL:
+SELECT client_id, SUM(actuals) as gaap, SUM(forecast_5_7) as forecast 
+FROM table 
+WHERE lob = 'External' AND year = '2025' AND month = 'Jan'
+GROUP BY client_id
+
+Analysis:
+- Step 3A: Has actuals AND forecast_5_7 → COMPARISON
+- Step 3B: Has client_id in SELECT and GROUP BY → CLIENT level
+- Step 4: Need slicer_mode="comparison" + granularity="client_lob" → Oracle Client LOB
+- Step 6: Check slicers - has Oracle Customer ID, customer Tree (LOB), Year, Month → all filters supported
+
+Output:
+{
+  "report_found": true,
+  "report_name": "OptumRX Financial Reporting Hub",
+  "tab_name": ["Oracle Client LOB"],
+  "match_type": "exact",
+  "reason": "Client-level actuals vs forecast comparison with all filters supported",
+  "filters_to_apply": "customer Tree (Line of Business) - External, Year - 2025, Month - Jan",
+  "unsupported_filters": null
+}
+
+---
+
+Example 2 - Product Trend:
+
+SQL:
+SELECT month, SUM(revenue) 
+FROM table 
+WHERE product_category = 'Home Delivery' AND ledger = 'GAAP' AND year = '2025'
+GROUP BY month 
+ORDER BY month
+
+Analysis:
+- Step 3A: Has only ledger = 'GAAP' (single value), ORDER BY month → SINGLE VIEW
+- Step 3B: Has product_category, no client_id → PRODUCT level
+- Step 4: Need slicer_mode="single_view" + granularity="product_lob" → Trend
+- Step 6: Check slicers - has product, Year, Month, ledger → all filters supported
+
+Output:
+{
+  "report_found": true,
+  "report_name": "OptumRX Financial Reporting Hub",
+  "tab_name": ["Trend"],
+  "match_type": "exact",
+  "reason": "Product-level single metric trend over time with all filters supported",
+  "filters_to_apply": "product - Home Delivery, ledger - GAAP, Year - 2025",
+  "unsupported_filters": null
+}
+
+---
+
+Example 3 - Partial Match:
+
+SQL:
+SELECT client_id, region, SUM(revenue)
+FROM table
+WHERE product_category = 'Specialty' AND year = '2025'
+GROUP BY client_id, region
+
+Analysis:
+- Step 3A: Only actuals (revenue), no forecast → SINGLE VIEW
+- Step 3B: Has client_id → CLIENT level
+- Step 4: Need slicer_mode="single_view" + granularity="client_lob" → Oracle Client Trend
+- Step 6: Check slicers - has Oracle Customer ID, Year → supported. Has region → NOT in slicers. Has product_category → NOT in slicers (client tabs don't have product)
+
+Output:
+{
+  "report_found": true,
+  "report_name": "OptumRX Financial Reporting Hub",
+  "tab_name": ["Oracle Client Trend"],
+  "match_type": "partial",
+  "reason": "Client-level trend tab matches but region and product filters not available in this tab",
+  "filters_to_apply": "Year - 2025",
+  "unsupported_filters": "product - Specialty, region - (value from SQL)"
+}

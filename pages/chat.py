@@ -37,12 +37,12 @@ st.markdown(
         }
         
         /* ===== FONT IMPORT ===== */
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
         /* ===== GLOBAL APP STYLING ===== */
         .stApp {
             background-color: #FAFAF8 !important;
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
         }
         
         /* Force sidebar to be visible and set width */
@@ -2855,12 +2855,12 @@ def add_message_type_css():
     """Add CSS for different message types - Enhanced with Optum Brand Colors"""
     st.markdown("""
     <style>
-    /* ===== OPTUM BRAND FONT ===== */
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    /* ===== INTER FONT ===== */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
     
-    /* Apply Plus Jakarta Sans font globally */
+    /* Apply Inter font globally */
     * {
-        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
     }
     
     /* Main title styling - Optum Deep Red */
@@ -3049,15 +3049,15 @@ def add_message_type_css():
         font-weight: bold;
     }
     
-    /* ===== NEW SQL BADGE - GRAY ===== */
+    /* ===== NEW SQL BADGE - BLUE/VISIBLE ===== */
     .new-sql-badge {
-        background: linear-gradient(135deg, #f8f9fa 0%, #FFFFFF 100%);
-        border: 1px solid #EDE8E0;
+        background: linear-gradient(135deg, #EBF5FF 0%, #FFFFFF 100%);
+        border: 2px solid #3B82F6;
         padding: 12px 18px;
         border-radius: 12px;
         font-size: 14px;
-        font-weight: 500;
-        color: #6c757d;
+        font-weight: 600;
+        color: #1e40af;
         display: inline-flex;
         align-items: center;
         gap: 10px;
@@ -4167,7 +4167,7 @@ def render_chat_message_enhanced(message, message_idx):
                 else:
                     st.markdown(f"""
                     <div class="new-sql-badge">
-                        <span>🔧</span>
+                        <span>⚡</span>
                         <span>New SQL Generated</span>
                     </div>
                     """, unsafe_allow_html=True)

@@ -1,40 +1,3899 @@
-# ... (previous elif st.session_state.get('strategic_rendered', False): block ends) ...
+import streamlit as st
+import asyncio
+import uuid
+import time
+import json
+import re
+import pandas as pd
+import atexit
+import traceback
+import html
+from datetime import datetime
+from core.databricks_client import DatabricksClient
+from workflows.langraph_workflow import AsyncHealthcareFinanceWorkflow
+from typing import Dict, Any
 
-        # --- FIX 2 (FINAL): Radio Button for Question Context with MINIMAL SPACING ---
-        # We now use CSS to specifically reduce the margin of the radio component itself.
+# Page configuration - Force sidebar to be expanded
+st.set_page_config(
+    page_title="Healthcare Finance Assistant",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Set sidebar width via CSS and hide collapse button
+st.markdown(
+    """
+    <style>
+        /* Force sidebar to be visible and set width */
+        [data-testid="stSidebar"] {
+            min-width: 220px !important;
+            max-width: 220px !important;
+            width: 220px !important;
+            display: block !important;
+            visibility: visible !important;
+        }
+        
+        /* Ensure sidebar content is visible */
+        [data-testid="stSidebar"] > div {
+            display: block !important;
+            visibility: visible !important;
+        }
+        
+        /* Hide the sidebar collapse button - multiple selectors for Azure compatibility */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarNav"] button[kind="header"],
+        .css-1d391kg,
+        .e1fqkh3o0,
+        button[aria-label="Close sidebar"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Hide any arrow icons in sidebar - Azure App Service compatibility */
+        [data-testid="stSidebar"] [data-baseweb="icon"],
+        [data-testid="stSidebar"] svg,
+        [data-testid="stSidebar"] .css-1kyxreq {
+            display: none !important;
+        }
+        
+        /* Force sidebar to stay expanded - Azure App Service fix */
+        [data-testid="stSidebar"][aria-expanded="false"] {
+            display: block !important;
+            min-width: 220px !important;
+            width: 220px !important;
+        }
+        
+        /* Override any Azure-specific CSS that might be hiding sidebar */
+        .stApp [data-testid="stSidebar"] {
+            transform: none !important;
+            left: 0 !important;
+        }
+        
+        /* Make sidebar button text smaller for historical sessions */
+        [data-testid="stSidebar"] button[kind="secondary"] {
+            font-size: 0.75rem !important;
+        }
+        
+        [data-testid="stSidebar"] button p {
+            font-size: 0.75rem !important;
+        }
+    </style>
+    
+    <script>
+    // JavaScript to force sidebar to be visible on Azure App Service
+    function forceSidebarVisible() {
+        const sidebar = document.querySelector('[data-testid="stSidebar"]');
+        if (sidebar) {
+            sidebar.style.display = 'block';
+            sidebar.style.visibility = 'visible';
+            sidebar.style.transform = 'none';
+            sidebar.style.left = '0';
+            sidebar.style.width = '220px';
+            sidebar.style.minWidth = '220px';
+            sidebar.style.maxWidth = '220px';
+        }
+        
+        // Hide any collapse/expand buttons
+        const collapseBtn = document.querySelector('[data-testid="collapsedControl"]');
+        if (collapseBtn) {
+            collapseBtn.style.display = 'none';
+        }
+        
+        // Force sidebar container to be visible
+        const sidebarContainer = document.querySelector('.css-1d391kg');
+        if (sidebarContainer) {
+            sidebarContainer.style.display = 'block';
+            sidebarContainer.style.visibility = 'visible';
+        }
+    }
+    
+    // Run immediately and on DOM changes
+    forceSidebarVisible();
+    
+    // Create observer to watch for DOM changes (sidebar only)
+    const observer = new MutationObserver(function(mutations) {
+        forceSidebarVisible();
+    });
+    
+    // Start observing
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class']
+    });
+    
+    // Run periodically as backup
+    setInterval(forceSidebarVisible, 1000);
+    
+
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
+#############################################
+# REWRITTEN: MINIMAL TWO-NODE ASYNC HANDLER  #
+#############################################
+
+async def run_streaming_workflow_async(workflow, user_query: str):
+    """Stream node events and render incrementally; then run follow-up generation."""
+    session_id = st.session_state.session_id
+    user_questions_history = [m['content'] for m in st.session_state.messages if m.get('role') == 'user']
+    
+    # Get domain selection from session state
+    raw_domain_selection = st.session_state.get('domain_selection', None)
+    if isinstance(raw_domain_selection, list):
+        print(f"⚠️ domain_selection came as list {raw_domain_selection}; normalizing to first item")
+        domain_selection = raw_domain_selection[0] if raw_domain_selection else None
+    else:
+        domain_selection = raw_domain_selection
+    print(f"🔍 Using domain selection (string) in chat workflow: {domain_selection} (type={type(domain_selection).__name__})")
+    
+    if not domain_selection or domain_selection.strip() == '':
+        st.error("⚠️ Please select a domain from the main page before asking questions.")
+        st.info("👉 Go back to the main page and select either 'PBM Network' or 'Optum Pharmacy' domain first.")
+        return
+    
+    initial_state = {
+        'original_question': user_query,
+        'current_question': user_query,
+        'session_id': session_id,
+        'user_id': get_authenticated_user(),
+        'user_questions_history': user_questions_history,
+        'domain_selection': domain_selection,
+        'user_selected_datasets': st.session_state.get('user_selected_datasets', []),  # List of selected datasets (empty = all)
+        'selected_dataset_filter': st.session_state.get('selected_dataset_filter', []),  # Legacy support
+        'errors': [],
+        'session_context': {
+            'app_instance_id': session_id,
+            'execution_timestamp': datetime.now().isoformat(),
+            'conversation_turn': len(user_questions_history)
+        },
+        # 🆕 CRITICAL: Load conversation_memory from session_state
+        'conversation_memory': st.session_state.get('conversation_memory', {
+            'dimensions': {},
+            'analysis_context': {
+                'current_analysis_type': None,
+                'analysis_history': []
+            }
+        })
+    }
+    config = {"configurable": {"thread_id": session_id}}
+
+    last_state = None
+    followup_placeholder = st.empty()
+    
+    # Single status display and spinner
+    status_display = st.empty()
+    spinner_placeholder = st.empty()
+    stop_button_placeholder = st.empty()
+    
+    # Track which node is currently being shown in status
+    current_status_node = None
+    
+    # Initialize stop flag
+    if 'stop_requested' not in st.session_state:
+        st.session_state.stop_requested = False
+
+    def show_spinner():
+        """Show a persistent spinner indicator with user query and stop button"""
+        col1, col2 = spinner_placeholder.columns([5, 1])
+        with col1:
+            st.markdown(f"""
+                <div style="display: flex; align-items: center; padding: 8px 12px; background-color: #f0f8ff; border-radius: 6px; margin-bottom: 10px;">
+                    <div class="spinner" style="
+                        border: 3px solid #f3f3f3;
+                        border-top: 3px solid #3498db;
+                        border-radius: 50%;
+                        width: 20px;
+                        height: 20px;
+                        animation: spin 1s linear infinite;
+                        margin-right: 10px;
+                    "></div>
+                    <span style="color: #2c3e50; font-weight: 500;">Processing: <strong>{user_query[:50]}{'...' if len(user_query) > 50 else ''}</strong></span>
+                </div>
+                <style>
+                    @keyframes spin {{
+                        0% {{ transform: rotate(0deg); }}
+                        100% {{ transform: rotate(360deg); }}
+                    }}
+                </style>
+            """, unsafe_allow_html=True)
+        with col2:
+            if st.button("🛑 Stop", key="stop_workflow_btn", type="secondary", help="Stop the current query"):
+                st.session_state.stop_requested = True
+                print("🛑 Stop requested by user!")
+                st.rerun()
+    
+    def hide_spinner():
+        """Hide the spinner indicator"""
+        spinner_placeholder.empty()
+        stop_button_placeholder.empty()
+    
+    def check_stop_requested():
+        """Check if stop was requested and handle cleanup while preserving session state"""
+        if st.session_state.get('stop_requested', False):
+            print("🛑 Stop detected - cancelling workflow")
+            hide_spinner()
+            status_display.warning("⚠️ Query cancelled by user")
+            
+            # Add cancellation message to chat history
+            add_assistant_message("Query cancelled by user. Your session has been preserved.", message_type="standard")
+            
+            # IMPORTANT: Mark session cache for refresh so cancelled query is still tracked
+            st.session_state.refresh_session_cache = True
+            
+            # Reset flags
+            st.session_state.stop_requested = False
+            st.session_state.processing = False
+            return True
+        return False
+    
+    def update_status_for_node(node_name: str):
+        """Update status display for the given node that is STARTING"""
+        nonlocal current_status_node
+        
+        if node_name == current_status_node:
+            return  # Already showing this node's status
+        
+        current_status_node = node_name
+        print(f"🎨 STATUS UPDATE: Showing status for {node_name}")
+        
+        if node_name == 'entry_router':
+            status_display.info("⏳ Routing your question...")
+        elif node_name == 'navigation_controller':
+            status_display.info("⏳ Validating your question...")
+        elif node_name == 'router_agent':
+            status_display.info("⏳ Finding the right dataset for your question...")
+            # Start progressive updates
+            asyncio.create_task(show_progressive_router_status())
+        elif node_name == 'strategy_planner_agent':
+            status_display.info("⏳ Planning strategic analysis...")
+        elif node_name == 'drillthrough_planner_agent':
+            status_display.info("⏳ Preparing drillthrough analysis...")
+        else:
+            status_display.info(f"⏳ Processing: {node_name}...")
+
+    async def show_progressive_router_status():
+        """Show progressive status updates for router_agent node"""
+        try:
+            await asyncio.sleep(15)
+            if current_status_node == 'router_agent':  # Still on router
+                status_display.info("⏳ Generating SQL query based on metadata...")
+                print(f"🔄 Router status update: Generating SQL (T+4s)")
+
+            await asyncio.sleep(15)
+            if current_status_node == 'router_agent':  # Still on router
+                status_display.info("⏳ Executing SQL query...")
+                print(f"🔄 Router status update: Executing SQL (T+6s)")
+        except Exception as e:
+            print(f"⚠️ Progressive status update error: {e}")
+    
+    # Show spinner at start
+    show_spinner()
+    
+    # Show initial status - workflow always starts with entry_router
+    update_status_for_node('entry_router')
+    
+    print("\n" + "="*80)
+    print("🎬 WORKFLOW STARTING - Event stream beginning")
+    print("="*80 + "\n")
+    
+    # Reset stop flag at start
+    st.session_state.stop_requested = False
+                
+    try:
+        async for ev in workflow.astream_events(initial_state, config=config):
+            # Check for stop request at each iteration
+            if check_stop_requested():
+                add_assistant_message("Query cancelled by user.", message_type="standard")
+                return
+            
+            et = ev.get('type')
+            name = ev.get('name')
+            state = ev.get('data', {}) or {}
+            
+            print(f"📦 Event: type={et}, name={name}")
+            
+            # ✅ KEY FIX: When a node ENDS, show status for the NEXT node that's about to start
+            if et == 'node_end':
+                print(f"✅ Node completed: {name}")
+                
+                # Determine what the next node will be based on routing logic
+                # and show its status IMMEDIATELY (before it starts processing)
+                
+                if name == 'entry_router':
+                    # After entry_router, next is usually navigation_controller
+                    # (unless there's dataset clarification or SQL followup)
+                    if state.get('requires_dataset_clarification') or state.get('is_sql_followup'):
+                        update_status_for_node('router_agent')
+                    else:
+                        update_status_for_node('navigation_controller')
+                
+                elif name == 'navigation_controller':
+                    # Check navigation outputs
+                    nav_err = state.get('nav_error_msg')
+                    greeting = state.get('greeting_response')
+                    user_friendly_msg = state.get('user_friendly_message')
+
+                    if user_friendly_msg:
+                        status_display.info(f"💬 {user_friendly_msg}")
+                        print(f"💬 Displayed user-friendly message: {user_friendly_msg}")
+                        await asyncio.sleep(2)
+                    
+                    if nav_err:
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(nav_err, message_type="error")
+                        return
+                    if greeting:
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(greeting, message_type="greeting")
+                        return
+                    
+                    # After navigation, next is usually router_agent or END
+                    question_type = state.get('question_type')
+                    if question_type == 'root_cause':
+                        update_status_for_node('strategy_planner_agent')
+                    else:
+                        update_status_for_node('router_agent')
+                
+                elif name == 'router_agent':
+                    print(f"🎯 Router agent completed - checking outputs...")
+                    
+                    # Show success briefly before checking results
+                    status_display.success("✅ Query execution complete")
+                    await asyncio.sleep(0.5)
+                    
+                    # Check for various router outcomes
+                    if state.get('sql_followup_but_new_question', False):
+                        print("🔄 New question detected - will loop back to navigation")
+                        update_status_for_node('navigation_controller')
+                        continue
+                    
+                    if state.get('router_error_msg'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('router_error_msg'), message_type="error")
+                        return
+                    if state.get('needs_followup'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('sql_followup_question'), message_type="needs_followup")
+                        return
+                    if state.get('requires_dataset_clarification') and state.get('dataset_followup_question'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('dataset_followup_question'), message_type="dataset_clarification")
+                        return
+                    if state.get('missing_dataset_items') and state.get('user_message'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('user_message'), message_type="missing_items")
+                        return
+                    if state.get('phi_found') and state.get('user_message'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('user_message'), message_type="phi_pii_error")
+                        return
+                    if state.get('sql_followup_topic_drift') and state.get('user_message'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('user_message'), message_type="error")
+                        return
+                    
+                    sql_result = state.get('sql_result', {})
+                    if sql_result and sql_result.get('success'):
+                        hide_spinner()
+                        status_display.empty()
+                        
+                        functional_names = state.get('functional_names', [])
+                        history_sql_used = state.get('history_sql_used', False)
+                        if functional_names:
+                            add_selection_reasoning_message(functional_names, history_sql_used)
+                            print(f"✅ Added functional_names display: {functional_names} | history_sql_used: {history_sql_used}")
+                        
+                        rewritten_question = state.get('rewritten_question', initial_state['current_question'])
+                        
+                        # Extract selected_dataset (technical table names) from state for feedback tracking
+                        selected_dataset = state.get('selected_dataset', [])
+                        
+                        # Extract sql_generation_story from state
+                        sql_generation_story = state.get('sql_generation_story', '')
+                        
+                        # 🆕 DO NOT pass Power BI data here - it will be added by narrative agent
+                        # Initial message has NO Power BI data (narrative agent will add it)
+                        # Pass functional_names, selected_dataset, and sql_story to sql_result for database tracking
+                        add_sql_result_message(sql_result, rewritten_question, functional_names, None, selected_dataset, sql_generation_story)
+                        last_state = state
+                        
+                        st.session_state.sql_rendered = True
+                        st.session_state.narrative_state = state
+                        st.session_state.followup_state = state
+                        
+                        print("🔄 SQL results rendered - breaking")
+                        break
+                    else:
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message("No results available and please try different question.", message_type="error")
+                        return
+                
+                elif name == 'strategy_planner_agent':
+                    print(f"🧠 Strategic planner completed")
+                    
+                    if state.get('strategy_planner_err_msg'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('strategy_planner_err_msg'), message_type="error")
+                        return
+                    
+                    strategic_results = state.get('strategic_query_results', [])
+                    if strategic_results:
+                        hide_spinner()
+                        status_display.empty()
+                        
+                        strategic_reasoning = state.get('strategic_reasoning', '')
+                        add_strategic_analysis_message(strategic_results, strategic_reasoning)
+                        last_state = state
+                        
+                        drillthrough_exists = state.get('drillthrough_exists', '')
+                        if drillthrough_exists == "Available":
+                            st.session_state.strategic_rendered = True
+                            st.session_state.drillthrough_state = state
+                            break
+                        else:
+                            st.session_state.sql_rendered = True
+                            st.session_state.followup_state = state
+                            break
+                    else:
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message("No strategic analysis results available.", message_type="error")
+                        return
+                
+                elif name == 'drillthrough_planner_agent':
+                    print(f"🔧 Drillthrough planner completed")
+                    
+                    if state.get('drillthrough_planner_err_msg'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('drillthrough_planner_err_msg'), message_type="error")
+                        return
+                    
+                    drillthrough_results = state.get('drillthrough_query_results', [])
+                    if drillthrough_results:
+                        hide_spinner()
+                        status_display.empty()
+                        
+                        drillthrough_reasoning = state.get('drillthrough_reasoning', '')
+                        add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoning)
+                        last_state = state
+                        break
+                    else:
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message("No drillthrough analysis results available.", message_type="error")
+                        return
+            
+            elif et == 'workflow_end':
+                print(f"🏁 Workflow completed")
+                hide_spinner()
+                status_display.empty()
+                if not last_state:
+                    last_state = state
+
+        hide_spinner()
+        
+        # Handle follow-up generation
+        if st.session_state.get('sql_rendered', False):
+            print("🔄 SQL was rendered - follow-up will be handled in next execution cycle")
+        elif last_state and last_state.get('sql_result', {}).get('success'):
+            try:
+                print("🔄 Starting follow-up generation")
+                followup_state = last_state
+                follow_res = await workflow.ainvoke_followup(followup_state, config)
+                fq = follow_res.get('followup_questions', [])
+                if fq:
+                    st.session_state.current_followup_questions = fq
+                    followup_placeholder.empty()
+                    add_assistant_message("💡 **Would you like to explore further? Here are some suggested follow-up questions:**", message_type="followup_questions")
+                    print(f"✅ Generated {len(fq)} follow-up questions")
+                    # Exit clarification mode - workflow is complete and follow-up questions are ready
+                    st.session_state.in_clarification_mode = False
+                    print("🔓 EXITED clarification mode - follow-up questions generated, workflow complete")
+                else:
+                    followup_placeholder.empty()
+                    print("ℹ️ No follow-up questions generated")
+                    # Exit clarification mode even if no follow-up questions
+                    st.session_state.in_clarification_mode = False
+                    print("🔓 EXITED clarification mode - workflow complete (no follow-up questions)")
+            except Exception as fe:
+                followup_placeholder.error(f"Follow-up generation failed: {fe}")
+                print(f"❌ Follow-up generation error: {fe}")
+        elif last_state:
+            print("ℹ️ No SQL results to generate follow-ups for")
+        else:
+            print("⚠️ No final state captured from workflow")
+            
+    except Exception as e:
+        hide_spinner()
+        status_display.empty()
+        add_assistant_message(f"Workflow failed: {e}", message_type="error")
+        print(f"❌ Workflow error: {e}")
+
+def run_streaming_workflow(workflow, user_query: str):
+    asyncio.run(run_streaming_workflow_async(workflow, user_query))
+
+## Removed legacy background follow-up + polling functions (replaced by direct streaming approach)
+
+# ============ SESSION MANAGEMENT (keep your existing functions) ============
+
+def get_session_workflow():
+    """
+    Get or create the ASYNC workflow instance for the current user session.
+    """
+    if 'workflow' not in st.session_state:
+        print(f"🔧 Creating new ASYNC workflow for session: {st.session_state.session_id}")
+        try:
+            db_client = DatabricksClient()
+            # Store the created ASYNC workflow directly in the session state
+            st.session_state.workflow = AsyncHealthcareFinanceWorkflow(db_client)
+            # Store the db_client for cleanup
+            st.session_state.db_client = db_client
+            print(f"✅ Async workflow created and stored in session state for session: {st.session_state.session_id}")
+        except Exception as e:
+            print(f"❌ Failed to create async workflow for session {st.session_state.session_id}: {str(e)}")
+            st.error(f"Failed to create workflow: {e}")
+            return None
+    return st.session_state.workflow
+
+def cleanup_session():
+    """Cleanup function to properly close aiohttp sessions and background threads"""
+    try:
+        session_id = getattr(st.session_state, 'session_id', 'unknown')
+        print(f"🧹 Cleaning up session: {session_id}")
+        
+        # Clean up background thread if it exists
+        if hasattr(st.session_state, 'background_thread') and st.session_state.background_thread:
+            thread = st.session_state.background_thread
+            if thread.is_alive():
+                print(f"⚠️ Background thread still running during cleanup: {thread.name}")
+                # Note: daemon threads will be killed automatically when main process exits
+            st.session_state.background_thread = None
+        
+        # Clean up database client
+        if hasattr(st.session_state, 'db_client') and st.session_state.db_client:
+            # Run async cleanup in a new event loop since Streamlit might have closed the main one
+            import asyncio
+            try:
+                asyncio.run(st.session_state.db_client.close())
+                print("✅ Successfully closed database client sessions")
+            except Exception as cleanup_error:
+                print(f"⚠️ Error during DB cleanup: {cleanup_error}")
+    except Exception as e:
+        print(f"⚠️ General cleanup error: {e}")
+
+# Register cleanup function to run on app shutdown
+import atexit
+atexit.register(cleanup_session)
+
+def get_authenticated_user():
+    """
+    Get the authenticated user from session state (passed from main.py)
+    Returns the user email or a fallback value
+    """
+    return st.session_state.get('authenticated_user', 'unknown_user')
+
+def get_authenticated_user_name():
+    """
+    Get the authenticated user name from session state (passed from main.py)
+    Returns the user name or a fallback value
+    """
+    return st.session_state.get('authenticated_user_name', 'FDM User')
+
+
+def get_available_datasets():
+    """
+    Get available datasets from metadata.json based on current domain selection.
+    Returns a list of dataset names for the dropdown.
+    """
+    try:
+        with open("config/metadata/metadata.json", "r") as f:
+            metadata = json.load(f)
+    except Exception as e:
+        print(f"⚠️ Could not load metadata.json: {e}")
+        return ["All Datasets"]
+    
+    # Get current domain selection
+    domain_selection = st.session_state.get('domain_selection', None)
+    
+    datasets = set()
+    
+    if domain_selection:
+        # If domain is selected, get datasets for that domain
+        if isinstance(domain_selection, list):
+            for domain in domain_selection:
+                if domain in metadata:
+                    for dataset_dict in metadata[domain]:
+                        for dataset_name in dataset_dict.keys():
+                            datasets.add(dataset_name)
+        elif domain_selection in metadata:
+            for dataset_dict in metadata[domain_selection]:
+                for dataset_name in dataset_dict.keys():
+                    datasets.add(dataset_name)
+    else:
+        # No domain filter - get all datasets
+        for domain, dataset_list in metadata.items():
+            for dataset_dict in dataset_list:
+                for dataset_name in dataset_dict.keys():
+                    datasets.add(dataset_name)
+    
+    # Sort and add "All Datasets" option at the start
+    dataset_list = ["All Datasets"] + sorted(list(datasets))
+    return dataset_list
+
+def initialize_session_state():
+    """
+    Initialize session state variables directly. (Keep your existing implementation)
+    """
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+        print(f"🆕 New session started: {st.session_state.session_id}")
+    
+    # Track the original session ID (the one we started with in this browser session)
+    if 'original_session_id' not in st.session_state:
+        st.session_state.original_session_id = st.session_state.session_id
+        print(f"📌 Original session ID set: {st.session_state.original_session_id}")
+
+    # Initialize variables directly on st.session_state
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    
+    if 'processing' not in st.session_state:
+        st.session_state.processing = False
+    if 'workflow_started' not in st.session_state:
+        st.session_state.workflow_started = False
+    if 'current_followup_questions' not in st.session_state:
+        st.session_state.current_followup_questions = []
+    if 'button_clicked' not in st.session_state:
+        st.session_state.button_clicked = False
+    if 'click_counter' not in st.session_state:
+        st.session_state.click_counter = 0
+    if 'session_overview_shown' not in st.session_state:
+        st.session_state.session_overview_shown = False
+    if 'last_clicked_question' not in st.session_state:
+        st.session_state.last_clicked_question = None
+    if 'current_query' not in st.session_state:
+        st.session_state.current_query = ""
+    if 'current_conversation_start' not in st.session_state:
+        st.session_state.current_conversation_start = -1
+    if 'sql_rendered' not in st.session_state:
+        st.session_state.sql_rendered = False
+    if 'narrative_rendered' not in st.session_state:
+        st.session_state.narrative_rendered = False
+    if 'narrative_state' not in st.session_state:
+        st.session_state.narrative_state = None
+    if 'followup_state' not in st.session_state:
+        st.session_state.followup_state = None
+    if 'strategic_rendered' not in st.session_state:
+        st.session_state.strategic_rendered = False
+    if 'drillthrough_state' not in st.session_state:
+        st.session_state.drillthrough_state = None
+    # Initialize domain_selection - inherit from main page selection or set to None
+    if 'domain_selection' not in st.session_state:
+        st.session_state.domain_selection = None
+        print(f"🔧 Domain selection initialized to None in chat.py")
+    
+    # Initialize question type tracking
+    if 'question_type_selection' not in st.session_state:
+        st.session_state.question_type_selection = "New Question"
+        print(f"🔧 Question type initialized to 'New Question' for first question")
+    
+    # Track the last explicitly selected radio button value
+    # This persists across questions to maintain continuity
+    if 'last_radio_selection' not in st.session_state:
+        st.session_state.last_radio_selection = "New Question"
+        print(f"🔧 Last radio selection initialized to 'New Question'")
+    
+    # Track if at least one question has been asked (used only for first-time default)
+    if 'first_question_asked' not in st.session_state:
+        st.session_state.first_question_asked = False
+        print(f"🔧 First question flag initialized to False")
+    
+    # Track if we're in clarification mode (should hide radio button)
+    if 'in_clarification_mode' not in st.session_state:
+        st.session_state.in_clarification_mode = False
+        print(f"🔧 Clarification mode flag initialized to False")
+    
+    # Initialize dataset filter selection
+    if 'selected_dataset_filter' not in st.session_state:
+        st.session_state.selected_dataset_filter = []  # Empty list = all datasets
+        print(f"🔧 Dataset filter initialized to 'All Datasets'")
+    
+    # Initialize user selected datasets (for multi-select UI)
+    if 'user_selected_datasets' not in st.session_state:
+        st.session_state.user_selected_datasets = []  # Empty list = all datasets
+        print(f"🔧 User selected datasets initialized to empty (All Datasets)")
+    
+    # Track if user has explicitly loaded a historical session
+    if 'session_explicitly_loaded' not in st.session_state:
+        st.session_state.session_explicitly_loaded = False
+        print(f"🔧 Session explicitly loaded flag initialized to False")
+    
+    # Initialize stop flag for cancelling queries
+    if 'stop_requested' not in st.session_state:
+        st.session_state.stop_requested = False
+    
+    # Initialize session cache refresh flag
+    if 'refresh_session_cache' not in st.session_state:
+        st.session_state.refresh_session_cache = False
+    
+    # Authenticated user info should always come from main.py - don't initialize here
+    # Just log what we have (or fallback if nothing was passed)
+    authenticated_user = get_authenticated_user()
+    authenticated_user_name = get_authenticated_user_name()
+    
+    print(f"Current authenticated user: {authenticated_user}")
+    print(f"Current authenticated user name: {authenticated_user_name}")
+    
+    # Warning if we're using fallback values (indicates main.py didn't pass user info)
+    if authenticated_user == 'unknown_user':
+        print("⚠️ WARNING: Using fallback authenticated_user - main.py may not have passed user info")
+    if authenticated_user_name == 'FDM User':
+        print("⚠️ WARNING: Using fallback authenticated_user_name - main.py may not have passed user info")
+    # Removed obsolete follow-up polling/background keys
+
+# ============ CHAT HISTORY MANAGEMENT ============
+
+def convert_text_to_safe_html(text):
+    """Convert text to HTML while preserving intentional formatting and bullet points"""
+    if not text:
+        return ""
+    
+    import re
+
+    # Fix number-word combinations that cause italics (like "1.65billion")
+    text = re.sub(r'(\d+\.?\d*)(billion|million|thousand|trillion)', r'\1 \2', text)
+
+    # Convert markdown formatting to HTML
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    text = re.sub(r'(?<!\d)\*([^*\d]+)\*(?!\d)', r'<em>\1</em>', text)
+    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+
+    # Convert markdown bullet points to HTML lists
+    def bullets_to_ul(text):
+        lines = text.split('\n')
+        html_lines = []
+        in_list = False
+        for line in lines:
+            if re.match(r'^\s*[-*]\s+', line):
+                if not in_list:
+                    html_lines.append('<ul>')
+                    in_list = True
+                item = re.sub(r'^\s*[-*]\s+', '', line)
+                html_lines.append(f'<li>{item}</li>')
+            else:
+                if in_list:
+                    html_lines.append('</ul>')
+                    in_list = False
+                html_lines.append(line)
+        if in_list:
+            html_lines.append('</ul>')
+        return '\n'.join(html_lines)
+
+    text = bullets_to_ul(text)
+
+    # Convert double line breaks to paragraphs, single to <br>
+    paragraphs = text.split('\n\n')
+    html_paragraphs = []
+    for paragraph in paragraphs:
+        if paragraph.strip():
+            cleaned_paragraph = paragraph.strip().replace('\n', '<br>')
+            # Don't wrap if it's already a header or list
+            if not (cleaned_paragraph.startswith('<h') or cleaned_paragraph.startswith('<ul>') or cleaned_paragraph.startswith('<strong>')):
+                html_paragraphs.append(f'<p>{cleaned_paragraph}</p>')
+            else:
+                html_paragraphs.append(cleaned_paragraph)
+    return ''.join(html_paragraphs)
+
+def format_sql_data_for_streamlit(data):
+    """Format SQL data for proper Streamlit display with numeric conversion"""
+    import pandas as pd
+    import re
+    
+    if not data:
+        return pd.DataFrame()
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(data)
+    
+    def format_value(val, column_name=""):
+        # Handle None/NaN values
+        if pd.isna(val) or val is None:
+            return ""
+        
+        # Convert to string first
+        val_str = str(val)
+        
+        # Check if this is a client ID or similar identifier column - avoid comma formatting
+        is_id_column = any(id_pattern in column_name.lower() for id_pattern in ['client_id', 'member_id', 'patient_id', 'id'])
+        
+        # Check if this is a percentage column
+        is_percentage_column = any(pct_pattern in column_name.lower() for pct_pattern in ['percent', 'pct', '_pct', 'ratio'])
+        
+        # Check if this is a monetary column
+        is_monetary_column = any(money_pattern in column_name.lower() for money_pattern in ['revenue', 'expense', '_amount', 'amt', 'cost', 'fee'])
+        
+        # Handle scientific notation (e.g., 8.0000E433)
+        if re.match(r'^-?\d+\.?\d*[eE][+-]?\d+$', val_str):
+            try:
+                numeric_val = float(val_str)
+                # Format large scientific notation as integers with commas
+                if abs(numeric_val) >= 1000:
+                    return f"{int(round(numeric_val)):,}"
+                else:
+                    return f"{numeric_val:.2f}"
+            except ValueError:
+                return val_str
+        
+        # Handle regular numbers
+        try:
+            numeric_val = float(val_str)
+            
+            # Check if it's a year value (4-digit number in reasonable year range)
+            if numeric_val == int(numeric_val) and 1900 <= int(numeric_val) <= 2100:
+                return str(int(numeric_val))  # Keep years without commas
+            
+            # Handle percentage columns - add % symbol
+            if is_percentage_column:
+                if 0 <= abs(numeric_val) <= 1:
+                    # Value between 0-1, multiply by 100 and add %
+                    return f"{numeric_val:.2f}%"
+                else:
+                    # Value already in percentage form (e.g., 25.5), just add %
+                    return f"{numeric_val:.2f}%"
+            
+            # Handle monetary columns - add $ symbol and remove decimals
+
+            if is_monetary_column:
+                rounded_val = int(round(numeric_val))
+                if abs(rounded_val) >= 1000:
+                    return f"{rounded_val:,}"
+                else:
+                    return f"{rounded_val}"
+
+            
+            # Handle ID columns - never add commas regardless of size
+            if is_id_column:
+                if numeric_val == int(numeric_val):
+                    return str(int(numeric_val))
+                else:
+                    return f"{numeric_val:.2f}"
+            
+            # Handle large numbers (no decimals for integers)
+            if numeric_val == int(numeric_val):
+                if abs(numeric_val) >= 1000:
+                    return f"{int(numeric_val):,}"
+                else:
+                    return str(int(numeric_val))
+            else:
+                # Show 2 decimals for actual decimal values
+                return f"{numeric_val:.2f}"
+                
+        except (ValueError, TypeError):
+            # Not a number, return as-is
+            return val_str
+    
+    # Apply formatting to all columns
+    for col in df.columns:
+        df[col] = df[col].apply(lambda x: format_value(x, col))
+    
+    return df
+
+def render_feedback_section(title, sql_query, data, narrative, user_question=None, message_idx=None, table_name=None, sub_index=None):
+    """Render feedback section with thumbs up/down buttons - only for current question"""
+    
+    # NOTE: We trust the show_feedback parameter passed from render_single_sql_result
+    # The historical marking is already handled in start_processing and checked before calling this function
+    
+    # Create a unique key for this feedback section
+    # Include session_id, message_idx, AND sub_index for uniqueness
+    session_id = st.session_state.get('session_id', 'default')
+    
+    if message_idx is not None:
+        if sub_index is not None:
+            # Multiple SQL results in same message - include sub_index
+            feedback_key = f"feedback_{session_id}_msg_{message_idx}_sub_{sub_index}"
+        else:
+            # Single SQL result in message
+            feedback_key = f"feedback_{session_id}_msg_{message_idx}"
+    else:
+        # Fallback for edge cases
+        timestamp = int(time.time() * 1000)
+        feedback_key = f"feedback_{session_id}_{timestamp}"
+    
+    print(f"🔑 Generated feedback key: {feedback_key} | message_idx={message_idx} | sub_index={sub_index}")
+    
+    # Show feedback buttons if not already submitted
+    if not st.session_state.get(f"{feedback_key}_submitted", False):
+        st.markdown("---")
+        st.markdown("**Was this helpful?** ")
+        
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        
+        with col1:
+            if st.button("👍 Yes, helpful", key=f"{feedback_key}_thumbs_up"):
+                # Insert positive feedback - use user_question if available, otherwise fallback
+                rewritten_question = user_question or st.session_state.get('current_query', title)
+                
+                sql_result_dict = {
+                    'title': title,
+                    'sql_query': sql_query,
+                    'query_results': data,
+                    'narrative': narrative,
+                    'user_question': user_question  # Include user_question in sql_result
+                }
+                
+                # Run feedback insertion with table_name
+                success = asyncio.run(_insert_feedback_row(
+                    rewritten_question, sql_query, True, table_name
+                ))
+                
+                if success:
+                    st.session_state[f"{feedback_key}_submitted"] = True
+                    st.success("Thank you for your feedback! 👍")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Failed to save feedback")
+        
+        with col2:
+            if st.button("👎 Needs improvement", key=f"{feedback_key}_thumbs_down"):
+                st.session_state[f"{feedback_key}_show_form"] = True
+                st.rerun()
+        
+        # Show feedback form for thumbs down
+        if st.session_state.get(f"{feedback_key}_show_form", False):
+            with st.form(key=f"{feedback_key}_form"):
+                feedback_text = st.text_area(
+                    "How can we improve this response?",
+                    placeholder="Please describe what could be better...",
+                    height=100
+                )
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.form_submit_button("Submit Feedback"):
+                        # Insert negative feedback - use user_question if available, otherwise fallback
+                        rewritten_question = user_question or st.session_state.get('current_query', title)
+                        
+                        sql_result_dict = {
+                            'title': title,
+                            'sql_query': sql_query,
+                            'query_results': data,
+                            'narrative': narrative,
+                            'user_question': user_question  # Include user_question in sql_result
+                        }
+                        
+                        success = asyncio.run(_insert_feedback_row(
+                            rewritten_question, sql_query, False, table_name, feedback_text
+                        ))
+                        
+                        if success:
+                            st.session_state[f"{feedback_key}_submitted"] = True
+                            st.session_state[f"{feedback_key}_show_form"] = False
+                            st.success("Thank you for your feedback! We'll work on improving.")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Failed to save feedback")
+                
+                with col2:
+                    if st.form_submit_button("Cancel"):
+                        st.session_state[f"{feedback_key}_show_form"] = False
+                        st.rerun()
+    else:
+        # Show feedback submitted message
+        st.markdown("---")
+        st.success("✅ Thank you for your feedback!")
+
+def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, functional_names=None, powerbi_data=None):
+    """Render SQL results with title, expandable SQL query, data table, and narrative"""
+    
+    print(f"📊 render_sql_results called with: type={type(sql_result)}, show_feedback={show_feedback}, powerbi_data={powerbi_data is not None}")
+    
+    # Ensure sql_result is a dictionary
+    if not isinstance(sql_result, dict):
+        print(f"❌ SQL result is not a dict: {type(sql_result)} - {str(sql_result)[:100]}...")
+        st.error(f"Error: Invalid SQL result format (expected dict, got {type(sql_result).__name__})")
+        return
+    
+    # Get user_question from sql_result for feedback
+    user_question = sql_result.get('user_question')
+    
+    # Get functional_names if not passed as parameter (for historical display)
+    if not functional_names and 'functional_names' in sql_result:
+        functional_names = sql_result.get('functional_names')
+        print(f"📊 Extracted functional_names from sql_result: {functional_names}")
+    
+    # Get powerbi_data if not passed as parameter
+    if not powerbi_data and 'powerbi_data' in sql_result:
+        powerbi_data = sql_result.get('powerbi_data')
+        print(f"📊 Extracted powerbi_data from sql_result")
+    
+    # Get sql_generation_story if available
+    sql_generation_story = sql_result.get('sql_generation_story', '')
+    if sql_generation_story:
+        print(f"📖 Extracted sql_generation_story from sql_result: {sql_generation_story[:100]}...")
+    
+    # Get table_name for feedback tracking (technical name)
+    table_name = sql_result.get('selected_dataset')
+    print(f"📊 Extracted table_name for feedback: {table_name}")
+    
+    # Determine if this is historical (inverse of show_feedback)
+    is_historical = not show_feedback
+    
+    # Check if multiple results
+    if sql_result.get('multiple_results', False):
+        query_results = sql_result.get('query_results', [])
+        for i, result in enumerate(query_results):
+            title = result.get('title', f'Query {i+1}')
+            sql_query = result.get('sql_query', '')
+            data = result.get('data', [])
+            narrative = result.get('narrative', '')
+            
+            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data AND sql_story
+            render_single_sql_result(
+                title, sql_query, data, narrative, 
+                user_question, show_feedback, message_idx, 
+                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story
+            )
+    else:
+        # Single result - use rewritten_question if available, otherwise default
+        title = rewritten_question if rewritten_question else "Analysis Results"
+        sql_query = sql_result.get('sql_query', '')
+        data = sql_result.get('query_results', [])
+        narrative = sql_result.get('narrative', '')
+        
+        # ⭐ No sub_index needed for single result, but pass is_historical, functional_names, table_name, powerbi_data, and sql_story
+        render_single_sql_result(
+            title, sql_query, data, narrative, 
+            user_question, show_feedback, message_idx, 
+            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story
+        )
+
+
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None):
+    """Render a single SQL result with warm gold background for title and narrative
+    
+    Args:
+        functional_names: User-friendly dataset names for display (e.g., "PBM Claims")
+        table_name: Technical table name for feedback tracking (e.g., "pbm_claims")
+        powerbi_data: Power BI report matching data from narrative agent
+        sql_story: Business-friendly explanation of SQL generation (2-3 lines)
+    """
+    
+    # Title with custom narrative-content styling
+    st.markdown(f"""
+    <div class="narrative-content">
+        <strong> 🤖 AI Rewritten Question:</strong> {title}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display SQL Generation Story (NEW)
+    if sql_story and sql_story.strip():
+        st.markdown(f"""
+        <div style="background-color: #E8F4F8; border-left: 4px solid #2196F3; padding: 12px 16px; margin: 10px 0; border-radius: 4px;">
+            <strong>📖 How I solved this:</strong><br/>
+            <span style="color: #424242; line-height: 1.6;">{sql_story}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Display functional_names ONLY for historical sessions (not current sessions)
+    # Current sessions already show this via selection_reasoning message
+    # Use the same styling as selection_reasoning message for consistency
+    # CRITICAL: Only show if is_historical=True to avoid duplicate display with selection_reasoning message
+    if functional_names and is_historical:
+        # Format functional_names for display
+        if isinstance(functional_names, list):
+            datasets_text = ", ".join(functional_names)
+        else:
+            datasets_text = str(functional_names)
+        
+        print(f"🎨 Displaying functional_names in SQL result (historical session): {datasets_text}")
+        
+        # Use same styling as selection_reasoning message (sky blue box)
+        st.markdown(f"""
+        <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px; margin: 10px 0;">
+            <div style="display: flex; align-items: center;">
+                <span style="font-size: 1rem; margin-right: 8px;">📊</span>
+                <strong style="color: #1e3a8a; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    elif functional_names and not is_historical:
+        print(f"⏭️ SKIPPING functional_names display in SQL result (current session - already shown in selection_reasoning message)")
+    elif not functional_names:
+        print(f"⏭️ No functional_names to display")
+    
+    # SQL Query in collapsible section
+    if sql_query:
+        # Ensure sql_query is a string and clean it
+        if not isinstance(sql_query, str):
+            print(f"⚠️ SQL query is not a string: {type(sql_query)}")
+            sql_query = str(sql_query)
+        
+        # Remove any [object Object] artifacts that may have been injected
+        sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
+        
+        # Escape HTML characters in SQL query to prevent rendering issues
+        escaped_sql = html.escape(sql_query)
+        
+        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        st.markdown(f"""
+        <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+            <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                View SQL Query
+            </summary>
+            <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+            </div>
+        </details>
+        """, unsafe_allow_html=True)
+    
+    # Data table
+    if data:
+        formatted_df = format_sql_data_for_streamlit(data)
+        row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
+        
+        # Add feedback buttons after narrative (only for current session)
+        if show_feedback:
+            # ⭐ Pass sub_index and table_name to render_feedback_section
+            render_feedback_section(title, sql_query, data, narrative, user_question, message_idx, table_name, sub_index)
+    
+    # 🆕 DISPLAY NARRATIVE AND POWER BI REPORT (Power BI below narrative, not side-by-side)
+    # Check if we have Power BI data to display (ONLY if report_found is true)
+    has_powerbi_info = False
+    if powerbi_data:
+        print(f"🔍 Power BI Data Check: {powerbi_data}")
+        report_found = powerbi_data.get('report_found', False)
+        report_filter = powerbi_data.get('report_filter', '')
+        report_url = powerbi_data.get('report_url', '')
+        print(f"   report_found={report_found}, has_filter={bool(report_filter)}, has_url={bool(report_url)}")
+        # Show Power BI section ONLY if report_found is true
+        has_powerbi_info = report_found
+        print(f"   has_powerbi_info={has_powerbi_info}")
+    else:
+        print(f"⚠️ No Power BI data provided to render_single_sql_result")
+    
+    # Display Narrative Insights (full width)
+    if narrative:
+        print(f"📝 Narrative content preview (first 200 chars): {narrative[:200]}")
+        print(f"📝 Narrative contains '<div'?: {('<div' in narrative)}")
+        safe_narrative_html = convert_text_to_safe_html(narrative)
+        st.markdown(f"""
+        <div class="narrative-content">
+            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">💡</span>
+                Key Insights
+            </div>
+            <div>
+                {safe_narrative_html}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Display Power BI Report Info BELOW narrative (only if report_found is true)
+    if has_powerbi_info:
+        report_found = powerbi_data.get('report_found', False)
+        report_name = powerbi_data.get('report_name', '')
+        report_url = powerbi_data.get('report_url', '')
+        report_filter = powerbi_data.get('report_filter', '')
+        
+        # Determine styling
+        border_color = '#10b981'  # Green (only show if report found, so always green)
+        bg_color = '#ecfdf5'
+        
+        # Build report name display with "REPORT NAME" heading
+        report_info_html = ''
+        if report_name:
+            report_info_html = '<div style="margin-bottom: 12px;"><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 700; font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">REPORT TO VALIDATE (This will be available only during testing phase)</div><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 600; font-size: 1.1rem; color: #1f2937; line-height: 1.4;">' + html.escape(report_name) + '</div></div>'
+
+        # Build filter display with larger fonts
+        filter_html = ''
+        if report_filter and report_filter.strip():
+            filter_html = '<div style="margin-bottom: 12px;"><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 600; font-size: 0.95rem; color: #374151; margin-bottom: 5px; line-height: 1.4;">Filters to Apply:</div><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-size: 0.9rem; color: #4b5563; line-height: 1.5;">' + html.escape(report_filter) + '</div></div>'
+        
+        # Build report URL with larger font
+        report_url_html = ''
+        if report_url:
+            report_url_html = '<div style="padding-top: 12px; border-top: 1px solid ' + border_color + ';"><a href="' + html.escape(report_url) + '" target="_blank" style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; color: #2563eb; text-decoration: none; font-weight: 500; font-size: 1rem;">Open Report →</a></div>'
+        
+        # Build the complete Power BI card HTML with proper font styling
+        powerbi_card_html = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; background-color: {}; border: 2px solid {}; border-radius: 8px; padding: 14px; margin: 16px 0;">'.format(bg_color, border_color)
+        powerbi_card_html += report_info_html
+        powerbi_card_html += filter_html
+        powerbi_card_html += report_url_html
+        powerbi_card_html += '</div>'
+        
+        print(f"📊 Rendering Power BI card HTML (length: {len(powerbi_card_html)} chars)")
+        print(f"📊 HTML preview: {powerbi_card_html[:100]}...")
+        
+        # Use st.components.html with height for full-width display
+        import streamlit.components.v1 as components
+        components.html(powerbi_card_html, height=220, scrolling=False)
+        
+        print(f"✅ Power BI card rendered with components.html")
+
+
+def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
+    """Render strategic analysis response with reasoning and multiple strategic queries"""
+    
+    print(f"🔥 RENDERING STRATEGIC ANALYSIS")
+    
+    # 1. SHOW STRATEGIC REASONING FIRST
+    if strategic_reasoning:
+        formatted_reasoning = convert_text_to_safe_html(strategic_reasoning)
+        st.markdown(f"""
+        <div class="narrative-content">
+            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">🧠</span>
+                Strategic Reasoning
+            </div>
+            <div>
+                {formatted_reasoning}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("---")
+    
+    # 2. PROCESS EACH STRATEGIC QUERY
+    if strategic_results and isinstance(strategic_results, list):
+        for idx, strategic_result in enumerate(strategic_results):
+            title = strategic_result.get('title', f'Strategic Analysis {idx+1}')
+            sql_query = strategic_result.get('sql_query', '')
+            data = strategic_result.get('sql_output', strategic_result.get('data', []))
+            narrative = strategic_result.get('narrative', '')
+            
+            # Show individual strategic query result
+            render_single_strategic_result(title, sql_query, data, narrative, idx + 1, show_feedback)
+            
+            if idx < len(strategic_results) - 1:
+                st.markdown("---")
+    else:
+        st.error("No strategic query results found or invalid format.")
+        print(f"🔥 ERROR: strategic_results is not a list: {type(strategic_results)}")
+
+def render_single_strategic_result(title, sql_query, data, narrative, index, show_feedback=True):
+    """Render a single strategic analysis result"""
+    
+    # Title with strategic analysis styling
+    st.markdown(f"""
+    <div class="narrative-content">
+        <strong>🎯 Strategic Analysis #{index}:</strong> {title}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # SQL Query in collapsible section
+    if sql_query:
+        # Ensure sql_query is a string and clean it
+        if not isinstance(sql_query, str):
+            print(f"⚠️ Strategic SQL query is not a string: {type(sql_query)}")
+            sql_query = str(sql_query)
+        
+        # Remove any [object Object] artifacts that may have been injected
+        sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
+        
+        # Escape HTML characters in SQL query to prevent rendering issues
+        escaped_sql = html.escape(sql_query)
+        
+        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        st.markdown(f"""
+        <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+            <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                View Strategic SQL Query #{index}
+            </summary>
+            <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+            </div>
+        </details>
+        """, unsafe_allow_html=True)
+    
+    # Data table
+    if data:
+        formatted_df = format_sql_data_for_streamlit(data)
+        row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
+    
+    # Strategic narrative
+    if narrative:
+        safe_narrative_html = convert_text_to_safe_html(narrative)
+        st.markdown(f"""
+        <div class="narrative-content">
+            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">📊</span>
+                Strategic Insights
+            </div>
+            <div>
+                {safe_narrative_html}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Add feedback buttons for strategic analysis (only for current session)
+        # if show_feedback:
+        #     render_feedback_section(f"Strategic: {title}", sql_query, data, narrative)
+
+def render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning=None, show_feedback=True):
+    """Render drillthrough analysis response with reasoning and multiple operational queries"""
+    
+    print(f"🔥 RENDERING DRILLTHROUGH ANALYSIS")
+    
+    # 1. SHOW DRILLTHROUGH REASONING FIRST
+    if drillthrough_reasoning:
+        formatted_reasoning = convert_text_to_safe_html(drillthrough_reasoning)
+        st.markdown(f"""
+        <div class="narrative-content">
+            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">🔧</span>
+                Operational Reasoning
+            </div>
+            <div>
+                {formatted_reasoning}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("---")
+    
+    # 2. PROCESS EACH DRILLTHROUGH QUERY
+    if drillthrough_results and isinstance(drillthrough_results, list):
+        for idx, drillthrough_result in enumerate(drillthrough_results):
+            title = drillthrough_result.get('title', f'Drillthrough Analysis {idx+1}')
+            sql_query = drillthrough_result.get('sql_query', '')
+            data = drillthrough_result.get('sql_output', drillthrough_result.get('data', []))
+            narrative = drillthrough_result.get('narrative', '')
+            causational_insights = drillthrough_result.get('causational_insights', '')
+            
+            # Show individual drillthrough query result
+            render_single_drillthrough_result(title, sql_query, data, narrative, causational_insights, idx + 1, show_feedback)
+            
+            if idx < len(drillthrough_results) - 1:
+                st.markdown("---")
+    else:
+        st.error("No drillthrough query results found or invalid format.")
+        print(f"🔥 ERROR: drillthrough_results is not a list: {type(drillthrough_results)}")
+
+def render_single_drillthrough_result(title, sql_query, data, narrative, causational_insights, index, show_feedback=True):
+    """Render a single drillthrough analysis result"""
+    
+    # Title with drillthrough analysis styling
+    st.markdown(f"""
+    <div class="narrative-content">
+        <strong>🔍 Drillthrough Analysis #{index}:</strong> {title}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # SQL Query in collapsible section
+    if sql_query:
+        # Ensure sql_query is a string and clean it
+        if not isinstance(sql_query, str):
+            print(f"⚠️ Drillthrough SQL query is not a string: {type(sql_query)}")
+            sql_query = str(sql_query)
+        
+        # Remove any [object Object] artifacts that may have been injected
+        sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
+        
+        # Escape HTML characters in SQL query to prevent rendering issues
+        escaped_sql = html.escape(sql_query)
+        
+        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        st.markdown(f"""
+        <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+            <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                View Drillthrough SQL Query #{index}
+            </summary>
+            <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+            </div>
+        </details>
+        """, unsafe_allow_html=True)
+    
+    # Data table
+    if data:
+        formatted_df = format_sql_data_for_streamlit(data)
+        row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
+    
+    # Drillthrough narrative and causational insights
+    if narrative or causational_insights:
+        display_content = causational_insights if causational_insights else narrative
+        safe_narrative_html = convert_text_to_safe_html(display_content)
+        st.markdown(f"""
+        <div class="narrative-content">
+            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
+                <span style="margin-right: 8px;">🔬</span>
+                Operational Insights
+            </div>
+            <div>
+                {safe_narrative_html}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Add feedback buttons for drillthrough analysis (only for current session)
+        # if show_feedback:
+        #     render_feedback_section(f"Drillthrough: {title}", sql_query, data, display_content)
+
+def add_assistant_message(content, message_type="standard"):
+    """
+    Add assistant message to chat history - used for both real-time and preserved history
+    """
+    message = {
+        "role": "assistant",
+        "content": content,
+        "message_type": message_type,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    st.session_state.messages.append(message)
+    content_preview = (content or '')[:50] + "..." if content and len(content) > 50 else (content or '')
+    print(f"✅ Added {message_type} message (total messages now: {len(st.session_state.messages)}): {content_preview}")
+    
+    # Debug: Show current message state
+    print(f"📊 Current message summary:")
+    for i, msg in enumerate(st.session_state.messages[-3:]):  # Show last 3 messages
+        role = msg.get('role', 'unknown')
+        msg_type = msg.get('message_type', 'standard')
+        msg_content = msg.get('content', '') or ''
+        content_preview = msg_content[:30] + "..." if len(msg_content) > 30 else msg_content
+        print(f"  Message {len(st.session_state.messages)-3+i}: {role}({msg_type}) - {content_preview}")
+    
+    # Handle special state updates
+    if message_type == "domain_clarification":
+        st.session_state.current_followup_questions = []
+        # Enter clarification mode - hide radio button
+        st.session_state.in_clarification_mode = True
+        print("🔒 ENTERED clarification mode - radio button will be hidden")
+    
+    # Set clarification mode for router-generated clarification questions
+    if message_type in ["needs_followup", "dataset_clarification"]:
+        st.session_state.in_clarification_mode = True
+        print(f"🔒 ENTERED clarification mode ({message_type}) - radio button will be hidden")
+
+def add_selection_reasoning_message(functional_names, history_sql_used=False):
+    """
+    Add functional_names message to chat history for proper rendering
+    functional_names: list of strings representing selected datasets
+    history_sql_used: boolean indicating if historical SQL pattern was used
+    """
+    message = {
+        "role": "assistant",
+        "content": functional_names,  # Store as list instead of string
+        "message_type": "selection_reasoning",
+        "timestamp": datetime.now().isoformat(),
+        "history_sql_used": history_sql_used
+    }
+    
+    st.session_state.messages.append(message)
+    print(f"✅ Added functional_names message (total messages now: {len(st.session_state.messages)}) | history_sql_used: {history_sql_used}")
+
+def add_sql_result_message(sql_result, rewritten_question=None, functional_names=None, powerbi_data=None, selected_dataset=None, sql_generation_story=None):
+    """
+    Add SQL result message to chat history for proper rendering
+    Adds functional_names, powerbi_data, selected_dataset, and sql_generation_story for session tracking and display
+    
+    Args:
+        sql_result: SQL result dictionary
+        rewritten_question: Rewritten question string
+        functional_names: User-friendly dataset names (e.g., ["PBM Claims"])
+        powerbi_data: Power BI report matching data
+        selected_dataset: Technical table names (e.g., ["pbm_claims", "pbm_network"])
+        sql_generation_story: Business-friendly explanation of SQL generation (2-3 lines)
+    """
+    # Add functional_names to sql_result dict if not already present
+    if functional_names and 'functional_names' not in sql_result:
+        sql_result['functional_names'] = functional_names
+        print(f"  ✅ Added functional_names to sql_result: {functional_names}")
+    
+    # Add Power BI data to sql_result dict if not already present
+    if powerbi_data and 'powerbi_data' not in sql_result:
+        sql_result['powerbi_data'] = powerbi_data
+        print(f"  ✅ Added Power BI data to sql_result (report_found: {powerbi_data.get('report_found')})")
+    
+    # Add selected_dataset (technical table names) to sql_result dict if not already present
+    if selected_dataset and 'selected_dataset' not in sql_result:
+        sql_result['selected_dataset'] = selected_dataset
+        print(f"  ✅ Added selected_dataset to sql_result: {selected_dataset}")
+    
+    # Add sql_generation_story to sql_result dict if not already present
+    if sql_generation_story and 'sql_generation_story' not in sql_result:
+        sql_result['sql_generation_story'] = sql_generation_story
+        print(f"  ✅ Added sql_generation_story to sql_result: {sql_generation_story[:100]}...")
+    
+    message = {
+        "role": "assistant",
+        "content": "SQL analysis complete",  # Placeholder content
+        "message_type": "sql_result",
+        "timestamp": datetime.now().isoformat(),
+        "sql_result": sql_result,
+        "rewritten_question": rewritten_question,
+        "functional_names": functional_names,  # Store functional_names for historical rendering
+        "powerbi_data": powerbi_data,  # Store Power BI data for rendering
+        "selected_dataset": selected_dataset,  # Store technical table names for feedback tracking
+        "sql_generation_story": sql_generation_story  # Store SQL generation story for UI display
+    }
+    
+    st.session_state.messages.append(message)
+    print(f"✅ Added SQL result message (total messages now: {len(st.session_state.messages)})")
+    
+    # Debug: Show SQL result summary
+    if sql_result.get('multiple_results'):
+        print(f"  📊 Multiple SQL results: {len(sql_result.get('query_results', []))} queries")
+    else:
+        data_count = len(sql_result.get('query_results', []))
+        print(f"  📊 Single SQL result: {data_count} rows returned")
+
+async def _insert_session_tracking_row(sql_result: Dict[str, Any], full_state: Dict[str, Any] = None):
+    """Insert the sql_result JSON and state_info into tracking table after narrative generation.
+    NEW TABLE: fdmbotsession_tracking_updt
+    Columns: session_id, user_id, user_question, selected_dataset, sql_info, state_info, insert_ts
+    
+    Args:
+        sql_result: The SQL result dictionary with query results
+        full_state: The complete state dictionary from workflow (will remove query_results before storing)
+    
+    Note: selected_dataset column stores functional_names (user-friendly names like "PBM Claims")
+          from router state, NOT technical table names
+    """
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping tracking insert")
+            return
+        session_id = st.session_state.get('session_id', 'unknown')
+        user_id = get_authenticated_user()
+        
+        # Get user_question from sql_result user_question field (rewritten question from workflow)
+        user_question = sql_result.get('user_question', st.session_state.get('current_query', ''))
+        user_question_escaped = user_question.replace("'", "\\'") if user_question else ''
+        
+        # Get functional_names (user-friendly dataset names) from sql_result
+        # This comes from router state: state.get('functional_names', [])
+        functional_names = sql_result.get('functional_names', [])
+        if isinstance(functional_names, list):
+            selected_dataset = ', '.join(functional_names)  # Join with comma and space for display
+        else:
+            selected_dataset = str(functional_names) if functional_names else ''
+        selected_dataset_escaped = selected_dataset.replace("'", "\\'")
+        
+        # Serialize sql_result as JSON (already includes functional_names from router)
+        payload_json = json.dumps(sql_result, ensure_ascii=False)
+        
+        # CRITICAL: Remove newlines and escape single quotes (like _insert_feedback_row)
+        payload_escaped = payload_json.replace("'", "\\'").replace("\n", " ")
+        
+        # NEW: Process full_state to create state_info (remove query_results)
+        state_info_escaped = ''
+        if full_state:
+            try:
+                # Create a copy of the state to avoid modifying the original
+                state_copy = dict(full_state)
+                
+                # Remove query_results from sql_result if it exists in the state
+                if 'sql_result' in state_copy and isinstance(state_copy['sql_result'], dict):
+                    sql_result_copy = dict(state_copy['sql_result'])
+                    # Remove the large query_results data
+                    sql_result_copy.pop('query_results', None)
+                    # Also remove data from multiple results if present
+                    if 'query_results' in sql_result_copy and isinstance(sql_result_copy['query_results'], list):
+                        for query in sql_result_copy['query_results']:
+                            if isinstance(query, dict):
+                                query.pop('data', None)
+                    state_copy['sql_result'] = sql_result_copy
+                
+                # Serialize the cleaned state
+                state_json = json.dumps(state_copy, ensure_ascii=False)
+                
+                # CRITICAL: Remove newlines and escape single quotes (same as sql_result)
+                state_info_escaped = state_json.replace("'", "\\'").replace("\n", " ")
+                print(f"✅ Prepared state_info for insert ({len(state_info_escaped)} chars)")
+            except Exception as state_error:
+                print(f"⚠️ Error processing state_info: {state_error}")
+                state_info_escaped = ''
+        
+        # Use from_utc_timestamp to convert current UTC timestamp to CST/CDT (US/Central)
+        insert_sql = f"""
+        INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+            (session_id, user_id, user_question, selected_dataset, sql_info, state_info, insert_ts)
+        VALUES
+            ('{session_id}', '{user_id}', '{user_question_escaped}', '{selected_dataset_escaped}', '{payload_escaped}', '{state_info_escaped}', from_utc_timestamp(current_timestamp(), 'America/Chicago'))
+        """
+        await db_client.execute_sql_async_audit(insert_sql)
+        print("✅ Session tracking insert succeeded (NEW TABLE with state_info)")
+            
+    except Exception as e:
+        print(f"⚠️ Session tracking insert failed: {e}")
+
+
+async def _fetch_session_history():
+    """Fetch last 5 sessions for the user from fdmbotsession_tracking table.
+    Returns list of sessions with session_id and insert_ts (timestamp).
+    """
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping history fetch")
+            return []
+        
+        user_id = get_authenticated_user()
+        
+        # Modified query to fetch from NEW TABLE
+        fetch_sql = f"""
+        SELECT session_id, MAX(insert_ts) as last_activity
+        FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+        WHERE user_id = '{user_id}'
+        GROUP BY session_id 
+        ORDER BY MAX(insert_ts) DESC
+        LIMIT 7
+        """
+        
+        print("🕐 Fetching session history for user (NEW TABLE):", user_id)
+        print("🔍 SQL Query:", fetch_sql)
+
+        result = await db_client.execute_sql_async_audit(fetch_sql)
+
+        print(f"🔍 Database result type: {type(result)}")
+        print(f"🔍 Database result: {result}")
+        
+        # Handle different response formats from database client
+        sessions = []
+        
+        if isinstance(result, list):
+            # Direct list response
+            sessions = result
+            print(f"✅ Direct list response with {len(sessions)} sessions")
+        elif isinstance(result, dict):
+            if result.get('success'):
+                sessions = result.get('data', [])
+                print(f"✅ Dict response with success=True, {len(sessions)} sessions")
+            else:
+                print("⚠️ Dict response with success=False")
+                print(f"🔍 Error details: {result}")
+                return []
+        else:
+            print(f"⚠️ Unexpected result type: {type(result)}")
+            return []
+        
+        # Debug each session
+        for i, session in enumerate(sessions):
+            if isinstance(session, dict):
+                session_id = session.get('session_id', 'NO_ID')
+                last_activity = session.get('last_activity', 'NO_TIMESTAMP')
+                print(f"  Session {i+1}: {session_id} | Last Activity: {last_activity}")
+            else:
+                print(f"  Session {i+1}: Unexpected session type: {type(session)} - {session}")
+        
+        return sessions
+            
+    except Exception as e:
+        print(f"⚠️ Session history fetch failed: {e}")
+        import traceback
+        print(f"🔍 Full traceback: {traceback.format_exc()}")
+        return []
+    
+async def _fetch_session_records(session_id: str):
+    """Fetch all records for a specific session_id in chronological order from NEW TABLE"""
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping session records fetch")
+            return []
+        
+        user_id = get_authenticated_user()
+        
+        # Query NEW TABLE with state_info column added
+        fetch_sql = f"""
+        SELECT session_id, user_question, selected_dataset, sql_info, state_info, insert_ts
+        FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
+        WHERE user_id = '{user_id}' AND session_id = '{session_id}'
+        ORDER BY insert_ts ASC
+        """
+        
+        print(f"🎯 EXECUTING DATABASE QUERY (NEW TABLE): Fetching all records for session: {session_id}")
+        print("🔍 SQL Query:", fetch_sql)
+        
+        result = await db_client.execute_sql_async_audit(fetch_sql)
+        
+        print(f"🔍 Database result type: {type(result)}")
+        
+        # Handle different response formats from database client
+        records = []
+        
+        if isinstance(result, list):
+            records = result
+            print(f"✅ Direct list response with {len(records)} records")
+        elif isinstance(result, dict):
+            if result.get('success'):
+                records = result.get('data', [])
+                print(f"✅ Dict response with success=True, {len(records)} records")
+            else:
+                print("⚠️ Dict response with success=False")
+                print(f"🔍 Error details: {result}")
+                return []
+        else:
+            print(f"⚠️ Unexpected result type: {type(result)}")
+            return []
+        
+        # Debug each record
+        for i, record in enumerate(records):
+            if isinstance(record, dict):
+                print(f"  Record {i+1}: {record.get('user_question', 'NO_QUESTION')[:50]}... - {record.get('insert_ts', 'NO_TIMESTAMP')}")
+                print(f"    Selected dataset: {record.get('selected_dataset', 'N/A')}")
+                print(f"    sql_info present: {bool(record.get('sql_info'))}")
+            elif isinstance(record, str):
+                print(f"  Record {i+1}: String record: {record[:100]}...")
+            else:
+                print(f"  Record {i+1}: Unexpected record type: {type(record)} - {str(record)[:100]}...")
+        
+        return records
+            
+    except Exception as e:
+        print(f"⚠️ Session records fetch failed: {e}")
+        import traceback
+        print(f"🔍 Full traceback: {traceback.format_exc()}")
+        return []
+
+async def _send_feedback_email_async(user_question: str, feedback_text: str, sql_query: str, table_name: str):
+    """Send email notification for negative feedback using Databricks notebook
+    
+    Args:
+        user_question: The user's question that received feedback
+        feedback_text: The feedback text provided by user
+        sql_query: The SQL query that was executed
+        table_name: The table(s) used in the query
+    """
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping email notification")
+            return False
+        
+        # Get user info
+        user_email = get_authenticated_user()
+        user_name = get_authenticated_user_name()
+        session_id = st.session_state.get('session_id', 'unknown')
+        
+        # Construct email subject
+        subject = f"FDM Bot Feedback Alert - User: {user_name}"
+        
+        # Construct email body
+        body = f"""
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <h2 style="color: #d9534f;">FDM Bot Feedback - Needs Improvement</h2>
+    
+    <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #d9534f; margin: 20px 0;">
+        <p><strong>User:</strong> {user_name} ({user_email})</p>
+        <p><strong>Session ID:</strong> {session_id}</p>
+        <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S CST')}</p>
+    </div>
+    
+    <h3 style="color: #0275d8;">Question Asked:</h3>
+    <div style="background-color: #e7f3ff; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+        <p>{user_question}</p>
+    </div>
+    
+    <h3 style="color: #d9534f;">User Feedback:</h3>
+    <div style="background-color: #f8d7da; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+        <p>{feedback_text if feedback_text else 'No additional feedback provided'}</p>
+    </div>
+    
+    <h3 style="color: #5bc0de;">Dataset(s) Used:</h3>
+    <div style="background-color: #d9edf7; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+        <p>{table_name}</p>
+    </div>
+    
+    <h3 style="color: #5cb85c;">SQL Query:</h3>
+    <div style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; margin-bottom: 15px; overflow-x: auto;">
+        <pre style="margin: 0; font-family: 'Courier New', monospace; font-size: 12px; white-space: pre-wrap;">{sql_query[:1000]}{'...' if len(sql_query) > 1000 else ''}</pre>
+    </div>
+    
+    <hr style="border: none; border-top: 1px solid #ddd; margin: 25px 0;">
+    
+    <p style="color: #5cb85c; font-weight: bold;">
+        🔔 The FDM team will review this feedback on priority and reach out if any additional information is required.
+    </p>
+    
+    <p style="color: #666; font-size: 12px; margin-top: 30px;">
+        This is an automated notification from the FDM Bot system.<br>
+        For questions, please contact the FDM Support team.
+    </p>
+</body>
+</html>
+"""
+        
+        # Recipients list
+        recipients = [
+            user_email,  # Logged-in user
+            "vivek_kishore@optum.com",  # Support team
+            "sivakumm@optum.com"  # Admin
+        ]
+        recipients_str = ";".join(recipients)
+        
+        print(f"📧 Preparing to send feedback email to: {recipients_str}")
+        
+        # Call your production notebook using REST API
+        notebook_path = "/Workspace/FDM/AI_RAG/send_feedback_email"
+        
+        # Construct parameters matching your production notebook widgets
+        notebook_params = {
+            "to_emails": recipients_str,
+            "subject": subject,
+            "body": body,
+            "from_email": "fdm-bot-noreply@optum.com"
+        }
+        
+        # Debug: Log parameters being sent to notebook
+        print(f"📋 Email notification parameters:")
+        print(f"   to_emails: {recipients_str}")
+        print(f"   subject: {subject}")
+        print(f"   body length: {len(body)} chars")
+        print(f"   body preview (first 200 chars): {body[:200]}")
+        print(f"   body preview (last 100 chars): {body[-100:]}")
+        print(f"   from_email: fdm-bot-noreply@optum.com")
+        
+        # Verify body contains HTML
+        if '<html>' in body.lower() and '</html>' in body.lower():
+            print(f"   ✅ Body contains valid HTML tags")
+        else:
+            print(f"   ⚠️ WARNING: Body might not contain proper HTML!")
+        
+        # Call the notebook asynchronously using your existing job cluster
+        # Cluster ID extracted from JDBC: 0226-101532-dse5plow
+        db_client = st.session_state.get('db_client')
+        if db_client:
+            result = await db_client.run_notebook_async(
+                notebook_path, 
+                notebook_params, 
+                timeout=60,  # Increased timeout for safety
+                cluster_id="0226-101532-dse5plow"  # Your job cluster from JDBC string
+            )
+            
+            if result.get("success"):
+                print(f"✅ Email notification sent successfully (run_id: {result.get('run_id')})")
+                return True
+            else:
+                print(f"⚠️ Email notification failed: {result.get('error', result.get('state_message', 'Unknown error'))}")
+                return False
+        else:
+            print("⚠️ No db_client available for email notification")
+            return False
+        
+    except Exception as e:
+        print(f"⚠️ Email notification failed: {e}")
+        return False
+
+
+async def _insert_feedback_row(user_question: str, sql_result: str, positive_feedback: bool, table_name: str = "", feedback_text: str = ""):
+    """Insert feedback into fdmbotfeedback_tracking table.
+
+    Args:
+        user_question: The rewritten question from state
+        sql_result: The SQL query string (not a dict)
+        positive_feedback: True for thumbs up, False for thumbs down
+        feedback_text: User's text feedback (for thumbs down)
+        table_name: Can be a string or a list of strings
+    """
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping feedback insert")
+            return False
+
+        session_id = st.session_state.get('session_id', 'unknown')
+        user_id = get_authenticated_user()
+
+        # Escape single quotes and replace \n with blank in sql_result string
+        if sql_result:
+            payload_escaped = sql_result.replace("'", "\\'").replace("\n", " ")
+        else:
+            payload_escaped = ""
+
+        # Escape user inputs
+        user_question_escaped = user_question.replace("'", "\\'") if user_question else ''
+        feedback_escaped = feedback_text.replace("'", "\\'") if feedback_text else ''
+
+        # Handle table_name: extract string(s) from list or use as-is if string
+        if isinstance(table_name, list):
+            table_name_clean = ",".join(str(t).strip("[]'\"") for t in table_name)
+        else:
+            table_name_clean = str(table_name).strip("[]'\"")
+
+        insert_sql = f"""
+        INSERT INTO prd_optumrx_orxfdmprdsa.rag.fdmbotfeedback_tracking
+            (session_id, user_id, user_question, state_info, positive_feedback, feedback, insert_ts, table_name)
+        VALUES
+            ('{session_id}', '{user_id}', '{user_question_escaped}', '{payload_escaped}', {positive_feedback}, '{feedback_escaped}', current_timestamp(), '{table_name_clean}')
+        """
+
+        print(f"🗄️ Inserting feedback: {'👍' if positive_feedback else '👎'} - {len(payload_escaped)} chars")
+        await db_client.execute_sql_async_audit(insert_sql)
+        print("✅ Feedback insert succeeded")
+        
+        # 🆕 NEW: Send email notification for negative feedback (thumbs down)
+        if not positive_feedback:
+            print("📧 Negative feedback detected - triggering email notification")
+            email_sent = await _send_feedback_email_async(
+                user_question=user_question,
+                feedback_text=feedback_text,
+                sql_query=sql_result,
+                table_name=table_name_clean
+            )
+            if email_sent:
+                print("✅ Feedback email notification sent successfully")
+            else:
+                print("⚠️ Feedback email notification failed (feedback still recorded)")
+        
+        return True
+
+    except Exception as e:
+        print(f"⚠️ Feedback insert failed: {e}")
+        return False
+
+async def _fetch_last_session_summary():
+    """Fetch the latest session summary for the authenticated user from session_summary table"""
+    try:
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client in session; skipping session summary fetch")
+            return None
+        
+        user_id = get_authenticated_user()
+        
+        fetch_sql = f"""
+        SELECT session_id, summary, insert_ts
+        FROM prd_optumrx_orxfdmprdsa.rag.session_summary
+        WHERE user_id = '{user_id}'
+        ORDER BY insert_ts DESC
+        LIMIT 1
+        """
+        
+        print(f"🔍 Fetching last session summary for user: {user_id}")
+        result = await db_client.execute_sql_async_audit(fetch_sql)
+        
+        # Handle different response formats from database client
+        if isinstance(result, list) and result:
+            return result[0]
+        elif isinstance(result, dict) and result.get('success'):
+            data = result.get('data', [])
+            return data[0] if data else None
+        else:
+            print(f"⚠️ No session summary found or unexpected result format: {type(result)}")
+            return None
+            
+    except Exception as e:
+        print(f"⚠️ Session summary fetch failed: {e}")
+        return None
+
+async def _generate_session_overview(narrative_summary: str):
+    """Use LLM to generate a brief overview of the last session"""
+    try:
+        # Get the database client to access the Claude API
+        db_client = st.session_state.get('db_client')
+        if not db_client:
+            print("⚠️ No db_client available for LLM generation")
+            return None
+        
+        # Create a narrative-focused prompt for the LLM with adaptive length
+        user_prompt = f"""You are a helpful healthcare finance assistant. Create a narrative overview of the user's last session that matches the content richness.
+
+Previous session summary:
+{narrative_summary}
+
+Instructions:
+1. ADAPTIVE LENGTH: Write based on the content available in the summary:
+   - If summary is very brief/limited (like "not many rows to generate insights"): Keep it SHORT - 2-3 sentences maximum
+   - If summary has moderate content: Write 4-5 sentences in 1-2 paragraphs  
+   - If summary is rich with details: Write up to 8-12 sentences in 2-3 paragraphs (MAXIMUM)
+   - DO NOT pad with filler content - match the story length to actual content depth
+
+2. Use ONLY the exact information from the summary - don't invent numbers, metrics, or details
+3. Tell the story chronologically following the user's question sequence 
+4. If data was limited/insufficient, acknowledge briefly and pivot forward - don't dwell on it
+5. Use professional, conversational tone like catching up with a colleague
+6. End with a forward-looking sentence encouraging new exploration
+7. Format as clean HTML using <p> tags for paragraphs
+8. Focus on substance over length - quality over quantity
+
+Remember: The goal is an accurate, proportional retelling. If there's little to tell, keep it brief. If there's a rich story, tell it fully but concisely."""
+        
+        # Use the database client's Claude API method
+        llm_response = await db_client.call_claude_api_endpoint_async([
+            {"role": "user", "content": user_prompt}
+        ])
+        
+        return llm_response
+        
+    except Exception as e:
+        print(f"⚠️ Session overview generation failed: {e}")
+        return None
+
+def render_last_session_overview():
+    """Fetch and display a brief overview of the user's last session"""
+    try:
+        # Only show if this is a fresh session (no messages yet)
+        if st.session_state.messages:
+            return
+        
+        # Don't show overview on fresh page load - wait for user to ask a question or select session
+        if not st.session_state.get('session_explicitly_loaded', False) and not st.session_state.get('first_question_asked', False):
+            return
+        
+        # Check if we've already shown the session overview in this session
+        if st.session_state.get('session_overview_shown', False):
+            return
+        
+        # Fetch the last session summary
+        last_summary = asyncio.run(_fetch_last_session_summary())
+        
+        if not last_summary:
+            print("ℹ️ No previous session summary found")
+            # Mark as shown even if no summary, so we don't keep trying
+            st.session_state.session_overview_shown = True
+            return
+        
+        # Extract the narrative summary
+        if isinstance(last_summary, dict):
+            narrative_summary = last_summary.get('summary', '')
+            session_id = last_summary.get('session_id', 'Unknown')
+            insert_ts = last_summary.get('insert_ts', 'Unknown')
+        else:
+            print(f"⚠️ Unexpected summary format: {type(last_summary)}")
+            return
+        
+        if not narrative_summary or narrative_summary.strip() == '':
+            print("ℹ️ Empty narrative summary found")
+            # Mark as shown even if empty summary, so we don't keep trying
+            st.session_state.session_overview_shown = True
+            return
+        
+        print(f"📋 Found last session summary from {insert_ts}")
+        
+        # Generate LLM narrative overview for all sessions
+        try:
+            spinner_placeholder = st.empty()
+            with spinner_placeholder, st.spinner("✍️ Writing the story of our last conversation..."):
+                overview="This feature is disabled to save cost for now. Will be enabled during demo's"
+                # overview = asyncio.run(_generate_session_overview(narrative_summary))
+            spinner_placeholder.empty()
+            
+            
+        except Exception as e:
+            print(f"⚠️ LLM overview generation failed, using fallback: {e}")
+            overview = None
+        
+        # Display the overview
+        if overview:
+            # Clean up the LLM response - remove ```html and ``` markers
+            cleaned_overview = overview.strip()
+            if cleaned_overview.startswith('```html'):
+                cleaned_overview = cleaned_overview[7:]  # Remove ```html
+            if cleaned_overview.endswith('```'):
+                cleaned_overview = cleaned_overview[:-3]  # Remove ```
+            cleaned_overview = cleaned_overview.strip()
+            
+            # Use LLM-generated narrative overview with dark blue font
+            st.markdown(f"""
+            <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
+                    <strong style="color: #1e3a8a; font-size: 1.1rem;">What we discussed last time</strong>
+                </div>
+                <div style="color: #1e3a8a; line-height: 1.6; font-weight: 500;">
+                    {cleaned_overview}
+                </div>
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #e3f2fd; color: #1e3a8a; font-size: 0.9rem;">
+                    <em>Ready to continue? Ask me a new question! 🚀</em>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Fallback: Show a simple message with the session info
+            st.markdown(f"""
+            <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
+                    <strong style="color: #1e3a8a; font-size: 1.1rem;">Welcome back!</strong>
+                </div>
+                <div style="color: #1e3a8a; line-height: 1.6; font-weight: 500;">
+                    I found your previous session from <strong>{insert_ts}</strong>. Model could not process at this time!
+                </div>
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #e3f2fd; color: #1e3a8a; font-size: 0.9rem;">
+                    <em>Ready to continue? Ask me a new question! 🚀</em>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        print("✅ Last session overview displayed")
+        
+        # Mark that we've shown the session overview for this session
+        st.session_state.session_overview_shown = True
+        
+    except Exception as e:
+        print(f"⚠️ Error rendering last session overview: {e}")
+        # Mark as shown even on error, so we don't keep trying
+        st.session_state.session_overview_shown = True
+
+def reset_session_overview_flag():
+    """Reset the session overview flag to allow showing overview again"""
+    st.session_state.session_overview_shown = False
+    print("🔄 Session overview flag reset - will show on next fresh session")
+
+def render_historical_session_by_id(session_id: str):
+    """Render all records for a historical session in chronological order.
+    NOW USES: fdmbotsession_tracking_updt with cleaned sql_info (no newlines)
+    
+    Args:
+        session_id: The session ID to load all records for
+    """
+    try:
+        print(f"🎯 USER ACTION: Loading historical session {session_id}")
+        
+        # Check if we already have this session cached to avoid refetching
+        cache_key = f"session_records_{session_id}"
+        if cache_key in st.session_state:
+            print(f"📦 Using cached records for session {session_id}")
+            records = st.session_state[cache_key]
+        else:
+            print(f"🔄 Fetching records from NEW TABLE for session {session_id}")
+            records = asyncio.run(_fetch_session_records(session_id))
+            # Cache the records to avoid refetching
+            st.session_state[cache_key] = records
+        
+        if not records:
+            add_assistant_message(f"No records found for session: {session_id}", message_type="standard")
+            return
+        
+        print(f"📚 Rendering {len(records)} records for session: {session_id}")
+        
+        # Process each record in chronological order (already ordered by insert_ts ASC)
+        for i, record in enumerate(records):
+            print(f"🔍 Processing record {i+1}: type={type(record)}")
+            
+            if isinstance(record, dict):
+                user_question = record.get('user_question', f'Question {i+1}')
+                sql_info_json = record.get('sql_info', '')  # NEW: sql_info instead of state_info
+                selected_dataset = record.get('selected_dataset', '')  # NEW: selected_dataset
+                insert_ts = record.get('insert_ts', '')
+            elif isinstance(record, str):
+                # If record is a string, try to parse it as JSON
+                try:
+                    record_dict = json.loads(record)
+                    user_question = record_dict.get('user_question', f'Question {i+1}')
+                    sql_info_json = record_dict.get('sql_info', '')  # NEW
+                    selected_dataset = record_dict.get('selected_dataset', '')  # NEW
+                    insert_ts = record_dict.get('insert_ts', '')
+                except json.JSONDecodeError:
+                    print(f"⚠️ Could not parse record as JSON: {record[:100]}...")
+                    continue
+            else:
+                print(f"⚠️ Skipping unexpected record type {type(record)}: {record}")
+                continue
+            
+            print(f"  Processing record {i+1}: {user_question[:50]}... ({insert_ts})")
+            print(f"    Selected dataset: {selected_dataset}")
+            
+            # Add user message
+            st.session_state.messages.append({
+                "role": "user",
+                "content": user_question,
+                "message_type": "historical",
+                "timestamp": insert_ts,
+                "historical": True  # Mark as historical message
+            })
+            
+            # Handle the assistant response - MANUAL FIELD EXTRACTION (guaranteed structure)
+            if sql_info_json and sql_info_json.strip():
+                try:
+                    print(f"    🔍 Raw sql_info first 100 chars: {sql_info_json[:100]}...")
+                    
+                    # MANUAL EXTRACTION: Parse each field separately using regex
+                    import re
+                    
+                    # Extract success field
+                    success_match = re.search(r'"success"\s*:\s*(true|false)', sql_info_json)
+                    success = success_match.group(1) == 'true' if success_match else True
+                
+                    # Extract multiple_results field
+                    multi_match = re.search(r'"multiple_results"\s*:\s*(true|false)', sql_info_json)
+                    multiple_results = multi_match.group(1) == 'true' if multi_match else False
+                    
+                    if multiple_results:
+                        # MULTIPLE RESULTS: query_results is an array of objects with title, sql_query, data, narrative
+                        # Extract the entire query_results array
+                        results_match = re.search(r'"query_results"\s*:\s*(\[.*?\])\s*,\s*"(?:total_queries|user_question)"', sql_info_json, re.DOTALL)
+                        if results_match:
+                            # This array contains objects, each with their own sql_query, data, narrative
+                            # We need to manually extract each object since JSON parsing fails
+                            query_results_str = results_match.group(1)
+                            
+                            # Find all objects in the array (each starts with {"title":)
+                            query_objects = []
+                            object_pattern = r'\{"title":\s*"(.*?)",\s*"sql_query":\s*"(.*?)",\s*"data":\s*(\[.*?\]),\s*"narrative":\s*"(.*?)"'
+                            
+                            for match in re.finditer(object_pattern, query_results_str, re.DOTALL):
+                                title = match.group(1)
+                                sql_query = match.group(2)
+                                data_str = match.group(3)
+                                narrative = match.group(4)
+                                
+                                try:
+                                    data = json.loads(data_str)
+                                except:
+                                    data = []
+                                
+                                query_objects.append({
+                                    "title": title,
+                                    "sql_query": sql_query,
+                                    "data": data,
+                                    "narrative": narrative
+                                })
+                            
+                            query_results = query_objects
+                        else:
+                            query_results = []
+                        
+                        sql_query = ""  # No top-level sql_query for multiple results
+                        narrative = ""  # No top-level narrative for multiple results
+                        
+                    else:
+                        # SINGLE RESULT: Standard structure
+                        # Extract sql_query (everything between "sql_query": " and ", "query_results")
+                        sql_query_match = re.search(r'"sql_query"\s*:\s*"(.*?)"\s*,\s*"query_results"', sql_info_json, re.DOTALL)
+                        sql_query = sql_query_match.group(1) if sql_query_match else ""
+                        
+                        # Extract query_results (everything between "query_results": [ and ], "narrative")
+                        results_match = re.search(r'"query_results"\s*:\s*(\[.*?\])\s*,\s*"narrative"', sql_info_json, re.DOTALL)
+                        if results_match:
+                            try:
+                                query_results = json.loads(results_match.group(1))
+                            except:
+                                query_results = []
+                        else:
+                            query_results = []
+                        
+                        # Extract narrative (everything between "narrative": " and ", "summary" or ", "execution_attempts")
+                        narrative_match = re.search(r'"narrative"\s*:\s*"(.*?)"\s*,\s*"(?:summary|execution_attempts)"', sql_info_json, re.DOTALL)
+                        narrative = narrative_match.group(1) if narrative_match else ""
+                    
+                    # Extract user_question
+                    user_q_match = re.search(r'"user_question"\s*:\s*"(.*?)"\s*,\s*"(?:title|selected_dataset)"', sql_info_json, re.DOTALL)
+                    extracted_user_question = user_q_match.group(1) if user_q_match else user_question
+                    
+                    # Extract title (may end with } or ",)
+                    title_match = re.search(r'"title"\s*:\s*"(.*?)"\s*[},]?\s*$', sql_info_json, re.DOTALL)
+                    title = title_match.group(1) if title_match else extracted_user_question
+                    
+                    # Extract selected_dataset if present (can be string or array)
+                    dataset_match = re.search(r'"selected_dataset"\s*:\s*(\[.*?\]|".*?")', sql_info_json)
+                    if dataset_match:
+                        dataset_str = dataset_match.group(1)
+                        if dataset_str.startswith('['):
+                            try:
+                                selected_dataset = json.loads(dataset_str)
+                            except:
+                                selected_dataset = None
+                        else:
+                            selected_dataset = dataset_str.strip('"')
+                    else:
+                        selected_dataset = None
+                    
+                    # Also extract functional_names if present in sql_info_json (newer format)
+                    functional_names_match = re.search(r'"functional_names"\s*:\s*(\[.*?\])', sql_info_json)
+                    if functional_names_match:
+                        try:
+                            functional_names_from_json = json.loads(functional_names_match.group(1))
+                        except:
+                            functional_names_from_json = None
+                    else:
+                        functional_names_from_json = None
+                    
+                    # Extract sql_generation_story if present (newer format)
+                    sql_story_match = re.search(r'"sql_generation_story"\s*:\s*"(.*?)"(?:\s*,|\s*})', sql_info_json, re.DOTALL)
+                    sql_generation_story = sql_story_match.group(1) if sql_story_match else ""
+                    if sql_generation_story:
+                        print(f"    📖 Extracted sql_generation_story from historical record ({len(sql_generation_story)} chars)")
+                    
+                    # Determine functional_names to use:
+                    # 1. First try functional_names from sql_info_json (newer records)
+                    # 2. Then try selected_dataset from database column (user-friendly names stored there)
+                    # 3. Finally try selected_dataset from sql_info_json (older records with technical names)
+                    functional_names_to_use = None
+                    if functional_names_from_json:
+                        functional_names_to_use = functional_names_from_json
+                        print(f"    📊 Using functional_names from sql_info_json: {functional_names_to_use}")
+                    elif selected_dataset:  # From database column
+                        # Parse the database column value (comma-separated string)
+                        if isinstance(selected_dataset, str):
+                            functional_names_to_use = [name.strip() for name in selected_dataset.split(',')]
+                        else:
+                            functional_names_to_use = selected_dataset
+                        print(f"    📊 Using functional_names from database column: {functional_names_to_use}")
+                    
+                    # Build sql_result dict from extracted fields
+                    sql_result = {
+                        "success": success,
+                        "multiple_results": multiple_results,
+                        "sql_query": sql_query,
+                        "query_results": query_results,
+                        "narrative": narrative,
+                        "user_question": extracted_user_question,
+                        "title": title
+                    }
+                    
+                    if selected_dataset:
+                        sql_result["selected_dataset"] = selected_dataset
+                    
+                    # Add sql_generation_story if extracted
+                    if sql_generation_story:
+                        sql_result["sql_generation_story"] = sql_generation_story
+                        print(f"       - SQL generation story length: {len(sql_generation_story)} chars")
+                    
+                    print(f"    ✅ Successfully extracted fields manually")
+                    print(f"       - Multiple results: {multiple_results}")
+                    if multiple_results:
+                        print(f"       - Found {len(query_results)} query objects")
+                    else:
+                        print(f"       - Found {len(query_results)} query results")
+                        print(f"       - SQL query length: {len(sql_query)} chars")
+                    print(f"       - Narrative length: {len(narrative)} chars")
+                    
+                    # Extract Power BI data if stored (will be in sql_result from newer sessions)
+                    powerbi_data = None
+                    if 'powerbi_data' in sql_result:
+                        powerbi_data = sql_result.get('powerbi_data')
+                        print(f"       - Power BI data found: report_found={powerbi_data.get('report_found') if powerbi_data else None}")
+                    
+                    # Add assistant message for the SQL result
+                    message = {
+                        "role": "assistant",
+                        "content": "",
+                        "message_type": "sql_result",
+                        "timestamp": insert_ts,
+                        "sql_result": sql_result,
+                        "rewritten_question": user_question,
+                        "functional_names": functional_names_to_use,  # Add functional_names for historical rendering
+                        "powerbi_data": powerbi_data,  # Add Power BI data for historical rendering
+                        "sql_generation_story": sql_generation_story,  # Add SQL generation story for historical rendering
+                        "historical": True  # Mark as historical message
+                    }
+                    st.session_state.messages.append(message)
+                    print(f"    ✅ Added SQL result for record {i+1}")
+                    
+                except Exception as e:
+                    print(f"    ❌ Unexpected error parsing record {i+1}: {e}")
+                    import traceback
+                    print(f"    🔍 Traceback: {traceback.format_exc()}")
+                    print(f"    🔍 Raw sql_info: {sql_info_json[:200]}...")
+                    # Create error result dict
+                    error_result = {
+                        "error": f"Parse error: {str(e)}",
+                        "title": user_question,
+                        "narrative": "Error parsing stored data - please contact support",
+                        "sql_query": "",
+                        "query_results": []
+                    }
+                    message = {
+                        "role": "assistant",
+                        "content": "",
+                        "message_type": "sql_result",
+                        "timestamp": insert_ts,
+                        "sql_result": error_result,
+                        "rewritten_question": user_question,
+                        "historical": True
+                    }
+                    st.session_state.messages.append(message)
+                    
+            else:
+                # No sql_info available
+                add_assistant_message(f"Historical response (limited data): {user_question}", message_type="standard")
+                print(f"    ⚠️ No sql_info for record {i+1}")
+        
+        print(f"✅ Completed rendering session {session_id} with {len(records)} records")
+        
+    except Exception as e:
+        st.error(f"Error loading historical session {session_id}: {e}")
+        print(f"❌ Error rendering historical session {session_id}: {e}")
+        add_assistant_message(f"Error loading session: {session_id}", message_type="standard")
+# Removed render_chat_history function - session history now in sidebar only
+
+def render_sidebar_history():
+    """Render session history in the sidebar as a dropdown - only shows history when viewing historical sessions."""
+    
+    # Display header with dropdown icon (▼ shows it's a dropdown)
+    st.markdown("""
+        <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 10px; color: #333;">
+            📜 Recent Sessions ▼
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Check if we have a database client first
+    db_client = st.session_state.get('db_client')
+    if not db_client:
+        st.info("Database not connected")
+        return
+    
+    # Get the ORIGINAL current session ID (the one we started with)
+    original_session_id = st.session_state.get('original_session_id', st.session_state.get('session_id', ''))
+    
+    # Get the currently viewed session ID (might be historical)
+    currently_viewed_session = st.session_state.get('session_id', '')
+    
+    # Auto-fetch history on load OR if cache needs refresh
+    should_refresh = st.session_state.get('refresh_session_cache', False)
+    
+    if 'cached_history' not in st.session_state or should_refresh:
+        try:
+            print("🔄 Fetching session history from database...")
+            history = asyncio.run(_fetch_session_history())
+            st.session_state.cached_history = history
+            st.session_state.refresh_session_cache = False
+            print(f"📦 Cached {len(history)} sessions")
+        except Exception as e:
+            print(f"❌ Failed to fetch history: {e}")
+            st.session_state.cached_history = []
+    
+    history = st.session_state.get('cached_history', [])
+    print(f"🗂️ Building dropdown with {len(history)} sessions")
+    
+    # Build dropdown options - ONLY show historical sessions
+    session_options = {}
+    
+    # Check if we're currently viewing a historical session (has been explicitly loaded)
+    viewing_history = st.session_state.get('session_explicitly_loaded', False)
+    
+    # Get the currently viewed session ID
+    currently_viewed_session = st.session_state.get('session_id', '')
+    
+    # Add a placeholder option for when no session is selected
+    if not viewing_history:
+        session_options["-- Select a session --"] = None
+    
+    # Add all sessions from database to dropdown
+    for idx, session_item in enumerate(history):
+        if isinstance(session_item, dict):
+            session_id = session_item.get('session_id', f'unknown_{idx}')
+            last_activity = session_item.get('last_activity', 'Unknown Time')
+            
+            # Format timestamp for display
+            try:
+                from datetime import datetime as dt_class
+                if isinstance(last_activity, str):
+                    dt_obj = dt_class.fromisoformat(last_activity.replace('Z', '+00:00'))
+                    display_timestamp = dt_obj.strftime("%b %d %I:%M%p")
+                elif hasattr(last_activity, 'strftime'):
+                    display_timestamp = last_activity.strftime("%b %d %I:%M%p")
+                else:
+                    display_timestamp = str(last_activity)[:16]
+            except Exception as e:
+                print(f"⚠️ Failed to format timestamp: {e}")
+                display_timestamp = str(last_activity)[:16]
+            
+            # Add indicator if this is the currently viewed session
+            if session_id == currently_viewed_session:
+                label = f"🔵 {display_timestamp}"  # Blue dot for currently viewed
+            else:
+                label = f"{display_timestamp}"
+            
+            session_options[label] = session_id
+    
+    # If no sessions found (besides placeholder), show info
+    if len(session_options) <= 1:  # Only placeholder exists
+        st.info("No previous sessions yet - start chatting to create history!")
+        return
+    
+    # Find the index of the currently viewed session in the dropdown
+    default_index = 0  # Default to placeholder
+    if viewing_history:
+        # Find which session is currently being viewed
+        for idx, (label, sess_id) in enumerate(session_options.items()):
+            if sess_id == currently_viewed_session:
+                default_index = idx
+                print(f"🔍 Currently viewing session at index {idx}: {label}")
+                break
+    
+    # Show the dropdown
+    selected_label = st.selectbox(
+        "Session History",
+        options=list(session_options.keys()),
+        index=default_index,
+        key="session_history_dropdown",
+        label_visibility="collapsed",
+        help=f"Switch between sessions ({len(session_options)} available)"
+    )
+    
+    selected_session_id = session_options.get(selected_label)
+    
+    # Ignore if placeholder is selected
+    if selected_session_id is None:
+        return
+    
+    # Handle session switch if user selected a different session
+    if selected_session_id and selected_session_id != currently_viewed_session:
+        print(f"📂 User selected session: {selected_session_id}")
+        
+        # IMPORTANT: Before switching, refresh cache so current session is saved
+        # This ensures when user comes back, they see their latest work
+        st.session_state.refresh_session_cache = True
+        
+        # Clear current chat and load historical session
+        # Preserve domain_selection before clearing everything
+        current_domain_selection = st.session_state.get('domain_selection')
+        
+        st.session_state.messages = []
+        st.session_state.sql_rendered = False
+        st.session_state.narrative_rendered = False
+        st.session_state.processing = False
+        st.session_state.session_overview_shown = True  # Don't show overview when loading historical session
+        
+        # IMPORTANT: Make the selected historical session the CURRENT session
+        # This way when user asks new questions, they continue in this session thread
+        st.session_state.session_id = selected_session_id
+        st.session_state.original_session_id = selected_session_id  # Update original to match
+        st.session_state.session_explicitly_loaded = True  # Mark that user explicitly loaded this
+        print(f"🔄 Session ID updated to: {selected_session_id} (now current session)")
+        
+        # Restore domain_selection so new questions work properly
+        if current_domain_selection:
+            st.session_state.domain_selection = current_domain_selection
+            print(f"✅ Preserved domain_selection: {current_domain_selection}")
+        else:
+            print(f"⚠️ No domain_selection to preserve")
+        
+        # Render the complete historical session
+        render_historical_session_by_id(selected_session_id)
+        st.rerun()
+
+
+def render_sidebar_dataset_selector():
+    """Render dataset selector in sidebar with compact dropdown and checkboxes for multi-select"""
+    
+    # Get available datasets
+    datasets = get_available_datasets()
+    
+    # Remove "All Datasets" from the list
+    available_datasets = [d for d in datasets if d != "All Datasets"]
+    
+    # Debug: Log available datasets
+    print(f"🔍 Available datasets: {available_datasets} (Total: {len(available_datasets)})")
+    
+    # Initialize selection in session state if not exists
+    if 'user_selected_datasets' not in st.session_state:
+        st.session_state.user_selected_datasets = []
+    
+    # Handle legacy format conversion
+    legacy_selection = st.session_state.get('selected_dataset_filter', [])
+    if isinstance(legacy_selection, str):
+        if legacy_selection != "All Datasets":
+            st.session_state.user_selected_datasets = [legacy_selection]
+    elif isinstance(legacy_selection, list) and legacy_selection:
+        st.session_state.user_selected_datasets = legacy_selection
+    
+    # Display compact header with selection count
+    current_selections = st.session_state.user_selected_datasets
+    selection_text = f"{len(current_selections)} selected" if current_selections else "All Datasets"
+    
+    st.markdown(f"""
+        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #333;">
+            📊 Datasets: <span style="color: #1e3a8a; font-size: 0.75rem;">{selection_text}</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Create compact expander with dropdown symbol
+    with st.expander("▼ Select Datasets", expanded=False):
+        # Add CSS for compact, clean styling
+        st.markdown("""
+            <style>
+            /* Compact checkbox labels */
+            div[data-testid="stExpander"] .stCheckbox {
+                margin-bottom: 2px !important;
+            }
+            div[data-testid="stExpander"] .stCheckbox label {
+                font-size: 0.7rem !important;
+                line-height: 1.2 !important;
+            }
+            /* Reduce expander padding */
+            div[data-testid="stExpander"] > div {
+                padding-top: 4px !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Create compact checkboxes for each dataset
+        for dataset in available_datasets:
+            is_selected = dataset in st.session_state.user_selected_datasets
+            
+            # Use checkbox with callback to handle selection changes
+            def toggle_dataset(dataset_name):
+                """Toggle dataset selection"""
+                if dataset_name in st.session_state.user_selected_datasets:
+                    st.session_state.user_selected_datasets.remove(dataset_name)
+                else:
+                    st.session_state.user_selected_datasets.append(dataset_name)
+            
+            # Create checkbox
+            checked = st.checkbox(
+                dataset, 
+                value=is_selected, 
+                key=f"dataset_check_{dataset}",
+                on_change=toggle_dataset,
+                args=(dataset,)
+            )
+    
+    # Also update the legacy field for backward compatibility
+    st.session_state.selected_dataset_filter = st.session_state.user_selected_datasets
+    
+    # Log the selection
+    if st.session_state.user_selected_datasets:
+        print(f"📊 Datasets selected: {', '.join(st.session_state.user_selected_datasets)}")
+    else:
+        print(f"📊 No datasets selected (All Datasets)")
+
+
+
+def add_strategic_analysis_message(strategic_results, strategic_reasoning=None):
+    """
+    Add strategic analysis message to chat history for proper rendering
+    """
+    message = {
+        "role": "assistant",
+        "content": "Strategic analysis complete",  # Placeholder content
+        "message_type": "strategic_analysis",
+        "timestamp": datetime.now().isoformat(),
+        "strategic_results": strategic_results,
+        "strategic_reasoning": strategic_reasoning
+    }
+    
+    st.session_state.messages.append(message)
+    print(f"✅ Added strategic analysis message (total messages now: {len(st.session_state.messages)})")
+    print(f"  🧠 Strategic results: {len(strategic_results)} analyses")
+
+def add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoning=None):
+    """
+    Add drillthrough analysis message to chat history for proper rendering
+    """
+    message = {
+        "role": "assistant",
+        "content": "Drillthrough analysis complete",  # Placeholder content
+        "message_type": "drillthrough_analysis", 
+        "timestamp": datetime.now().isoformat(),
+        "drillthrough_results": drillthrough_results,
+        "drillthrough_reasoning": drillthrough_reasoning
+    }
+    
+    st.session_state.messages.append(message)
+    print(f"✅ Added drillthrough analysis message (total messages now: {len(st.session_state.messages)})")
+    print(f"  🔧 Drillthrough results: {len(drillthrough_results)} analyses")
+
+def start_processing(user_query: str):
+    """Start processing user query - with proper message management"""
+    print(f"🎯 Starting processing for: {user_query}")
+    
+    # Exit clarification mode when user provides answer
+    if st.session_state.get('in_clarification_mode', False):
+        st.session_state.in_clarification_mode = False
+        print("🔓 EXITED clarification mode - user provided answer")
+    
+    # Get question type from session state - must match radio button selection exactly
+    question_type = st.session_state.get("question_type_selection", "New Question")
+    
+    # Validate and normalize question type
+    if question_type not in ("Follow-up", "New Question"):
+        print(f"⚠️ Invalid question_type_selection: '{question_type}', resetting to default")
+        question_type = "New Question" if not st.session_state.first_question_asked else "Follow-up"
+        st.session_state.question_type_selection = question_type
+    
+    display_query = user_query
+    workflow_query = f"{question_type.lower()} - {user_query}"
+    print(f"🚀 Question type: '{question_type}' | Workflow query: '{workflow_query}' | First Q asked: {st.session_state.first_question_asked}")
+    
+    # 1. Mark all existing SQL results as historical/non-interactive
+    for msg in st.session_state.messages:
+        if msg.get('message_type') == 'sql_result':
+            # This ensures feedback buttons are hidden for old results
+            msg['historical'] = True 
+            print(f"🕰️ Marked SQL result message as historical")
+        
+        # 1B. MARK OLD SELECTION_REASONING MESSAGES AS HISTORICAL
+        # This prevents duplicate "Selected Datasets" display when asking new questions
+        # from within a loaded historical session
+        # CRITICAL: Preserve history_sql_used flag when marking as historical
+        if msg.get('message_type') == 'selection_reasoning':
+            if not msg.get('historical', False):  # Only mark if not already historical
+                msg['historical'] = True
+                print(f"🕰️ Marked old selection_reasoning as historical | history_sql_used={msg.get('history_sql_used', False)}")
+        
+        # 2. MARK FOLLOW-UP INTRO MESSAGE AS HISTORICAL
+        # This prevents the follow-up message from re-rendering the buttons in a disabled state
+        if msg.get('message_type') == 'followup_questions':
+            msg['historical'] = True
+            print("🕰️ Marked old follow-up intro message as historical")
+    
+    # 3. CLEAR INTERACTIVE FOLLOW-UP BUTTONS (MOST CRITICAL STEP)
+    # The buttons render based on this list, so clearing it hides the buttons on re-run.
+    if hasattr(st.session_state, 'current_followup_questions'):
+        if st.session_state.current_followup_questions:
+            print("🗑️ Clearing interactive follow-up questions list due to new user input")
+            st.session_state.current_followup_questions = []
+            
+    # Remove the visible "Would you like to explore further?" message from chat history
+    # This addresses the case where the user types a question instead of clicking a button.
+    # We re-check the messages list *after* marking them as historical/non-interactive,
+    # ensuring the last message is the one we want to remove.
+    if (st.session_state.messages and 
+        st.session_state.messages[-1].get('message_type') == 'followup_questions'):
+        st.session_state.messages.pop()
+        print("🗑️ Removed follow-up intro message from chat history")
+        
+    # Add user message to history (use the clean, original query for display)
+    st.session_state.messages.append({
+        "role": "user",
+        "content": display_query
+    })
+    
+    # IMPORTANT: Mark where this conversation starts so we can manage responses properly
+    st.session_state.current_conversation_start = len(st.session_state.messages) - 1
+    
+    # Set processing state and reset narrative state
+    st.session_state.current_query = workflow_query
+    st.session_state.processing = True
+    st.session_state.workflow_started = False
+    st.session_state.narrative_rendered = False
+    st.session_state.narrative_state = None
+    
+    # Store what the user selected THIS time (before next rerun)
+    # This becomes the "last_radio_selection" for next question's default logic
+    st.session_state.last_radio_selection = question_type
+    print(f"📝 STORED: Saving '{question_type}' as last_radio_selection for next question")
+    
+    # Mark that first question has been asked - next time default will be "Follow-up"
+    if not st.session_state.first_question_asked:
+        st.session_state.first_question_asked = True
+        print("✅ FIRST: Marked first_question_asked=True")
+
+# ============ CSS STYLING FOR MESSAGE TYPES ============
+
+def add_message_type_css():
+    """Add CSS for different message types"""
+    st.markdown("""
+    <style>
+    /* Import Inter font from Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    /* Apply Inter font globally */
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
+    /* Main title styling */
+    h1 {
+        color: #1e3a8a !important;  /* Dark blue color */
+        font-weight: 600 !important;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
+    
+    /* Real-time animation for new messages */
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .new-message {
+        animation: slideIn 0.3s ease-out;
+    }
+    
+    /* Enhanced spinner for better UX */
+    .spinner-container {
+        background-color: #faf8f2;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin: 8px 0;
+        border-left: 4px solid #007bff;
+    }
+    
+    .spinner-message {
+        color: #495057;
+        font-weight: 500;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
+    /* Base message styling */
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
+
+    
+    /* User message - moved to left side */
+    .user-message {
+        display: flex;
+        justify-content: flex-start;  /* Changed from flex-end to flex-start */
+        margin: 8px 0;
+    }
+    
+    .user-message-content {
+        background-color: #FEE9DC;  /* Very light pale peach - subtle and soft */
+        color: black !important;  /* Black text for excellent contrast */
+        padding: 8px 14px;  /* Reduced vertical padding (was 12px 16px) */
+        border-radius: 18px;
+        max-width: 100%;  /* Same as system messages */
+        min-width: 200px;  /* Added minimum width */
+        word-wrap: break-word;
+        border: 1px solid #F9A667;  /* Soft Optum peach border */
+        flex-grow: 1;  /* Allow it to expand within the flex container */
+    }
+    
+    .assistant-message {
+        display: flex;
+        justify-content: flex-start;
+        margin: 8px 0;
+    }
+    
+    /* Background #faf8f2 for assistant messages with black font */
+    .assistant-message-content {
+        background-color: #faf8f2 !important;
+        color: black !important;
+        padding: 12px 16px;
+        border-radius: 18px;
+        max-width: 100% !important;  /* Increased from 80% to 95% */
+        min-width: 300px !important; /* Minimum width for single-line messages */
+        word-wrap: break-word;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        overflow: visible !important; /* Allow content to extend if needed */
+    }
+    
+    /* Custom styling for AI rewritten question and narrative content */
+    .narrative-content {
+        color: #333;
+        padding: 12px 16px;
+        margin: 8px 0;
+        max-width: 100%;
+        word-wrap: break-word;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        font-size: 15px;
+        line-height: 1.6;
+        font-style: normal !important;
+        font-weight: normal !important;
+        background-color: #faf8f2 !important;
+        border: 1px solid #f0ede4 !important;
+        border-radius: 12px !important;
+    }
+    
+    /* Specific styling for follow-up questions message to keep it on single line with larger container */
+    .assistant-message-content {
+        max-width: 100% !important;  /* Increase from 80% to 95% for follow-up messages */
+        min-width: 300px !important; /* Ensure minimum width for single-line text */
+        overflow: visible !important; /* Allow content to be visible */
+    }
+    
+    .assistant-message-content strong {
+        white-space: nowrap !important;
+        display: inline-block !important;
+        max-width: none !important;
+        font-size: 15px !important; /* Ensure consistent font size */
+    }
+    
+    /* Follow-up question container and button styling - using dark blue company standard */
+    .followup-container {
+        margin: 1rem 0;
+        padding: 1rem;
+        background-color: #f8f9fa;
+        border-radius: 12px;
+        border-left: 4px solid #1e3a8a;
+    }
+    
+    .followup-header {
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 0.8rem;
+        font-size: 16px;
+    }
+    
+    .followup-button {
+        display: block;
+        width: 100%;
+        margin: 0.5rem 0;
+        padding: 12px 16px;
+        background-color: white;
+        border: 2px solid #1e3a8a;
+        border-radius: 8px;
+        color: #1e3a8a;
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 14px;
+        line-height: 1.4;
+    }
+    
+    .followup-button:hover {
+        background-color: #1e3a8a;
+        color: white;
+        box-shadow: 0 2px 8px rgba(30, 58, 138, 0.2);
+    }
+    
+    /* Feedback section styling */
+    .feedback-section {
+        margin: 1rem 0;
+        padding: 0.5rem 0;
+        border-top: 1px solid #e0e0e0;
+    }
+    
+    /* Feedback buttons styling */
+    div[data-testid="column"] button {
+        width: 100% !important;
+        font-size: 14px !important;
+        padding: 8px 16px !important;
+        border-radius: 6px !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    /* Thumbs up button - green theme */
+    div[data-testid="column"]:first-child button {
+        background-color: #f0f9ff !important;
+        border: 2px solid #22c55e !important;
+        color: #22c55e !important;
+    }
+    
+    div[data-testid="column"]:first-child button:hover {
+        background-color: #22c55e !important;
+        color: white !important;
+    }
+    
+    /* Thumbs down button - orange theme */
+    div[data-testid="column"]:last-child button {
+        background-color: #fef3e2 !important;
+        border: 2px solid #f59e0b !important;
+        color: #f59e0b !important;
+    }
+    
+    div[data-testid="column"]:last-child button:hover {
+        background-color: #f59e0b !important;
+        color: white !important;
+    }
+    
+    .followup-button:active {
+        transform: translateY(1px);
+    }
+    
+    /* Follow-up buttons container styling from working chat_old.py */
+    .followup-buttons-container {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        align-items: stretch !important;
+        justify-content: flex-start !important;
+        max-width: 100% !important;
+        margin: 0.5rem 0 !important;
+        padding: 0 !important;
+    }
+    
+    /* Follow-up buttons styling - using dark blue company standard */
+    .stButton > button {
+        background-color: white !important;
+        color: #1e3a8a !important;
+        border: 1px solid #1e3a8a !important;
+        border-radius: 8px !important;
+        padding: 10px 16px !important;
+        margin: 0 !important;
+        width: 100% !important;
+        text-align: left !important;
+        font-size: 14px !important;
+        line-height: 1.4 !important;
+        transition: all 0.2s ease !important;   
+        height: auto !important;
+        min-height: 40px !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+
+
+    .stButton > button:hover {
+        background-color: #1e3a8a !important;
+        color: white !important;
+        box-shadow: 0 1px 3px rgba(30, 58, 138, 0.2) !important;
+        transform: translateY(-0.5px) !important;
+    }
+
+    .stButton > button:focus {
+        background-color: #1e3a8a !important;
+        color: white !important;
+        box-shadow: 0 0 0 2px rgba(30, 58, 138, 0.25) !important;
+        outline: none !important;
+    }
+
+    /* Make button containers flexible */
+    .element-container .stButton {
+        margin: 0 !important;
+        flex: 0 0 auto !important;
+    }
+
+    /* Override any conflicting Streamlit styles */
+    .stButton button[kind="secondary"] {
+        background-color: white !important;
+        color: #1e3a8a !important;
+        border-color: #1e3a8a !important;
+    }
+    
+    /* Chat input box styling - smaller initial size with auto-expansion */
+    .stChatInput > div > div > textarea {
+        min-height: 45px !important;
+        max-height: 200px !important;
+        height: 45px !important;
+        resize: none !important;
+        overflow-y: auto !important;
+        word-wrap: break-word !important;
+        white-space: pre-wrap !important;
+        font-size: 14px !important;
+        line-height: 1.4 !important;
+        padding: 12px 14px !important;
+        border-radius: 12px !important;
+        border: 2px solid #e1e5e9 !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    .stChatInput > div > div > textarea:focus {
+        border-color: #1e3a8a !important;
+        box-shadow: 0 0 0 2px rgba(30, 58, 138, 0.1) !important;
+        outline: none !important;
+    }
+    
+    /* Chat input container */
+    .stChatInput {
+        position: sticky !important;
+        bottom: 0 !important;
+        background-color: white !important;
+        padding: 10px 0 !important;
+        border-top: 1px solid #e1e5e9 !important;
+        margin-top: 20px !important;
+    }
+    
+    /* Auto-expand textarea script integration */
+    .stChatInput > div > div > textarea {
+        field-sizing: content !important;
+    }
+    
+    /* Radio button styling - match font size with label */
+    .stRadio > label {
+        font-size: 14px !important;
+        font-weight: 500 !important;
+    }
+    
+    .stRadio > div {
+        gap: 12px !important;
+    }
+    
+    .stRadio > div > label > div {
+        font-size: 14px !important;
+    }
+    
+    /* DataFrame styling - right align columns for better numerical data readability */
+    .stDataFrame table {
+        width: 100% !important;
+    }
+    
+    .stDataFrame table td, 
+    .stDataFrame table th {
+        text-align: right !important;
+        padding: 8px 12px !important;
+        border-bottom: 1px solid #e1e5e9 !important;
+    }
+    
+    /* Keep the first column (index/row labels) left-aligned if needed */
+    .stDataFrame table td:first-child,
+    .stDataFrame table th:first-child {
+        text-align: left !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Header styling */
+    .stDataFrame table th {
+        background-color: #f8f9fa !important;
+        font-weight: 600 !important;
+        color: #1e3a8a !important;
+        border-bottom: 2px solid #1e3a8a !important;
+    }
+    
+    /* Alternating row colors for better readability */
+    .stDataFrame table tr:nth-child(even) {
+        background-color: #f8f9fa !important;
+    }
+    
+    .stDataFrame table tr:hover {
+        background-color: #e3f2fd !important;
+    }
+
+    </style>
+    
+    <script>
+    // Auto-expand textarea functionality
+    function autoExpand() {
+        const textareas = document.querySelectorAll('.stChatInput textarea');
+        textareas.forEach(function(textarea) {
+            if (!textarea.hasAttribute('data-auto-expand')) {
+                textarea.setAttribute('data-auto-expand', 'true');
+                
+                // Set initial height
+                textarea.style.height = '45px';
+                
+                // Add input event listener
+                textarea.addEventListener('input', function() {
+                    // Reset height to calculate new height
+                    this.style.height = '45px';
+                    
+                    // Calculate new height based on scroll height
+                    const newHeight = Math.min(this.scrollHeight, 200);
+                    this.style.height = newHeight + 'px';
+                });
+                
+                // Add paste event listener
+                textarea.addEventListener('paste', function() {
+                    setTimeout(() => {
+                        this.style.height = '45px';
+                        const newHeight = Math.min(this.scrollHeight, 200);
+                        this.style.height = newHeight + 'px';
+                    }, 0);
+                });
+            }
+        });
+    }
+    
+    // Run on page load
+    document.addEventListener('DOMContentLoaded', autoExpand);
+    
+    // Run periodically to catch dynamically added textareas
+    setInterval(autoExpand, 500);
+    </script>
+    """, unsafe_allow_html=True)
+
+# ============ MAIN APPLICATION ============
+
+def main():
+    """Main Streamlit application with async workflow integration and real-time chat history"""
+    
+    # Safety check: Ensure user came from main.py with proper authentication
+    initialize_session_state()
+    authenticated_user = get_authenticated_user()
+    
+    if authenticated_user == 'unknown_user':
+        st.error("⚠️ Please start from the main page to ensure proper authentication.")
+        st.info("👉 Click the button below to go to the main page and select your team.")
+        if st.button("Go to Main Page"):
+            st.switch_page("main.py")
+        st.stop()
+
+    # Add enhanced CSS styling
+    add_message_type_css()
+
+    with st.sidebar:
+        # Custom styling for the back button
         st.markdown("""
         <style>
-            /* Target the specific element containing the radio button options to reduce top margin */
-            div[data-testid="stForm"] > div > div > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) {
-                margin-top: 0px !important; 
-                padding-top: 0px !important;
-            }
+        .back-button {
+            background-color: white;
+            color: #1e3a8a;
+            border: 1px solid #1e3a8a;
+            padding: 8px 16px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-block;
+            width: 100%;
+            text-align: center;
+            margin: 10px 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        }
+        .back-button:hover {
+            background-color: #f0f9ff;
+        }
+        
+        /* Sidebar session history buttons - compact and small */
+        [data-testid="stSidebar"] .stButton > button[key*="history_"] {
+            text-align: left !important;
+            background-color: #f8f9fa !important;
+            border: 1px solid #e0e0e0 !important;
+            padding: 4px 6px !important;
+            margin: 2px 0 !important;
+            border-radius: 4px !important;
+            font-size: 10px !important;
+            line-height: 1.2 !important;
+            width: 100% !important;
+            height: auto !important;
+            min-height: 24px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        
+        [data-testid="stSidebar"] .stButton > button[key*="history_"]:hover {
+            background-color: #e9ecef !important;
+            border-color: #1e3a8a !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        if st.button("Back to Main Page", key="back_to_main"):
+            st.switch_page("main.py")
+    
+    try:
+        workflow = get_session_workflow()
+        
+        if workflow is None:
+            st.error("Failed to initialize async workflow. Please refresh the page.")
+            return
 
-            /* This targets the container holding the radio options to pull it up */
-            div[data-testid="stForm"] > div > div > div:nth-child(2) > div:nth-child(2) {
-                margin-top: -15px !important;
-                padding-top: 0px !important;
+        # --- FIX 1: Reset radio button to default "Follow-up" after processing ---
+        # Check if processing just finished and the previous selection was 'New Question'
+        # The 'processing' flag is set to False right before rerun() below.
+        if (not st.session_state.get('processing', True) and 
+            st.session_state.get('question_type_selection') == 'New Question'):
+            
+            # This ensures the radio button visually defaults to "Follow-up" for the next turn.
+            st.session_state.question_type_radio = 'Follow-up'
+            st.session_state.question_type_selection = 'Follow-up'
+            print("🔄 Resetting question_type to 'Follow-up' for next turn.")
+        # --- END FIX 1 ---
+        
+        # Show spinner in main area while fetching session history
+        if 'cached_history' not in st.session_state:
+            # Show spinner in main chat area while fetching history
+            spinner_placeholder = st.empty()
+            with spinner_placeholder:
+                with st.spinner("🔄 Loading application and fetching session history..."):
+                    # Fetch history in background while showing spinner
+                    with st.sidebar:
+                        st.markdown("---")
+                        # Order: Dataset Selection → Recent Sessions → Back button
+                        render_sidebar_dataset_selector()
+                        st.markdown("---")
+                        render_sidebar_history()
+            # Clear the spinner once history is loaded
+            spinner_placeholder.empty()
+        else:
+            # History already cached, just render sidebar
+            with st.sidebar:
+                st.markdown("---")
+                # Order: Dataset Selection → Recent Sessions → Back button
+                render_sidebar_dataset_selector()
+                st.markdown("---")
+                render_sidebar_history()
+        
+        st.markdown("""
+        <div style="margin-top: -20px; margin-bottom: 10px;">
+            <h2 style="color: #1e3a8a; font-weight: 600; font-size: 1.8rem; margin-bottom: 0;">Finance Analytics Assistant</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Display current domain selection if available
+        if st.session_state.get('domain_selection'):
+            domain_display = ", ".join(st.session_state.domain_selection)
+            st.markdown(f"""
+            <div style="background-color: #e3f2fd; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; color: #1e3a8a; font-size: 0.9rem;">
+                🏢 <strong>Selected Team:</strong> {domain_display}
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Show overview of last session if available (only for fresh sessions)
+        render_last_session_overview()
+        
+        st.markdown("---")
+        
+        # Chat container for messages
+        chat_container = st.container()
+        
+        with chat_container:
+            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            
+            # Render all chat messages (including real-time updates)
+            for idx, message in enumerate(st.session_state.messages):
+                render_chat_message_enhanced(message, idx)
+            
+            # Render follow-up questions if they exist
+            render_persistent_followup_questions()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Processing indicator and streaming workflow execution
+        if st.session_state.processing:
+            # Check if stop was already requested before starting
+            if st.session_state.get('stop_requested', False):
+                st.session_state.stop_requested = False
+                st.session_state.processing = False
+                
+                add_assistant_message("Query cancelled by user. Your session has been preserved.", message_type="standard")
+                asyncio.sleep(5)  # Small delay to ensure message appears before rerun
+                # Mark session cache for refresh
+                st.session_state.refresh_session_cache = True
+                st.rerun()
+            
+            # Run the workflow (stop button is shown inside show_spinner())
+            run_streaming_workflow(workflow, st.session_state.current_query)
+            st.session_state.processing = False
+            st.session_state.workflow_started = False
+            st.rerun()
+        
+        # Handle narrative generation after SQL results have been rendered
+        elif st.session_state.get('sql_rendered', False) and not st.session_state.get('narrative_rendered', False):
+            narrative_state = st.session_state.get('narrative_state')
+            if narrative_state:
+                with st.spinner("Generating Insights..."):
+                    try:
+                        print("📝 Generating narrative after SQL display...")
+                        
+                        # Run narrative generation
+                        async def generate_narrative():
+                            session_id = st.session_state.session_id
+                            config = {"configurable": {"thread_id": session_id}}
+                            return await workflow.ainvoke_narrative(narrative_state, config)
+                        
+                        narrative_res = asyncio.run(generate_narrative())
+                        
+                        # Add diagnostic logging to understand the response structure
+                        print("🔍 Narrative response keys:", list(narrative_res.keys()) if isinstance(narrative_res, dict) else "Not a dict")
+                        print("🔍 narrative_complete in response:", narrative_res.get('narrative_complete', 'NOT_FOUND'))
+                        
+                        # The narrative_complete flag should be in the returned state, not the agent's return value
+                        narrative_complete_flag = narrative_res.get('narrative_complete', False)
+                        
+                        # Get the updated sql_result from the returned state (narrative agent modifies it in-place)
+                        updated_sql_result = narrative_res.get('sql_result', {})
+                        print("🔍 Updated sql_result has narrative:", bool(updated_sql_result.get('narrative')))
+                        
+                        if narrative_complete_flag:
+                            # Update the existing SQL result message with narrative AND Power BI data
+                            if updated_sql_result:
+                                # Extract Power BI data from narrative response
+                                powerbi_data_from_narrative = {
+                                    'report_found': narrative_res.get('report_found', False),
+                                    'report_url': narrative_res.get('report_url'),
+                                    'report_filter': narrative_res.get('report_filter'),
+                                    'report_name': narrative_res.get('report_name'),
+                                    'match_type': narrative_res.get('match_type'),
+                                    'report_reason': narrative_res.get('report_reason')
+                                }
+                                print(f"🔍 Power BI data from narrative: report_found={powerbi_data_from_narrative.get('report_found')}, name={powerbi_data_from_narrative.get('report_name')}")
+                                
+                                # Find and update the last SQL result message
+                                for i in range(len(st.session_state.messages) - 1, -1, -1):
+                                    msg = st.session_state.messages[i]
+                                    if msg.get('message_type') == 'sql_result':
+                                        msg['sql_result'] = updated_sql_result
+                                        msg['powerbi_data'] = powerbi_data_from_narrative  # Update Power BI data
+                                        print(f"✅ Updated message with narrative and Power BI data")
+                                        break
+                            else:
+                                # Fallback: try to locate sql_result from narrative_state if not returned explicitly
+                                updated_sql_result = (st.session_state.get('narrative_state') or {}).get('sql_result', {})
+                            
+                            # 🆕 CRITICAL FIX: Save updated conversation_memory back to session_state
+                            if narrative_res and 'conversation_memory' in narrative_res:
+                                st.session_state.conversation_memory = narrative_res['conversation_memory']
+                                print(f"💾 Saved conversation_memory after narrative to session_state: {list(narrative_res['conversation_memory'].get('dimensions', {}).keys())}")
+                            
+                            # Fire and forget insert of tracking row (after we have narrative)
+                            if updated_sql_result:
+                                try:
+                                    asyncio.run(_insert_session_tracking_row(updated_sql_result, narrative_res))
+                                except RuntimeError:
+                                    # If already in an event loop (unlikely here due to asyncio.run wrapping), schedule task
+                                    loop = asyncio.get_event_loop()
+                                    loop.create_task(_insert_session_tracking_row(updated_sql_result, narrative_res))
+                            
+                            print("✅ Narrative generation completed")
+                        else:
+                            print("⚠️ Narrative generation completed with issues - checking if narrative exists anyway...")
+                            # Even if flag is missing, check if narrative was actually added
+                            if updated_sql_result and updated_sql_result.get('narrative'):
+                                print("🔄 Found narrative content despite missing flag - updating message and inserting")
+                                
+                                # Extract Power BI data from narrative response (fallback case)
+                                powerbi_data_from_narrative = {
+                                    'report_found': narrative_res.get('report_found', False),
+                                    'report_url': narrative_res.get('report_url'),
+                                    'report_filter': narrative_res.get('report_filter'),
+                                    'report_name': narrative_res.get('report_name'),
+                                    'match_type': narrative_res.get('match_type'),
+                                    'report_reason': narrative_res.get('report_reason')
+                                }
+                                
+                                # Update the message anyway
+                                for i in range(len(st.session_state.messages) - 1, -1, -1):
+                                    msg = st.session_state.messages[i]
+                                    if msg.get('message_type') == 'sql_result':
+                                        msg['sql_result'] = updated_sql_result
+                                        msg['powerbi_data'] = powerbi_data_from_narrative  # Update Power BI data
+                                        break
+                                
+                                # 🆕 CRITICAL FIX: Save updated conversation_memory even in fallback case
+                                if narrative_res and 'conversation_memory' in narrative_res:
+                                    st.session_state.conversation_memory = narrative_res['conversation_memory']
+                                    print(f"💾 Saved conversation_memory (fallback) to session_state: {list(narrative_res['conversation_memory'].get('dimensions', {}).keys())}")
+                                
+                                # Insert tracking row
+                                try:
+                                    asyncio.run(_insert_session_tracking_row(updated_sql_result, narrative_res))
+                                except RuntimeError:
+                                    loop = asyncio.get_event_loop()
+                                    loop.create_task(_insert_session_tracking_row(updated_sql_result, narrative_res))
+                            else:
+                                print("❌ No narrative content found in sql_result")
+                            
+                    except Exception as ne:
+                        st.error(f"Narrative generation failed: {ne}")
+                        print(f"❌ Narrative generation error: {ne}")
+                    
+                    # Mark narrative as rendered and prepare for follow-up
+                    st.session_state.narrative_rendered = True
+                    st.session_state.narrative_state = None
+                    st.rerun()
+        
+        # Handle follow-up generation after narrative has been rendered
+        elif st.session_state.get('narrative_rendered', False):
+            followup_state = st.session_state.get('followup_state')
+            if followup_state:
+                with st.spinner("Generating follow-up questions..."):
+                    try:
+                        print("🔄 Generating follow-up questions after narrative completion...")
+                        
+                        # Run follow-up generation
+                        async def generate_followups():
+                            session_id = st.session_state.session_id
+                            config = {"configurable": {"thread_id": session_id}}
+                            return await workflow.ainvoke_followup(followup_state, config)
+                        
+                        follow_res = asyncio.run(generate_followups())
+                        fq = follow_res.get('followup_questions', [])
+                        
+                        if fq:
+                            st.session_state.current_followup_questions = fq
+                            add_assistant_message("💡 **Would you like to explore further? Here are some suggested follow-up questions:**", message_type="followup_questions")
+                            print(f"✅ Generated {len(fq)} follow-up questions")
+                        else:
+                            print("ℹ️ No follow-up questions generated")
+                            
+                    except Exception as fe:
+                        st.error(f"Follow-up generation failed: {fe}")
+                        print(f"❌ Follow-up generation error: {fe}")
+                    
+                    # Clean up session state
+                    st.session_state.sql_rendered = False
+                    st.session_state.narrative_rendered = False
+                    st.session_state.followup_state = None
+                    st.rerun()
+        
+        # Handle drillthrough execution after strategic analysis has been rendered
+        elif st.session_state.get('strategic_rendered', False):
+            drillthrough_state = st.session_state.get('drillthrough_state')
+            if drillthrough_state:
+                with st.spinner("Running Drillthrough Analysis..."):
+                    try:
+                        print("🔄 Running drillthrough analysis after strategic display...")
+                        
+                        # Run drillthrough analysis
+                        async def execute_drillthrough():
+                            session_id = st.session_state.session_id
+                            config = {"configurable": {"thread_id": session_id}}
+                            return await workflow.ainvoke_drillthrough(drillthrough_state, config)
+                        
+                        drillthrough_res = asyncio.run(execute_drillthrough())
+                        
+                        # Extract drillthrough results
+                        drillthrough_results = drillthrough_res.get('drillthrough_query_results', [])
+                        drillthrough_reasoning = drillthrough_res.get('drillthrough_reasoning', '')
+                        
+                        if drillthrough_results:
+                            add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoning)
+                            print(f"✅ Drillthrough analysis complete: {len(drillthrough_results)} analyses")
+                            print("🏁 Analysis workflow complete - no follow-up questions will be generated")
+                        else:
+                            print("ℹ️ No drillthrough results generated")
+                            add_assistant_message("No drillthrough analysis results available.", message_type="error")
+                        
+                    except Exception as e:
+                        print(f"❌ Drillthrough execution failed: {e}")
+                        add_assistant_message(f"Drillthrough analysis failed: {e}", message_type="error")
+                    
+                    # Clear the flag to prevent re-running
+                    st.session_state.strategic_rendered = False
+                    st.session_state.drillthrough_state = None
+                    st.rerun()
+
+        st.markdown("""
+        <style>
+            /* Minimize radio button spacing */
+            .stRadio {
+                margin: 0 !important;
+                padding: 0 !important;
+                margin-bottom: -18px !important;
+                margin-top: -12px !important;
             }
             
-            /* Target the entire radio button container and reduce padding/margin */
-            .stRadio {
-                margin-bottom: -15px !important; 
+            .stRadio > div {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            
+            /* Reduce gap between radio and chat input */
+            .stChatInput {
+                margin-top: 0px !important;
             }
         </style>
         """, unsafe_allow_html=True)
 
-        question_type = st.radio(
-            "Select Question Context:", # Use this as the main label for tight integration
-            ("Follow-up", "New Question"),
-            index=0,  # Default to "Follow-up"
-            horizontal=True,
-            key="question_type_radio"
-        )
-
-        # Store the selection in session state so start_processing can access it
-        st.session_state.question_type_selection = question_type
-        # --- END FIX 2 (FINAL) ---
+        # Initialize the radio widget's session state based on business logic
+        # This only happens once per "session context" to set the initial default
+        radio_key = "question_type_radio_widget"
+        
+        # Check if we need to initialize or reset the radio widget
+        if radio_key not in st.session_state:
+            # First time - initialize based on first_question_asked flag
+            if not st.session_state.first_question_asked:
+                # First page load: default to "New Question"
+                st.session_state[radio_key] = "New Question"
+                st.session_state['radio_reset_triggered'] = False
+                print("INIT: First page load, setting radio to 'New Question'")
+            else:
+                # Subsequent questions: default to "Follow-up"
+                st.session_state[radio_key] = "Follow-up"
+                st.session_state['radio_reset_triggered'] = False
+                print("INIT: Subsequent question, setting radio to 'Follow-up'")
+        else:
+            # Widget exists - only do ONE-TIME reset after processing ends
+            last_selection = st.session_state.get('last_radio_selection', 'Follow-up')
+            was_processing = st.session_state.get('was_processing_before', False)
+            is_processing_now = st.session_state.get('processing', False)
+            reset_triggered = st.session_state.get('radio_reset_triggered', False)
+            
+            # Only reset ONCE: processing ended + user had New Question + not reset yet
+            if was_processing and not is_processing_now and last_selection == "New Question" and not reset_triggered:
+                st.session_state[radio_key] = "Follow-up"
+                st.session_state['radio_reset_triggered'] = True
+            
+            # Update tracking flag
+            st.session_state['was_processing_before'] = is_processing_now
+        
+        # **CONDITIONAL RENDERING: Only show radio button when NOT in clarification mode**
+        # This hides the radio during router agent clarification questions
+        if not st.session_state.get('in_clarification_mode', False):
+            # Call the shared radio button rendering function
+            render_radio_button_selector()
+            print("✅ Radio button rendered (not in clarification mode)")
+        else:
+            print("🔒 Radio button hidden (in clarification mode)")
         
         # Chat input at the bottom
         if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
-        # ... (rest of main function follows)
+            # Immediately clear follow-up questions when new input is detected
+            # if hasattr(st.session_state, 'current_followup_questions'):
+            #     st.session_state.current_followup_questions = []
+            start_processing(prompt)
+            st.rerun()
+        
+    except Exception as e:
+        st.error(f"Application Error: {str(e)}")
+        st.session_state.processing = False
+        st.session_state.workflow_started = False
+    finally:
+        # Ensure cleanup on any app termination
+        if st.session_state.get('db_client'):
+            pass  # Cleanup will be handled by atexit
+
+# Keep your existing render_persistent_followup_questions function
+def render_radio_button_selector():
+    """Render the radio button for selecting question type (Follow-up vs New Question).
+    Dataset selector is now in the sidebar.
+    This can be called from multiple places to ensure it's always available"""
+    
+    radio_key = "question_type_radio_widget"
+    
+    # NOTE: Initialization is now handled in main() function BEFORE this is called
+    # We only handle the post-processing reset logic here
+    if radio_key in st.session_state:
+        # Check if we should do a one-time reset after processing
+        last_selection = st.session_state.get('last_radio_selection', 'Follow-up')
+        was_processing = st.session_state.get('was_processing_before', False)
+        is_processing_now = st.session_state.get('processing', False)
+        reset_triggered = st.session_state.get('radio_reset_triggered', False)
+        
+        if was_processing and not is_processing_now and last_selection == "New Question" and not reset_triggered:
+            st.session_state[radio_key] = "Follow-up"
+            st.session_state['radio_reset_triggered'] = True
+        
+        st.session_state['was_processing_before'] = is_processing_now
+    
+    # Callback for radio changes
+    def on_radio_change():
+        current_selection = st.session_state.get(radio_key, "New Question")
+        st.session_state.last_radio_selection = current_selection
+        st.session_state['radio_reset_triggered'] = False
+        print(f"CALLBACK: Radio changed to: {current_selection}")
+    
+    # Render the radio button with label inline
+    st.markdown("""
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+        <span style="font-weight: 600; font-size: 14px; white-space: nowrap;">Question Type:</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Get the current value from session state (already initialized in main())
+    current_value = st.session_state.get(radio_key, "New Question")
+    
+    question_type = st.radio(
+        "label",
+        ("Follow-up", "New Question"),
+        key=radio_key,
+        index=0 if current_value == "Follow-up" else 1,
+        on_change=on_radio_change,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    st.session_state.question_type_selection = question_type
+    
+    print(f"RENDERED: Radio shows '{question_type}' | first_question_asked={st.session_state.first_question_asked}")
+    
+    return question_type
+
+def render_persistent_followup_questions():
+    """Render followup questions as simple styled buttons - left aligned like before"""
+    # Don't show follow-up questions if processing is active or if the list is empty
+    if (hasattr(st.session_state, 'current_followup_questions') and 
+        st.session_state.current_followup_questions and 
+        not st.session_state.get('processing', False)):
+        
+        # Display the follow-up questions with simple Streamlit buttons
+        for idx, question in enumerate(st.session_state.current_followup_questions):
+            # Create more unique key using session_id, timestamp, and question content
+            session_id = st.session_state.get('session_id', 'default')
+            message_count = len(st.session_state.get('messages', []))
+            question_hash = abs(hash(question))
+            button_key = f"followup_{session_id}_{message_count}_{idx}_{question_hash}"
+            
+            if st.button(
+                question, 
+                key=button_key,
+                help=f"Click to explore: {question}",
+                use_container_width=True
+            ):
+                print(f"🔄 Follow-up question clicked: {question}")
+                # Clear the follow-up questions to hide buttons
+                st.session_state.current_followup_questions = []
+                
+                # Remove the "Would you like to explore further?" message from chat history
+                if (st.session_state.messages and 
+                    st.session_state.messages[-1].get('message_type') == 'followup_questions'):
+                    st.session_state.messages.pop()
+                    print("🗑️ Removed follow-up intro message from chat history")
+                
+                # Start processing the selected question
+                start_processing(question)
+                st.rerun()
+        
+        # Radio button is already rendered in main(), don't render it again here
+        # Removed duplicate call to prevent "multiple elements with same key" error
+
+def render_chat_message_enhanced(message, message_idx):
+    """Enhanced chat message rendering with message type awareness"""
+    
+    role = message.get('role', 'user')
+    content = message.get('content', '')
+    message_type = message.get('message_type', 'standard')
+    timestamp = message.get('timestamp', '')
+    is_historical = message.get('historical', False)  # Check if this is a historical message
+    
+    if role == 'user':
+        # Use custom sky blue background for user messages with icon
+        # Properly format the content to handle newlines and special characters
+        safe_content_html = convert_text_to_safe_html(content)
+        st.markdown(f"""
+        <div class="user-message">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #4f9cf9; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                    👤
+                </div>
+                <div class="user-message-content">
+                    {safe_content_html}
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    elif role == 'assistant':
+        # Handle SQL result messages specially
+        if message_type == "sql_result":
+            sql_result = message.get('sql_result')
+            rewritten_question = message.get('rewritten_question')
+            functional_names = message.get('functional_names')  # Get functional_names from message
+            powerbi_data = message.get('powerbi_data')  # Get Power BI data from message
+            sql_generation_story = message.get('sql_generation_story')  # Get SQL story from message
+            if sql_result:
+                print(f"🔍 Rendering SQL result: type={type(sql_result)}, has_powerbi={powerbi_data is not None}, has_story={bool(sql_generation_story)}")
+                if isinstance(sql_result, str):
+                    print(f"    ⚠️ SQL result is string, not dict: {sql_result[:100]}...")
+                    # Try to parse as JSON if it's a string
+                    try:
+                        sql_result = json.loads(sql_result)
+                        print(f"    ✅ Successfully parsed string to dict")
+                    except json.JSONDecodeError as e:
+                        print(f"    ❌ Failed to parse SQL result string as JSON: {e}")
+                        st.error("Error: Could not parse SQL result data")
+                        return
+                
+                # Ensure sql_generation_story is in sql_result (for historical messages)
+                if sql_generation_story and 'sql_generation_story' not in sql_result:
+                    sql_result['sql_generation_story'] = sql_generation_story
+                    print(f"    ✅ Added sql_generation_story to sql_result from message")
+                
+                # Feedback is only shown if the message is NOT historical
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical, message_idx=message_idx, functional_names=functional_names, powerbi_data=powerbi_data)
+            return
+        
+        # Handle strategic analysis messages
+        elif message_type == "strategic_analysis":
+            strategic_results = message.get('strategic_results')
+            strategic_reasoning = message.get('strategic_reasoning')
+            if strategic_results:
+                render_strategic_analysis(strategic_results, strategic_reasoning, show_feedback=not is_historical)
+            return
+        
+        # Handle drillthrough analysis messages
+        elif message_type == "drillthrough_analysis":
+            drillthrough_results = message.get('drillthrough_results')
+            drillthrough_reasoning = message.get('drillthrough_reasoning')
+            if drillthrough_results:
+                render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning, show_feedback=not is_historical)
+            return
+        
+        # Handle selection reasoning messages - show datasets and trusted SQL indicator side by side
+        elif message_type == "selection_reasoning":
+            # Render both current AND historical selection_reasoning messages
+            # This ensures "Trusted SQL Pattern" indicator shows for ALL questions in history
+            
+            # content is now a list of functional_names
+            if isinstance(content, list):
+                datasets_text = ", ".join(content)
+            else:
+                datasets_text = str(content)
+            
+            # Check if history SQL was used
+            history_sql_used = message.get('history_sql_used', False)
+            print(f"🔍 RENDERING SELECTION_REASONING: is_historical={is_historical}, history_sql_used={history_sql_used} (type={type(history_sql_used).__name__})")
+            print(f"🔍 Full message dict keys: {list(message.keys())}")
+            print(f"🔍 Message content: {message}")
+            
+            # Use Streamlit columns for side-by-side layout
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Selected Datasets Box (Sky Blue)
+                st.markdown(f"""
+                <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px;">
+                    <div style="display: flex; align-items: center;">
+                        <span style="font-size: 1rem; margin-right: 8px;">📊</span>
+                        <strong style="color: #1e3a8a; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                # Trusted SQL Indicator Box - conditional styling
+                if history_sql_used:
+                    box_bg = "#d4edda"
+                    box_border = "#28a745"
+                    box_color = "#155724"
+                    icon = "✅"
+                    label = "Trusted SQL Pattern Used"
+                else:
+                    box_bg = "#f8f9fa"
+                    box_border = "#dee2e6"
+                    box_color = "#6c757d"
+                    icon = "🔧"
+                    label = "New SQL Generated"
+                
+                st.markdown(f"""
+                <div style="background-color: {box_bg}; border: 1px solid {box_border}; border-radius: 8px; padding: 12px;">
+                    <div style="display: flex; align-items: center;">
+                        <span style="font-size: 1rem; margin-right: 8px;">{icon}</span>
+                        <strong style="color: {box_color}; font-size: 0.95rem;">{label}</strong>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            return
+
+        # NEW CODE: Suppress historical followup_questions message
+        elif message_type == "followup_questions":
+            if is_historical:
+                # If the user started a new question, the old follow-up message is marked historical. 
+                # We skip rendering it to prevent the empty, greyed-out space.
+                return 
+
+        # Use consistent warm gold background for all system messages with icon
+        safe_content_html = convert_text_to_safe_html(content)
+        st.markdown(f"""
+        <div class="assistant-message">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                    🤖
+                </div>
+                <div class="assistant-message-content">
+                    {safe_content_html}
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()

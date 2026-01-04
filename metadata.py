@@ -18,12 +18,23 @@ st.set_page_config(
 # Simplified CSS styling - REMOVED gray box styling
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
     .block-container {
         padding-top: 0.5rem !important;
         padding-bottom: 1rem !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
         max-width: 1400px !important;
+        background-color: #FAFAF8 !important;
+    }
+    
+    body {
+        background-color: #FAFAF8 !important;
     }
     
     #MainMenu {visibility: hidden;}
@@ -48,7 +59,7 @@ st.markdown("""
     .main-title {
         font-size: 2.5rem;
         font-weight: 700 !important;
-        color: #002677;
+        color: #D74120;
         margin: 0;
         line-height: 1.2;
     }
@@ -69,15 +80,15 @@ st.markdown("""
     .section-header {
         font-size: 1.5rem;
         font-weight: 600;
-        color: #002677;
+        color: #D74120;
         margin-bottom: 1.5rem;
-        border-bottom: 2px solid #002677;
+        border-bottom: 2px solid #D74120;
         padding-bottom: 0.5rem;
     }
     
     /* Style for the text below Available Datasets */
     .dataset-instruction {
-        color: #002677 !important;
+        color: #333 !important;
         font-weight: 500 !important;
         margin-bottom: 1rem;
     }
@@ -161,32 +172,73 @@ st.markdown("""
         word-wrap: break-word !important;
     }
     
+    /* Force text wrapping in all dataframe cells */
     .stDataFrame td, .stDataFrame th {
-        white-space: pre-wrap !important;
+        white-space: normal !important;
         word-break: break-word !important;
-        overflow-wrap: break-word !important;
+        overflow-wrap: anywhere !important;
         word-wrap: break-word !important;
         vertical-align: top !important;
-        padding: 8px !important;
-        line-height: 1.4 !important;
-        max-width: none !important;
+        padding: 12px !important;
+        line-height: 1.5 !important;
+        max-width: 400px !important;
+        min-width: 100px !important;
     }
     
     /* Enhanced dataframe styling for better content display */
     .stDataFrame table {
         width: 100% !important;
+        table-layout: auto !important;
     }
     
-    /* Force cell content to wrap naturally */
+    /* Force cell content to wrap naturally with additional specificity */
     .stDataFrame tbody tr td {
-        white-space: pre-wrap !important;
+        white-space: normal !important;
         word-break: break-word !important;
-        overflow-wrap: break-word !important;
+        overflow-wrap: anywhere !important;
         word-wrap: break-word !important;
         height: auto !important;
         vertical-align: top !important;
-        padding: 8px !important;
-        line-height: 1.4 !important;
+        padding: 12px !important;
+        line-height: 1.5 !important;
+    }
+    
+    /* Specific styling for Description column */
+    .stDataFrame tbody tr td:last-child {
+        max-width: 600px !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    
+    /* Styled cards for sections */
+    .metadata-card {
+        background: white;
+        border: 1px solid #E0E0E0;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+    
+    .card-title {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #D74120;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    /* Dropdown styling */
+    .stSelectbox > div > div {
+        border: 2px solid #2196F3 !important;
+        border-radius: 8px !important;
+    }
+    
+    .stSelectbox > label {
+        font-weight: 600 !important;
+        color: #333 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -300,73 +352,72 @@ async def display_table_metadata(table_name, display_name):
         loading_placeholder.empty()
         
         if schema_df is not None and not schema_df.empty:
-            # Show dataset information instead of schema summary
+            # Show dataset information with styled card
             st.markdown(f"""
-            <div style="margin-top: 1rem; margin-bottom: 1.5rem; padding: 1.5rem; background-color: #d9f6fa; border-radius: 8px; border-left: 4px solid #002677;">
-                <h4 style="color: #002677; margin: 0 0 1rem 0;">📊 Dataset Information</h4>
-                <p style="margin: 0; line-height: 1.6; color: #333;">{table_description}</p>
+            <div class="metadata-card">
+                <div class="card-title">� Table Description</div>
+                <p style="margin: 0; line-height: 1.6; color: #333; word-wrap: break-word; white-space: pre-wrap;">{table_description}</p>
             </div>
             """, unsafe_allow_html=True)
             
-            # Display actual table columns
+            # Display actual table columns with styled card
             st.markdown("""
-            <div style="margin-top: 1.5rem; margin-bottom: 1rem;">
-                <h4 style="color: #002677; margin: 0; font-size: 1.3rem; font-weight: 600;">📋 Table Columns</h4>
-            </div>
+            <div class="metadata-card">
+                <div class="card-title">📋 Table Columns</div>
             """, unsafe_allow_html=True)
             
-            # Display the actual table schema
-            st.dataframe(
-                schema_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Column Name": st.column_config.TextColumn(
-                        "Column Name",
-                        help="Name of the column in the table"
-                    ),
-                    "Data Type": st.column_config.TextColumn(
-                        "Data Type", 
-                        help="Data type of the column"
-                    ),
-                    "Description": st.column_config.TextColumn(
-                        "Description",
-                        help="Full description of the column"
-                    )
-                }
-            )
+            # Remove Data Type column and convert to HTML for better wrapping
+            schema_display = schema_df[['Column Name', 'Description']].copy()
             
-            # Display calculated metrics section
+            # Create HTML table with proper text wrapping
+            html_table = '<table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">'
+            html_table += '<thead><tr>'
+            html_table += '<th style="background-color: #f8f9fa; color: #D74120; font-weight: 600; padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 30%;">Column Name</th>'
+            html_table += '<th style="background-color: #f8f9fa; color: #D74120; font-weight: 600; padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 70%;">Description</th>'
+            html_table += '</tr></thead><tbody>'
+            
+            for idx, row in schema_display.iterrows():
+                html_table += '<tr>'
+                html_table += f'<td style="padding: 12px; border: 1px solid #dee2e6; vertical-align: top; font-weight: 500; color: #333;">{row["Column Name"]}</td>'
+                html_table += f'<td style="padding: 12px; border: 1px solid #dee2e6; vertical-align: top; white-space: normal; word-wrap: break-word; line-height: 1.6; color: #555;">{row["Description"]}</td>'
+                html_table += '</tr>'
+            
+            html_table += '</tbody></table>'
+            
+            st.markdown(html_table, unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Display calculated metrics section with styled card
             if calculated_metrics_df is not None and not calculated_metrics_df.empty:
                 st.markdown("""
-                <div style="margin-top: 2rem; margin-bottom: 1rem;">
-                    <h4 style="color: #002677; margin: 0; font-size: 1.3rem; font-weight: 600;">🧮 Calculated Columns</h4>
-                    <p style="color: #666; font-size: 0.9rem; margin: 0.5rem 0 0 0;">These are computed metrics and derived columns available for analysis</p>
-                </div>
+                <div class="metadata-card">
+                    <div class="card-title">🧮 Calculated Columns</div>
+                    <p style="color: #666; font-size: 0.9rem; margin: 0 0 1rem 0;">These are computed metrics and derived columns available for analysis</p>
                 """, unsafe_allow_html=True)
                 
-                # Display calculated metrics table
-                st.dataframe(
-                    calculated_metrics_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Column Name": st.column_config.TextColumn(
-                            "Column Name",
-                            help="Name of the calculated metric"
-                        ),
-                        "Description": st.column_config.TextColumn(
-                            "Description",
-                            help="Full description of the calculated metric"
-                        )
-                    }
-                )
+                # Create HTML table for calculated metrics with proper text wrapping
+                html_calc_table = '<table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">'
+                html_calc_table += '<thead><tr>'
+                html_calc_table += '<th style="background-color: #f8f9fa; color: #D74120; font-weight: 600; padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 30%;">Column Name</th>'
+                html_calc_table += '<th style="background-color: #f8f9fa; color: #D74120; font-weight: 600; padding: 12px; text-align: left; border: 1px solid #dee2e6; width: 70%;">Description</th>'
+                html_calc_table += '</tr></thead><tbody>'
+                
+                for idx, row in calculated_metrics_df.iterrows():
+                    html_calc_table += '<tr>'
+                    html_calc_table += f'<td style="padding: 12px; border: 1px solid #dee2e6; vertical-align: top; font-weight: 500; color: #333;">{row["Column Name"]}</td>'
+                    html_calc_table += f'<td style="padding: 12px; border: 1px solid #dee2e6; vertical-align: top; white-space: normal; word-wrap: break-word; line-height: 1.6; color: #555;">{row["Description"]}</td>'
+                    html_calc_table += '</tr>'
+                
+                html_calc_table += '</tbody></table>'
+                
+                st.markdown(html_calc_table, unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 # Show message if no calculated metrics found
                 st.markdown("""
-                <div style="margin-top: 2rem; margin-bottom: 1rem;">
-                    <h4 style="color: #002677; margin: 0; font-size: 1.3rem; font-weight: 600;">🧮 Calculated Columns</h4>
-                    <p style="color: #666; font-size: 0.9rem; margin: 0.5rem 0 0 0;">No calculated metrics available for this table</p>
+                <div class="metadata-card">
+                    <div class="card-title">🧮 Calculated Columns</div>
+                    <p style="color: #999; font-size: 0.9rem; margin: 0;">No calculated metrics available for this table</p>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -468,7 +519,7 @@ def main():
     with col_title:
         st.markdown(f"""
         <div class="title-container">
-            <div class="main-title" style="font-size:1.6rem; font-weight:700; color:#002677; margin:0; line-height:1.2;">
+            <div class="main-title" style="font-size:1.6rem; font-weight:700; color:#D74120; margin:0; line-height:1.2;">
                 Data Dictionary - {selected_domain}
             </div>
         </div>
@@ -487,51 +538,45 @@ def main():
         st.error(f"❌ No datasets found for domain: {selected_domain}")
         return
     
-    # Two-column layout: Left panel for dataset selection (1/4), Right panel for metadata (3/4)
-    left_col, right_col = st.columns([1, 3])
+    # Full-width layout with dropdown at top
+    st.markdown("""
+    <div style="margin-bottom: 1.5rem;">
+        <p style="color: #333; font-size: 1rem; font-weight: 500; margin-bottom: 0.5rem;">📊 Select Dataset:</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    with left_col:
-        # Section header - no gray box wrapper
-        st.markdown(f"""
-        <div class="section-header">
-            Available Datasets for {selected_domain}
+    # Dataset selection with dropdown using functional names
+    dataset_option = st.selectbox(
+        "Select Dataset",
+        options=functional_names,
+        index=None,
+        key="dataset_selection",
+        label_visibility="collapsed",
+        placeholder="Choose a dataset to view its schema and metadata..."
+    )
+    
+    # Display metadata based on selection
+    if dataset_option:
+        # Get the actual table name for the selected functional name
+        table_name = get_table_name_for_functional(metadata_config, selected_domain, dataset_option)
+        
+        if table_name:
+            # Run async function using asyncio.run()
+            asyncio.run(display_table_metadata(
+                table_name=table_name,
+                display_name=dataset_option.replace('_', ' ').title()
+            ))
+        else:
+            st.error(f"❌ Table name not found for: {dataset_option}")
+    else:
+        # Empty state when no dataset is selected
+        st.markdown("""
+        <div style="text-align: center; padding: 4rem 2rem; color: #999;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📊</div>
+            <h3 style="color: #333; margin-bottom: 0.5rem;">Select a Dataset</h3>
+            <p style="color: #666;">Choose a dataset from the dropdown above to view its metadata information, column details, and schema structure.</p>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.markdown('<div class="dataset-instruction"><strong>Click to view metadata information:</strong></div>', unsafe_allow_html=True)
-        
-        # Dataset selection with radio buttons using functional names
-        dataset_option = st.radio(
-            "Select Dataset",
-            options=functional_names,
-            index=None,
-            key="dataset_selection",
-            label_visibility="hidden"
-        )
-    
-    with right_col:
-        # Display metadata based on selection
-        if dataset_option:
-            # Get the actual table name for the selected functional name
-            table_name = get_table_name_for_functional(metadata_config, selected_domain, dataset_option)
-            
-            if table_name:
-                # Run async function using asyncio.run()
-                asyncio.run(display_table_metadata(
-                    table_name=table_name,
-                    display_name=dataset_option.replace('_', ' ').title()
-                ))
-            else:
-                st.error(f"❌ Table name not found for: {dataset_option}")
-        else:
-            # Empty state when no dataset is selected
-            st.markdown("""
-            <div class="empty-state">
-                <div class="empty-state-icon">📊</div>
-                <h3>Select a Dataset</h3>
-                <p>Choose a dataset from the left panel to view its metadata information, column details, and schema structure.</p>
-            </div>
-            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

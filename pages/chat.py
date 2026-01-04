@@ -41,7 +41,7 @@ st.markdown(
         
         /* ===== GLOBAL APP STYLING ===== */
         .stApp {
-            background-color: #FAF8F2 !important;
+            background-color: #FAFAF8 !important;
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
         }
         
@@ -52,7 +52,7 @@ st.markdown(
             width: 240px !important;
             display: block !important;
             visibility: visible !important;
-            background: linear-gradient(180deg, #FFFFFF 0%, #FAF8F2 100%) !important;
+            background: linear-gradient(180deg, #FFFFFF 0%, #FAFAF8 100%) !important;
             border-right: 1px solid #EDE8E0 !important;
         }
         
@@ -1131,7 +1131,7 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     # Title with custom narrative-content styling
     st.markdown(f"""
     <div class="narrative-content">
-        <strong> 🤖 AI Rewritten Question:</strong> {title}
+        <strong>🔄 AI Interpreted as:</strong> {title}
     </div>
     """, unsafe_allow_html=True)
     
@@ -2926,7 +2926,7 @@ def add_message_type_css():
         color: white !important;
         padding: 14px 20px;
         border-radius: 20px 20px 6px 20px;
-        max-width: 85%;
+        max-width: none;
         min-width: 200px;
         word-wrap: break-word;
         border: none !important;
@@ -2965,7 +2965,7 @@ def add_message_type_css():
     
     /* ===== NARRATIVE/EXPLANATION CONTENT ===== */
     .narrative-content {
-        color: #2a2a2a;
+        color: #1a1a1a;
         padding: 18px 22px;
         margin: 12px 0;
         max-width: 100%;
@@ -2974,7 +2974,7 @@ def add_message_type_css():
         line-height: 1.7;
         font-style: normal !important;
         font-weight: normal !important;
-        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%) !important;
+        background: linear-gradient(135deg, #FAFAF8 0%, #FFFFFF 100%) !important;
         border: 1px solid #EDE8E0 !important;
         border-radius: 14px !important;
         box-shadow: 0 2px 8px rgba(0,0,0,0.04);
@@ -2982,7 +2982,7 @@ def add_message_type_css():
     
     /* ===== HOW I SOLVED THIS - EXPLANATION CARD ===== */
     .explanation-card {
-        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+        background: linear-gradient(135deg, #FAFAF8 0%, #FFFFFF 100%);
         border-left: 4px solid #FF612B;
         padding: 18px 22px;
         border-radius: 0 14px 14px 0;
@@ -3002,7 +3002,7 @@ def add_message_type_css():
     }
     
     .explanation-text {
-        color: #4a4a4a;
+        color: #1a1a1a;
         font-size: 14px;
         line-height: 1.7;
     }
@@ -3121,7 +3121,7 @@ def add_message_type_css():
     }
     
     .insight-text {
-        color: #2a2a2a;
+        color: #1a1a1a;
         font-size: 14px;
         line-height: 1.6;
     }
@@ -3135,16 +3135,6 @@ def add_message_type_css():
         border: 2px dashed #F9A667;
         position: relative;
         overflow: hidden;
-    }
-    
-    .report-card::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 5px;
-        background: linear-gradient(90deg, #FF612B 0%, #F9A667 50%, #FFD1AB 100%);
     }
     
     .report-label {
@@ -3216,9 +3206,9 @@ def add_message_type_css():
     .followup-container {
         margin: 1rem 0;
         padding: 1.25rem;
-        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+        background: linear-gradient(135deg, #FAFAF8 0%, #FFFFFF 100%);
         border-radius: 14px;
-        border-left: 4px solid #FF612B;
+        border-left: 4px solid #1e3a8a;
         box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     
@@ -3235,9 +3225,9 @@ def add_message_type_css():
         margin: 0.5rem 0;
         padding: 14px 18px;
         background-color: white;
-        border: 2px solid #FF612B;
+        border: 2px solid #1e3a8a;
         border-radius: 10px;
-        color: #D74120;
+        color: #1e3a8a;
         text-align: left;
         cursor: pointer;
         transition: all 0.2s ease;
@@ -3247,9 +3237,9 @@ def add_message_type_css():
     }
     
     .followup-button:hover {
-        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%);
+        background: linear-gradient(135deg, #1e3a8a 0%, #2d4a9a 100%);
         color: white;
-        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3);
+        box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
         border-color: transparent;
     }
     
@@ -3311,11 +3301,11 @@ def add_message_type_css():
         padding: 0 !important;
     }
     
-    /* ===== GENERAL BUTTON STYLING - OPTUM ORANGE ===== */
+    /* ===== GENERAL BUTTON STYLING - DARK BLUE FOR FOLLOW-UPS ===== */
     .stButton > button {
         background-color: white !important;
-        color: #D74120 !important;
-        border: 2px solid #FF612B !important;
+        color: #1e3a8a !important;
+        border: 2px solid #1e3a8a !important;
         border-radius: 10px !important;
         padding: 12px 18px !important;
         margin: 0 !important;
@@ -3332,17 +3322,17 @@ def add_message_type_css():
     }
 
     .stButton > button:hover {
-        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%) !important;
+        background: linear-gradient(135deg, #1e3a8a 0%, #2d4a9a 100%) !important;
         color: white !important;
-        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
         transform: translateY(-1px) !important;
         border-color: transparent !important;
     }
 
     .stButton > button:focus {
-        background: linear-gradient(135deg, #FF612B 0%, #D74120 100%) !important;
+        background: linear-gradient(135deg, #1e3a8a 0%, #15296b 100%) !important;
         color: white !important;
-        box-shadow: 0 0 0 3px rgba(255, 97, 43, 0.2) !important;
+        box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.2) !important;
         outline: none !important;
         border-color: transparent !important;
     }
@@ -3354,8 +3344,8 @@ def add_message_type_css():
 
     .stButton button[kind="secondary"] {
         background-color: white !important;
-        color: #D74120 !important;
-        border-color: #FF612B !important;
+        color: #1e3a8a !important;
+        border-color: #1e3a8a !important;
     }
     
     /* ===== CHAT INPUT - OPTUM STYLED ===== */
@@ -3385,7 +3375,7 @@ def add_message_type_css():
     .stChatInput {
         position: sticky !important;
         bottom: 0 !important;
-        background: linear-gradient(180deg, transparent 0%, #FAF8F2 30%) !important;
+        background: linear-gradient(180deg, transparent 0%, #FAFAF8 30%) !important;
         padding: 16px 0 !important;
         margin-top: 24px !important;
     }
@@ -3429,7 +3419,7 @@ def add_message_type_css():
     }
     
     .stDataFrame table th {
-        background-color: #FAF8F2 !important;
+        background-color: #FAFAF8 !important;
         font-weight: 600 !important;
         color: #4a4a4a !important;
         text-transform: uppercase !important;
@@ -3443,7 +3433,7 @@ def add_message_type_css():
     }
     
     .stDataFrame table tr:hover {
-        background-color: #FAF8F2 !important;
+        background-color: #FAFAF8 !important;
     }
     
     /* Total row highlight - Optum Peach */
@@ -3596,7 +3586,7 @@ def main():
         }
         
         [data-testid="stSidebar"] .stButton > button[key*="history_"]:hover {
-            background-color: #FAF8F2 !important;
+            background-color: #FAFAF8 !important;
             border-color: #FF612B !important;
             box-shadow: 0 2px 8px rgba(255, 97, 43, 0.15) !important;
         }

@@ -75,6 +75,12 @@ def get_azure_user_info():
 # CSS with updated button styling for three buttons
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+    
     /* Remove default Streamlit padding and margins */
     .block-container {
         padding-top: 0.5rem !important;
@@ -82,6 +88,11 @@ st.markdown("""
         padding-left: 2rem !important;
         padding-right: 2rem !important;
         max-width: 1200px !important;
+        background-color: #FAFAF8 !important;
+    }
+    
+    body {
+        background-color: #FAFAF8 !important;
     }
     
     /* Hide Streamlit header and footer */
@@ -103,26 +114,27 @@ st.markdown("""
         flex: 0 0 auto;
     }
     
-    /* Welcome section styling - FURTHER REDUCED HEIGHT AND MOVED UP */
+    /* Welcome section styling - refined cyan card to match chat style */
     .welcome-section {
         text-align: center;
         margin: 0.5rem 0;
-        padding: 1rem 2rem;
-        background: #D9F6FA;
+        padding: 1.5rem 2rem;
+        background: #E8F4F8;
+        border: 2px solid #2196F3;
         border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(33, 150, 243, 0.15);
     }
     
     .welcome-title {
         font-size: 1.5rem;
-        font-weight: 600;
-        color: #002677;
+        font-weight: 700;
+        color: #D74120;
         margin-bottom: 0.3rem;
     }
     
     .welcome-subtitle {
         font-size: 1rem;
-        color: #002677;
+        color: #333;
         margin-bottom: 0.5rem;
         line-height: 1.3;
     }
@@ -132,28 +144,29 @@ st.markdown("""
         text-align: center;
         margin: 1.5rem 0;
         padding: 1.5rem 2rem;
-        background: #f8f9fa;
+        background: #FAFAF8;
         border-radius: 12px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        border-left: 4px solid #002677;
+        border-left: 4px solid #D74120;
     }
     
     .team-selection-title {
         font-size: 1.3rem;
         font-weight: 600;
-        color: #002677;
+        color: #333;
         margin-bottom: 1rem;
     }
     
     .team-note {
         font-size: 0.9rem;
-        color: #002677;
-        background: #e9ecef;
+        color: #333;
+        background: linear-gradient(135deg, #E8F4F8 0%, #F0F7FB 100%);
         padding: 0.8rem;
         border-radius: 8px;
         margin-top: 1rem;
         text-align: left;
         line-height: 1.4;
+        border-left: 4px solid #2196F3;
     }
     
     /* Button section - MOVED UP MORE */
@@ -197,15 +210,17 @@ st.markdown("""
         transform: translateY(-1px) !important;
     }
     
-    /* Chat button - WHITE TEXT ON DARK BLUE BACKGROUND */
+    /* Chat button - Optum orange gradient */
     .chat-button .stButton > button {
-        background: #002677 !important;
+        background: linear-gradient(45deg, #D74120, #E85C3F) !important;
         color: #FFFFFF !important;
+        box-shadow: 0 6px 20px rgba(215, 65, 32, 0.3) !important;
     }
     
     .chat-button .stButton > button:hover {
-        background: #001b56 !important;
+        background: linear-gradient(45deg, #B83419, #D74120) !important;
         color: #FFFFFF !important;
+        box-shadow: 0 8px 25px rgba(215, 65, 32, 0.4) !important;
     }
     
     /* Disabled chat button */
@@ -213,30 +228,35 @@ st.markdown("""
         background: #6c757d !important;
         color: #ffffff !important;
         cursor: not-allowed !important;
+        box-shadow: 0 6px 20px rgba(108,117,125,0.2) !important;
     }
     
     .chat-button-disabled .stButton > button:hover {
         background: #6c757d !important;
         transform: none !important;
-        box-shadow: 0 6px 20px rgba(108,117,125,0.3) !important;
+        box-shadow: 0 6px 20px rgba(108,117,125,0.2) !important;
     }
     
-    /* Metadata button */
+    /* Metadata button - Blue gradient */
     .metadata-button .stButton > button {
-        background: linear-gradient(45deg, #6f42c1, #e83e8c) !important;
+        background: linear-gradient(45deg, #2196F3, #1976D2) !important;
+        box-shadow: 0 6px 20px rgba(33, 150, 243, 0.3) !important;
     }
     
     .metadata-button .stButton > button:hover {
-        background: linear-gradient(45deg, #e83e8c, #fd7e14) !important;
+        background: linear-gradient(45deg, #1976D2, #1565C0) !important;
+        box-shadow: 0 8px 25px rgba(33, 150, 243, 0.4) !important;
     }
     
-    /* NEW: FAQ button styling */
+    /* FAQ button - Green gradient */
     .faq-button .stButton > button {
         background: linear-gradient(45deg, #28a745, #20c997) !important;
+        box-shadow: 0 6px 20px rgba(40, 167, 69, 0.3) !important;
     }
     
     .faq-button .stButton > button:hover {
         background: linear-gradient(45deg, #20c997, #17a2b8) !important;
+        box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4) !important;
     }
     
     /* Remove extra spacing from Streamlit columns */
@@ -265,6 +285,22 @@ st.markdown("""
     .stRadio > div {
         margin-top: 0 !important;
         padding-top: 0 !important;
+    }
+    
+    /* Optum-styled radio buttons */
+    .stRadio > label {
+        font-size: 1rem !important;
+        font-weight: 500 !important;
+        color: #333 !important;
+    }
+    
+    .stRadio > div > label > div {
+        font-size: 1rem !important;
+        color: #333 !important;
+    }
+    
+    .stRadio [data-baseweb="radio"] {
+        accent-color: #D74120 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -353,7 +389,7 @@ def main():
     
     # Team selection section - left aligned
     st.markdown('<div style="margin: 0.8rem 0 0.2rem 0;">', unsafe_allow_html=True)
-    st.markdown('<p style="color: #002677; margin-bottom: 0.2rem; font-size: 1.1rem; font-weight: 500;">Please select which team you belong to:</p>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #333; margin-bottom: 0.2rem; font-size: 1.1rem; font-weight: 500;">Please select which team you belong to:</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Radio button for team selection - left aligned
@@ -377,9 +413,9 @@ def main():
     # Note about datasets - only show after team selection, with larger font
     if selected_team:
         st.markdown("""
-        <div style="background: #e9ecef; padding: 0.8rem; border-radius: 8px; margin: 0.5rem 0; color: #002677; font-size: 1.0rem; line-height: 1.4; text-align: left;">
-            <strong>Note:</strong>
-            <ul style="margin-left: 1.2em;">
+        <div style="background: linear-gradient(135deg, #E8F4F8 0%, #F0F7FB 100%); padding: 1rem; border-radius: 8px; margin: 0.5rem 0; color: #333; font-size: 1.0rem; line-height: 1.4; text-align: left; border-left: 4px solid #2196F3;">
+            <strong style="color: #D74120;">📌 Note:</strong>
+            <ul style="margin-left: 1.2em; margin-top: 0.5rem;">
                 <li>Ledger datasets contain a combination of PBM, HDP, and Specialty information. Both teams will have access to the entire Ledger datasets.</li>
                 <li>If you want to see individual product category level data (PBM, HDP, or Specialty), you can always add the filtering while prompting (e.g., "Show me revenue for PBM" or "Compare actuals vs forecast for Specialty").</li>
             </ul>

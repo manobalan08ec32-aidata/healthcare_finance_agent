@@ -9,7 +9,70 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS with knowledge base styling
+def get_azure_user_info():
+    """
+    Extract user information from Azure App Service authentication headers
+    Returns a dictionary with user information
+    """
+    try:
+        # Azure App Service injects user info in these headers when authentication is enabled
+        headers = st.context.headers if hasattr(st.context, 'headers') else {}
+        
+        # Try different header names that Azure App Service uses
+        user_email = None
+        user_name = None
+        
+        # Common Azure App Service authentication headers
+        possible_email_headers = [
+            'X-MS-CLIENT-PRINCIPAL-NAME',  # Usually contains email
+            'X-MS-CLIENT-PRINCIPAL-ID',    # User ID
+            'X-MS-TOKEN-AAD-ID-TOKEN',     # JWT token (needs decoding)
+        ]
+        
+        possible_name_headers = [
+            'X-MS-CLIENT-PRINCIPAL-NAME',
+            'X-MS-CLIENT-DISPLAY-NAME'
+        ]
+        
+        # Try to get email from headers
+        for header in possible_email_headers:
+            if header in headers:
+                user_email = headers[header]
+                break
+        
+        # Try to get name from headers
+        for header in possible_name_headers:
+            if header in headers:
+                user_name = headers[header]
+                break
+        
+        # Fallback: try Streamlit's request headers directly
+        if not user_email:
+            import streamlit.web.server.server as server
+            session = server.Server.get_current()._get_session_info()
+            if session and hasattr(session, 'request'):
+                request_headers = session.request.headers
+                for header in possible_email_headers:
+                    if header in request_headers:
+                        user_email = request_headers[header]
+                        break
+        
+        return {
+            'email': user_email or 'Unknown User',
+            'name': user_name or user_email or 'Unknown User',
+            'authenticated': user_email is not None
+        }
+        
+    except Exception as e:
+        print(f"Error getting Azure user info: {e}")
+        return {
+            'email': 'Unknown User',
+            'name': 'Unknown User', 
+            'authenticated': False,
+            'error': str(e)
+        }
+
+# CSS with updated button styling for three buttons
 st.markdown("""
 <style>
     /* Remove default Streamlit padding and margins */
@@ -26,12 +89,12 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Header section with logo and title on same line */
+    /* Header section with logo only - no title */
     .header-section {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        margin-bottom: 1.5rem;
+        justify-content: flex-start;
+        margin-bottom: 1rem;
         padding: 0.5rem 0;
         width: 100%;
     }
@@ -40,114 +103,140 @@ st.markdown("""
         flex: 0 0 auto;
     }
     
-    .title-container {
-        flex: 1;
+    /* Welcome section styling - FURTHER REDUCED HEIGHT AND MOVED UP */
+    .welcome-section {
         text-align: center;
-        margin-left: -120px; /* Offset logo width for perfect centering */
+        margin: 0.5rem 0;
+        padding: 1rem 2rem;
+        background: #D9F6FA;
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
     
-    /* Title styling - same line as logo */
-    .main-title {
-        font-size: 2.5rem;
-        font-weight: 700 !important;
-        color: #333;
-        margin: 0;
-        line-height: 1.2;
-    }
-    
-    /* Knowledge base content styling - plain page */
-    .knowledge-section {
-        width: 100%;
-        margin: 0 auto 1rem auto;
-        padding: 0.5rem 0;
-    }
-    
-    .knowledge-title {
-        font-size: 1.4rem;
+    .welcome-title {
+        font-size: 1.5rem;
         font-weight: 600;
-        color: #007bff;
-        margin-bottom: 1rem;
-        text-align: center;
-        border-bottom: 2px solid #007bff;
-        padding-bottom: 0.3rem;
+        color: #002677;
+        margin-bottom: 0.3rem;
     }
     
-    /* Content styling */
-    .knowledge-section h2 {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: #007bff;
-        margin: 1rem 0 0.5rem 0;
-        border-bottom: 1px solid #007bff;
-        padding-bottom: 0.2rem;
-    }
-    
-    .knowledge-section h3 {
+    .welcome-subtitle {
         font-size: 1rem;
+        color: #002677;
+        margin-bottom: 0.5rem;
+        line-height: 1.3;
+    }
+    
+    /* Team selection section */
+    .team-selection-section {
+        text-align: center;
+        margin: 1.5rem 0;
+        padding: 1.5rem 2rem;
+        background: #f8f9fa;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        border-left: 4px solid #002677;
+    }
+    
+    .team-selection-title {
+        font-size: 1.3rem;
         font-weight: 600;
-        color: #0056b3;
-        margin: 0.8rem 0 0.3rem 0;
+        color: #002677;
+        margin-bottom: 1rem;
     }
     
-    .knowledge-section p {
-        margin: 0.3rem 0;
-        line-height: 1.4;
-        color: #555;
+    .team-note {
         font-size: 0.9rem;
-    }
-    
-    .knowledge-section strong {
-        font-weight: 700;
-        color: #333;
-    }
-    
-    /* Important note styling */
-    .important-note {
-        background-color: #fff3cd;
-        border: 1px solid #ffeaa7;
-        border-radius: 6px;
+        color: #002677;
+        background: #e9ecef;
         padding: 0.8rem;
-        margin-bottom: 0.8rem;
+        border-radius: 8px;
+        margin-top: 1rem;
+        text-align: left;
+        line-height: 1.4;
     }
     
-    .important-note h3 {
-        color: #856404 !important;
-        margin-top: 0 !important;
-        font-size: 1rem !important;
-        margin-bottom: 0.3rem !important;
-    }
-    
-    .important-note p {
-        color: #856404 !important;
-        margin-bottom: 0;
-        font-size: 0.85rem;
-    }
-    
-    /* Button section */
+    /* Button section - MOVED UP MORE */
     .button-section {
         text-align: center;
-        padding: 1rem 0 0.5rem 0;
+        padding: 0.5rem 0;
+        margin-top: 0.5rem;
     }
     
-    /* Button styling */
+    /* Button container for side-by-side layout - UPDATED FOR THREE BUTTONS */
+    .button-container {
+        display: flex;
+        justify-content: center;
+        gap: 1.5rem;
+        margin-top: 1rem;
+    }
+    
+    /* Individual button styling - ADJUSTED FOR THREE BUTTONS */
     .stButton > button {
-        background-color: #007bff !important;
+        background: linear-gradient(45deg, #007bff, #0056b3) !important;
         color: white !important;
         border: none !important;
-        border-radius: 8px !important;
-        padding: 0.8rem 2.5rem !important;
-        font-size: 1.1rem !important;
-        font-weight: 500 !important;
-        width: 220px !important;
-        height: 55px !important;
+        border-radius: 12px !important;
+        padding: 1rem 1.5rem !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        width: 180px !important;
+        height: 65px !important;
         transition: all 0.3s ease !important;
-        box-shadow: 0 4px 12px rgba(0,123,255,0.3) !important;
+        box-shadow: 0 6px 20px rgba(0,123,255,0.3) !important;
+        cursor: pointer !important;
     }
     
     .stButton > button:hover {
-        background-color: #0056b3 !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 6px 16px rgba(0,123,255,0.4) !important;
+        background: linear-gradient(45deg, #0056b3, #004085) !important;
+        transform: translateY(-3px) !important;
+        box-shadow: 0 8px 25px rgba(0,123,255,0.4) !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(-1px) !important;
+    }
+    
+    /* Chat button - WHITE TEXT ON DARK BLUE BACKGROUND */
+    .chat-button .stButton > button {
+        background: #002677 !important;
+        color: #FFFFFF !important;
+    }
+    
+    .chat-button .stButton > button:hover {
+        background: #001b56 !important;
+        color: #FFFFFF !important;
+    }
+    
+    /* Disabled chat button */
+    .chat-button-disabled .stButton > button {
+        background: #6c757d !important;
+        color: #ffffff !important;
+        cursor: not-allowed !important;
+    }
+    
+    .chat-button-disabled .stButton > button:hover {
+        background: #6c757d !important;
+        transform: none !important;
+        box-shadow: 0 6px 20px rgba(108,117,125,0.3) !important;
+    }
+    
+    /* Metadata button */
+    .metadata-button .stButton > button {
+        background: linear-gradient(45deg, #6f42c1, #e83e8c) !important;
+    }
+    
+    .metadata-button .stButton > button:hover {
+        background: linear-gradient(45deg, #e83e8c, #fd7e14) !important;
+    }
+    
+    /* NEW: FAQ button styling */
+    .faq-button .stButton > button {
+        background: linear-gradient(45deg, #28a745, #20c997) !important;
+    }
+    
+    .faq-button .stButton > button:hover {
+        background: linear-gradient(45deg, #20c997, #17a2b8) !important;
     }
     
     /* Remove extra spacing from Streamlit columns */
@@ -159,11 +248,29 @@ st.markdown("""
     .stImage {
         margin: 0 !important;
     }
+    
+    /* Button descriptions */
+    .button-description {
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+        color: #6c757d;
+        text-align: center;
+    }
+    
+    /* Reduce spacing between radio buttons and title */
+    .stRadio {
+        margin-top: 0 !important;
+    }
+    
+    .stRadio > div {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 def get_knowledge_base_content():
-    """Return the organized knowledge base content - by dataset"""
+    """Return the organized knowledge base content - by dataset (kept but hidden)"""
     return """
     <div class="important-note">
         <h3>Important Note</h3>
@@ -174,19 +281,29 @@ def get_knowledge_base_content():
     <p><strong>Attributes:</strong> Line of Business, Product Category, State/Region, Time periods (Date/Year/Month/Quarter), Forecast scenarios (8+4, 2+10, 5+7), Budget plans (BUDGET, GAAP)</p>
     <p><strong>Metrics:</strong> Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS (after reclassification), SG&A (after reclassification), IOI, Total Membership, Variance Analysis</p>
     
-    <h2>📊 Dataset 2: Pharmacy Claim Transaction</h2>
-    <p><strong>Attributes:</strong> Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status (Paid/Reversed/Rejected)</p>
+    <h2>📊 Dataset 2: PBM & Pharmacy Claim Transaction</h2>
+    <p><strong>Attributes:</strong> Line of Business, Client/Carrier/Account/Group, Dispensing Location, NPI, Medication Name, Therapeutic Class, Brand/Generic, GPI, NDC, Manufacturer, Claim ID, Submission Date, Status,Client Type,Pharmacy Type,Member Age group,State (Paid/Reversed/Rejected)</p>
     <p><strong>Metrics:</strong> Total Prescriptions, Adjusted Counts, 30-day/90-day Fills, Revenue, COGS, WAC, AWP, Revenue per Prescription, Generic Dispense Rate (GDR)</p>
     """
 
 def main():
-    """Main landing page with logo/title, knowledge base, and chat button"""
+    """Main landing page with logo and welcome section"""
     
-    # Header section with logo and title on same horizontal line
+    # Get Azure user information
+    user_info = get_azure_user_info()
+    
+    # Initialize session state for team selection
+    if 'selected_team' not in st.session_state:
+        st.session_state.selected_team = None
+    
+    # Store user info in session state for use in other pages
+    st.session_state.user_info = user_info
+    
+    # Header section with logo only (no title)
     st.markdown('<div class="header-section">', unsafe_allow_html=True)
     
-    # Create columns for logo and title - same line
-    col1, col2 = st.columns([1, 6])
+    # Logo aligned to the left, user info on the right
+    col1, col2 = st.columns([1, 5])
     
     with col1:
         # Logo
@@ -202,40 +319,131 @@ def main():
             st.markdown("🏥 **OptumRx**")
     
     with col2:
-        # Title - horizontally aligned with logo
-        st.markdown("""
-        <div class="title-container">
-            <div class="main-title">
-                Talk to FDM Agent
+        # User info aligned to the right
+        if user_info['authenticated']:
+            st.markdown(f"""
+            <div style="text-align: right; padding-top: 20px;">
+                <span style="color: #002677; font-size: 0.9rem;">
+                    👤 Logged in as: <strong>{user_info['email']}</strong>
+                </span>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="text-align: right; padding-top: 20px;">
+                <span style="color: #dc3545; font-size: 0.9rem;">
+                    ⚠️ Authentication status unknown
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Knowledge base section
-    knowledge_content = get_knowledge_base_content()
-    
-    st.markdown(f"""
-    <div class="knowledge-section">
-        <div class="knowledge-title">
-            Agent Knowledge Summary for Finance Users
+    # Welcome section (gray box) - REDUCED VERTICAL SIZE AND MOVED UP
+    st.markdown("""
+    <div class="welcome-section">
+        <div class="welcome-title">
+            Welcome to Finance Data Mart Analytics Assistant 
         </div>
-        {knowledge_content}
+        <div class="welcome-subtitle">
+            Your AI-powered assistant for healthcare finance data analysis and insights
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Button section at bottom
-    st.markdown('<div class="button-section">', unsafe_allow_html=True)
+    # Team selection section - left aligned
+    st.markdown('<div style="margin: 0.8rem 0 0.2rem 0;">', unsafe_allow_html=True)
+    st.markdown('<p style="color: #002677; margin-bottom: 0.2rem; font-size: 1.1rem; font-weight: 500;">Please select which team you belong to:</p>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     
-    # Center the button
-    col1, col2, col3 = st.columns([1, 1, 1])
+    # Radio button for team selection - left aligned
+    team_options = ["PBM Network", "Optum Pharmacy"]
+    
+    # Radio buttons left aligned without columns
+    selected_team = st.radio(
+        "Team Selection",
+        options=team_options,
+        index=None,
+        key="team_radio",
+        horizontal=True,
+        label_visibility="hidden",
+        on_change=None
+    )
+    
+    # Update session state only when there's a selection
+    if selected_team:
+        st.session_state.selected_team = selected_team
+    
+    # Note about datasets - only show after team selection, with larger font
+    if selected_team:
+        st.markdown("""
+        <div style="background: #e9ecef; padding: 0.8rem; border-radius: 8px; margin: 0.5rem 0; color: #002677; font-size: 1.0rem; line-height: 1.4; text-align: left;">
+            <strong>Note:</strong>
+            <ul style="margin-left: 1.2em;">
+                <li>Ledger datasets contain a combination of PBM, HDP, and Specialty information. Both teams will have access to the entire Ledger datasets.</li>
+                <li>If you want to see individual product category level data (PBM, HDP, or Specialty), you can always add the filtering while prompting (e.g., "Show me revenue for PBM" or "Compare actuals vs forecast for Specialty").</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Button section with three options - moved up
+    st.markdown('<div class="button-section" style="margin-top: 0.5rem;">', unsafe_allow_html=True)
+    
+    # Create columns for three buttons
+    col1, col2, col3 = st.columns([1, 3, 1])
+    
     with col2:
-        if st.button("Start Chat", key="start_chat"):
-            # Navigate to chat page in pages directory
-            st.switch_page("pages/chat.py")
+        # Create three sub-columns for the buttons
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        
+        with btn_col1:
+            # Start Chat button - only enabled if team is selected
+            if st.session_state.selected_team:
+                st.markdown('<div class="chat-button">', unsafe_allow_html=True)
+                if st.button("💬 Start Chat", key="start_chat"):
+                    # Store selected team and user info in session state before switching pages
+                    st.session_state.domain_selection = [st.session_state.selected_team]
+                    # Pass user info to chat page
+                    st.session_state.authenticated_user = user_info.get('email', 'Unknown User')
+                    st.session_state.authenticated_user_name = user_info.get('name', 'Unknown User')
+                    st.switch_page("pages/chat.py")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="chat-button-disabled">', unsafe_allow_html=True)
+                st.button("💬 Start Chat", key="start_chat_disabled", disabled=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="button-description"></div>', unsafe_allow_html=True)
+
+        with btn_col2:
+            # Available Datasets button - only enabled if team is selected
+            if st.session_state.selected_team:
+                st.markdown('<div class="metadata-button">', unsafe_allow_html=True)
+                if st.button("📊 Available Datasets", key="view_metadata"):
+                    # Store selected team and user info in session state before switching pages
+                    st.session_state.domain_selection = [st.session_state.selected_team]
+                    # Pass user info to metadata page
+                    st.session_state.authenticated_user = user_info.get('email', 'Unknown User')
+                    st.session_state.authenticated_user_name = user_info.get('name', 'Unknown User')
+                    st.switch_page("pages/metadata.py")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="chat-button-disabled">', unsafe_allow_html=True)
+                st.button("📊 Available Datasets", key="view_metadata_disabled", disabled=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="button-description"></div>', unsafe_allow_html=True)
+        
+        with btn_col3:
+            st.markdown('<div class="faq-button">', unsafe_allow_html=True)
+            if st.button("❓ FAQ", key="view_faq"):
+                st.switch_page("pages/faq.py")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="button-description"></div>', unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Knowledge base content is kept in the function but not displayed
+    # knowledge_content = get_knowledge_base_content()  # Available but hidden
 
 if __name__ == "__main__":
     main()

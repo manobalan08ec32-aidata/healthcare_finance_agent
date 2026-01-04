@@ -1719,7 +1719,7 @@ async def _fetch_session_history():
         WHERE user_id = '{user_id}'
         GROUP BY session_id 
         ORDER BY MAX(insert_ts) DESC
-        LIMIT 7
+        LIMIT 5
         """
         
         print("🕐 Fetching session history for user (NEW TABLE):", user_id)

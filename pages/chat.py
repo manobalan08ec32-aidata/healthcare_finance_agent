@@ -10,8 +10,12 @@ import traceback
 import html
 from datetime import datetime
 from core.databricks_client import DatabricksClient
+from core.logger import setup_logger, log_with_user_context
 from workflows.langraph_workflow import AsyncHealthcareFinanceWorkflow
 from typing import Dict, Any
+
+# Initialize logger
+logger = setup_logger(__name__)
 
 # Page configuration - Force sidebar to be expanded
 st.set_page_config(
@@ -319,9 +323,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     # Show initial status - workflow always starts with entry_router
     update_status_for_node('entry_router')
     
-    print("\n" + "="*80)
-    print("🎬 WORKFLOW STARTING - Event stream beginning")
-    print("="*80 + "\n")
+    log_event('info', "Workflow started", question=user_question[:100] if user_question else "N/A")
     
     # Reset stop flag at start
     st.session_state.stop_requested = False
@@ -432,6 +434,10 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         hide_spinner()
                         status_display.empty()
                         
+                        # Log SQL execution success
+                        row_count = len(sql_result.get('data', [])) if sql_result.get('data') else 0
+                        log_event('info', f"SQL executed successfully", row_count=row_count)
+                        
                         functional_names = state.get('functional_names', [])
                         history_sql_used = state.get('history_sql_used', False)
                         if functional_names:
@@ -461,6 +467,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                     else:
                         hide_spinner()
                         status_display.empty()
+                        log_event('warning', "SQL returned no results")
                         add_assistant_message("No results available and please try different question.", message_type="error")
                         return
                 
@@ -522,7 +529,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         return
             
             elif et == 'workflow_end':
-                print(f"🏁 Workflow completed")
+                log_event('info', "Workflow completed successfully")
                 hide_spinner()
                 status_display.empty()
                 if not last_state:
@@ -565,7 +572,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         hide_spinner()
         status_display.empty()
         add_assistant_message(f"Workflow failed: {e}", message_type="error")
-        print(f"❌ Workflow error: {e}")
+        log_event('error', f"Workflow failed: {str(e)}")
 
 def run_streaming_workflow(workflow, user_query: str):
     asyncio.run(run_streaming_workflow_async(workflow, user_query))
@@ -638,6 +645,15 @@ def get_authenticated_user_name():
     return st.session_state.get('authenticated_user_name', 'FDM User')
 
 
+def log_event(level: str, message: str, **extra):
+    """
+    Log an event with user context automatically included
+    """
+    user_email = get_authenticated_user()
+    session_id = st.session_state.get('session_id', 'no_session')
+    log_with_user_context(logger, level, message, user_email, session_id, **extra)
+
+
 def get_available_datasets():
     """
     Get available datasets from metadata.json based on current domain selection.
@@ -684,12 +700,11 @@ def initialize_session_state():
     """
     if 'session_id' not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
-        print(f"🆕 New session started: {st.session_state.session_id}")
+        log_event('info', f"New chat session started: {st.session_state.session_id}")
     
     # Track the original session ID (the one we started with in this browser session)
     if 'original_session_id' not in st.session_state:
         st.session_state.original_session_id = st.session_state.session_id
-        print(f"📌 Original session ID set: {st.session_state.original_session_id}")
 
     # Initialize variables directly on st.session_state
     if 'messages' not in st.session_state:
@@ -779,14 +794,13 @@ def initialize_session_state():
     authenticated_user = get_authenticated_user()
     authenticated_user_name = get_authenticated_user_name()
     
-    print(f"Current authenticated user: {authenticated_user}")
-    print(f"Current authenticated user name: {authenticated_user_name}")
+    # Log user login (only meaningful log)
+    if authenticated_user != 'unknown_user':
+        log_event('info', f"User authenticated: {authenticated_user_name}")
     
     # Warning if we're using fallback values (indicates main.py didn't pass user info)
     if authenticated_user == 'unknown_user':
-        print("⚠️ WARNING: Using fallback authenticated_user - main.py may not have passed user info")
-    if authenticated_user_name == 'FDM User':
-        print("⚠️ WARNING: Using fallback authenticated_user_name - main.py may not have passed user info")
+        log_event('warning', "Using fallback user - main.py may not have passed user info")
     # Removed obsolete follow-up polling/background keys
 
 # ============ CHAT HISTORY MANAGEMENT ============
@@ -996,6 +1010,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                 
                 if success:
                     st.session_state[f"{feedback_key}_submitted"] = True
+                    log_event('info', "Positive feedback submitted", feedback_type="positive")
                     st.success("Thank you for your feedback! 👍")
                     time.sleep(1)
                     st.rerun()
@@ -1037,6 +1052,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                         if success:
                             st.session_state[f"{feedback_key}_submitted"] = True
                             st.session_state[f"{feedback_key}_show_form"] = False
+                            log_event('info', "Negative feedback submitted", feedback_type="negative")
                             st.success("Thank you for your feedback! We'll work on improving.")
                             time.sleep(1)
                             st.rerun()
@@ -1719,7 +1735,7 @@ async def _fetch_session_history():
         WHERE user_id = '{user_id}'
         GROUP BY session_id 
         ORDER BY MAX(insert_ts) DESC
-        LIMIT 5
+        LIMIT 7
         """
         
         print("🕐 Fetching session history for user (NEW TABLE):", user_id)
@@ -2765,12 +2781,11 @@ def add_drillthrough_analysis_message(drillthrough_results, drillthrough_reasoni
 
 def start_processing(user_query: str):
     """Start processing user query - with proper message management"""
-    print(f"🎯 Starting processing for: {user_query}")
+    log_event('info', f"User query received: {user_query[:100]}", query_length=len(user_query))
     
     # Exit clarification mode when user provides answer
     if st.session_state.get('in_clarification_mode', False):
         st.session_state.in_clarification_mode = False
-        print("🔓 EXITED clarification mode - user provided answer")
     
     # Get question type from session state - must match radio button selection exactly
     question_type = st.session_state.get("question_type_selection", "New Question")

@@ -24,13 +24,36 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+        /* ===== OPTUM COLOR PALETTE ===== */
+        :root {
+            --optum-orange: #FF612B;
+            --optum-cream: #FAF8F2;
+            --optum-cyan: #D9F6FA;
+            --optum-white: #FFFFFF;
+            --optum-peach: #FFD1AB;
+            --optum-amber: #F9A667;
+            --optum-red: #D74120;
+            --optum-gray: #EDE8E0;
+        }
+        
+        /* ===== FONT IMPORT ===== */
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        
+        /* ===== GLOBAL APP STYLING ===== */
+        .stApp {
+            background-color: #FAF8F2 !important;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
+        }
+        
         /* Force sidebar to be visible and set width */
         [data-testid="stSidebar"] {
-            min-width: 220px !important;
-            max-width: 220px !important;
-            width: 220px !important;
+            min-width: 240px !important;
+            max-width: 240px !important;
+            width: 240px !important;
             display: block !important;
             visibility: visible !important;
+            background: linear-gradient(180deg, #FFFFFF 0%, #FAF8F2 100%) !important;
+            border-right: 1px solid #EDE8E0 !important;
         }
         
         /* Ensure sidebar content is visible */
@@ -59,8 +82,8 @@ st.markdown(
         /* Force sidebar to stay expanded - Azure App Service fix */
         [data-testid="stSidebar"][aria-expanded="false"] {
             display: block !important;
-            min-width: 220px !important;
-            width: 220px !important;
+            min-width: 240px !important;
+            width: 240px !important;
         }
         
         /* Override any Azure-specific CSS that might be hiding sidebar */
@@ -879,13 +902,20 @@ def format_sql_data_for_streamlit(data):
                     return f"{numeric_val:.2f}%"
             
             # Handle monetary columns - add $ symbol and remove decimals
-
+            # Also add red color styling for negative values
             if is_monetary_column:
                 rounded_val = int(round(numeric_val))
-                if abs(rounded_val) >= 1000:
-                    return f"{rounded_val:,}"
+                if rounded_val < 0:
+                    # Negative value - format with red color
+                    if abs(rounded_val) >= 1000:
+                        return f"{rounded_val:,}"  # Red styling applied via CSS class
+                    else:
+                        return f"{rounded_val}"
                 else:
-                    return f"{rounded_val}"
+                    if abs(rounded_val) >= 1000:
+                        return f"{rounded_val:,}"
+                    else:
+                        return f"{rounded_val}"
 
             
             # Handle ID columns - never add commas regardless of size
@@ -1105,12 +1135,14 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     </div>
     """, unsafe_allow_html=True)
     
-    # Display SQL Generation Story (NEW)
+    # Display SQL Generation Story (NEW) - Optum styled explanation card
     if sql_story and sql_story.strip():
         st.markdown(f"""
-        <div style="background-color: #E8F4F8; border-left: 4px solid #2196F3; padding: 12px 16px; margin: 10px 0; border-radius: 4px;">
-            <strong>📖 How I solved this:</strong><br/>
-            <span style="color: #424242; line-height: 1.6;">{sql_story}</span>
+        <div class="explanation-card">
+            <div class="explanation-title">
+                <span>📖</span> How I solved this
+            </div>
+            <div class="explanation-text">{sql_story}</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -1201,64 +1233,64 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     else:
         print(f"⚠️ No Power BI data provided to render_single_sql_result")
     
-    # Display Narrative Insights (full width)
+    # Display Narrative Insights (full width) - Optum styled insights card
     if narrative:
         print(f"📝 Narrative content preview (first 200 chars): {narrative[:200]}")
         print(f"📝 Narrative contains '<div'?: {('<div' in narrative)}")
         safe_narrative_html = convert_text_to_safe_html(narrative)
         st.markdown(f"""
-        <div class="narrative-content">
-            <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
-                <span style="margin-right: 8px;">💡</span>
-                Key Insights
+        <div class="insights-card">
+            <div class="insights-header">
+                <div class="insights-icon">💡</div>
+                <div class="insights-title">Key Insights</div>
             </div>
-            <div>
+            <div style="color: #2a2a2a; font-size: 14px; line-height: 1.7;">
                 {safe_narrative_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
     
-    # Display Power BI Report Info BELOW narrative (only if report_found is true)
+    # Display Power BI Report Info BELOW narrative (only if report_found is true) - Optum styled
     if has_powerbi_info:
         report_found = powerbi_data.get('report_found', False)
         report_name = powerbi_data.get('report_name', '')
         report_url = powerbi_data.get('report_url', '')
         report_filter = powerbi_data.get('report_filter', '')
         
-        # Determine styling
-        border_color = '#10b981'  # Green (only show if report found, so always green)
-        bg_color = '#ecfdf5'
-        
-        # Build report name display with "REPORT NAME" heading
-        report_info_html = ''
-        if report_name:
-            report_info_html = '<div style="margin-bottom: 12px;"><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 700; font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">REPORT TO VALIDATE (This will be available only during testing phase)</div><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 600; font-size: 1.1rem; color: #1f2937; line-height: 1.4;">' + html.escape(report_name) + '</div></div>'
-
-        # Build filter display with larger fonts
-        filter_html = ''
+        # Build filter tags HTML
+        filter_tags_html = ''
         if report_filter and report_filter.strip():
-            filter_html = '<div style="margin-bottom: 12px;"><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-weight: 600; font-size: 0.95rem; color: #374151; margin-bottom: 5px; line-height: 1.4;">Filters to Apply:</div><div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; font-size: 0.9rem; color: #4b5563; line-height: 1.5;">' + html.escape(report_filter) + '</div></div>'
+            # Parse filter string and create individual tags
+            filters = report_filter.split(',')
+            for f in filters:
+                f = f.strip()
+                if f:
+                    filter_tags_html += f'<span class="filter-tag">{html.escape(f)}</span>'
         
-        # Build report URL with larger font
-        report_url_html = ''
-        if report_url:
-            report_url_html = '<div style="padding-top: 12px; border-top: 1px solid ' + border_color + ';"><a href="' + html.escape(report_url) + '" target="_blank" style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; color: #2563eb; text-decoration: none; font-weight: 500; font-size: 1rem;">Open Report →</a></div>'
+        # Build the Optum styled report card
+        report_card_html = f'''
+        <div class="report-card">
+            <div class="report-label">
+                <span>📈</span> Recommended Report
+            </div>
+            <div class="report-title">{html.escape(report_name)}</div>
+            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                This will be available only during testing phase
+            </div>
+            <div class="report-filters">
+                {filter_tags_html if filter_tags_html else '<span class="filter-tag">No filters specified</span>'}
+            </div>
+            <a href="{html.escape(report_url)}" target="_blank" class="open-report-btn">
+                Open Report <span>→</span>
+            </a>
+        </div>
+        '''
         
-        # Build the complete Power BI card HTML with proper font styling
-        powerbi_card_html = '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; background-color: {}; border: 2px solid {}; border-radius: 8px; padding: 14px; margin: 16px 0;">'.format(bg_color, border_color)
-        powerbi_card_html += report_info_html
-        powerbi_card_html += filter_html
-        powerbi_card_html += report_url_html
-        powerbi_card_html += '</div>'
+        print(f"📊 Rendering Power BI card HTML (length: {len(report_card_html)} chars)")
         
-        print(f"📊 Rendering Power BI card HTML (length: {len(powerbi_card_html)} chars)")
-        print(f"📊 HTML preview: {powerbi_card_html[:100]}...")
+        st.markdown(report_card_html, unsafe_allow_html=True)
         
-        # Use st.components.html with height for full-width display
-        import streamlit.components.v1 as components
-        components.html(powerbi_card_html, height=220, scrolling=False)
-        
-        print(f"✅ Power BI card rendered with components.html")
+        print(f"✅ Power BI card rendered with Optum styling")
 
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
@@ -2463,10 +2495,10 @@ def render_historical_session_by_id(session_id: str):
 def render_sidebar_history():
     """Render session history in the sidebar as a dropdown - only shows history when viewing historical sessions."""
     
-    # Display header with dropdown icon (▼ shows it's a dropdown)
+    # Display header with Optum styled section title
     st.markdown("""
-        <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 10px; color: #333;">
-            📜 Recent Sessions ▼
+        <div class="sidebar-section-title">
+            <span>🕐</span> Recent Sessions
         </div>
     """, unsafe_allow_html=True)
     
@@ -2632,13 +2664,16 @@ def render_sidebar_dataset_selector():
     elif isinstance(legacy_selection, list) and legacy_selection:
         st.session_state.user_selected_datasets = legacy_selection
     
-    # Display compact header with selection count
+    # Display compact header with Optum styled section title
     current_selections = st.session_state.user_selected_datasets
     selection_text = f"{len(current_selections)} selected" if current_selections else "All Datasets"
     
     st.markdown(f"""
-        <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; color: #333;">
-            📊 Datasets: <span style="color: #1e3a8a; font-size: 0.75rem;">{selection_text}</span>
+        <div class="sidebar-section-title">
+            <span>🗂️</span> Datasets
+        </div>
+        <div style="font-size: 12px; color: #4a4a4a; margin-bottom: 10px;">
+            <span style="color: #FF612B; font-weight: 600;">{selection_text}</span>
         </div>
     """, unsafe_allow_html=True)
     
@@ -2817,30 +2852,34 @@ def start_processing(user_query: str):
 # ============ CSS STYLING FOR MESSAGE TYPES ============
 
 def add_message_type_css():
-    """Add CSS for different message types"""
+    """Add CSS for different message types - Enhanced with Optum Brand Colors"""
     st.markdown("""
     <style>
-    /* Import Inter font from Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    /* ===== OPTUM BRAND FONT ===== */
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
     
-    /* Apply Inter font globally */
+    /* Apply Plus Jakarta Sans font globally */
     * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
     }
     
-    /* Main title styling */
+    /* Main title styling - Optum Deep Red */
     h1 {
-        color: #1e3a8a !important;  /* Dark blue color */
-        font-weight: 600 !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        color: #D74120 !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.02em !important;
     }
     
+    h2, h3 {
+        color: #1a1a1a !important;
+        font-weight: 600 !important;
+    }
     
-    /* Real-time animation for new messages */
-    @keyframes slideIn {
+    /* ===== ANIMATIONS ===== */
+    @keyframes fadeInUp {
         from {
             opacity: 0;
-            transform: translateY(10px);
+            transform: translateY(12px);
         }
         to {
             opacity: 1;
@@ -2849,117 +2888,344 @@ def add_message_type_css():
     }
     
     .new-message {
-        animation: slideIn 0.3s ease-out;
+        animation: fadeInUp 0.4s ease-out;
     }
     
-    /* Enhanced spinner for better UX */
+    /* ===== ENHANCED SPINNER ===== */
     .spinner-container {
-        background-color: #faf8f2;
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        border-left: 4px solid #007bff;
+        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin: 12px 0;
+        border-left: 4px solid #FF612B;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     
     .spinner-message {
-        color: #495057;
+        color: #4a4a4a;
         font-weight: 500;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
     }
     
-    /* Base message styling */
+    /* ===== BASE CHAT CONTAINER ===== */
     .chat-container {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+        gap: 16px;
     }
     
-
-    
-    /* User message - moved to left side */
+    /* ===== USER MESSAGE - OPTUM ORANGE GRADIENT ===== */
     .user-message {
         display: flex;
-        justify-content: flex-start;  /* Changed from flex-end to flex-start */
-        margin: 8px 0;
+        justify-content: flex-start;
+        margin: 12px 0;
+        animation: fadeInUp 0.4s ease-out;
     }
     
     .user-message-content {
-        background-color: #FEE9DC;  /* Very light pale peach - subtle and soft */
-        color: black !important;  /* Black text for excellent contrast */
-        padding: 8px 14px;  /* Reduced vertical padding (was 12px 16px) */
-        border-radius: 18px;
-        max-width: 100%;  /* Same as system messages */
-        min-width: 200px;  /* Added minimum width */
+        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%) !important;
+        color: white !important;
+        padding: 14px 20px;
+        border-radius: 20px 20px 6px 20px;
+        max-width: 85%;
+        min-width: 200px;
         word-wrap: break-word;
-        border: 1px solid #F9A667;  /* Soft Optum peach border */
-        flex-grow: 1;  /* Allow it to expand within the flex container */
+        border: none !important;
+        box-shadow: 0 4px 16px rgba(255, 97, 43, 0.3);
+        font-weight: 500;
     }
     
+    /* ===== ASSISTANT MESSAGE ===== */
     .assistant-message {
         display: flex;
         justify-content: flex-start;
-        margin: 8px 0;
+        margin: 12px 0;
+        animation: fadeInUp 0.4s ease-out;
     }
     
-    /* Background #faf8f2 for assistant messages with black font */
     .assistant-message-content {
-        background-color: #faf8f2 !important;
-        color: black !important;
-        padding: 12px 16px;
-        border-radius: 18px;
-        max-width: 100% !important;  /* Increased from 80% to 95% */
-        min-width: 300px !important; /* Minimum width for single-line messages */
+        background-color: #FFFFFF !important;
+        color: #1a1a1a !important;
+        padding: 16px 20px;
+        border-radius: 16px;
+        max-width: 100% !important;
+        min-width: 300px !important;
         word-wrap: break-word;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        overflow: visible !important; /* Allow content to extend if needed */
-    }
-    
-    /* Custom styling for AI rewritten question and narrative content */
-    .narrative-content {
-        color: #333;
-        padding: 12px 16px;
-        margin: 8px 0;
-        max-width: 100%;
-        word-wrap: break-word;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
-        font-size: 15px;
-        line-height: 1.6;
-        font-style: normal !important;
-        font-weight: normal !important;
-        background-color: #faf8f2 !important;
-        border: 1px solid #f0ede4 !important;
-        border-radius: 12px !important;
-    }
-    
-    /* Specific styling for follow-up questions message to keep it on single line with larger container */
-    .assistant-message-content {
-        max-width: 100% !important;  /* Increase from 80% to 95% for follow-up messages */
-        min-width: 300px !important; /* Ensure minimum width for single-line text */
-        overflow: visible !important; /* Allow content to be visible */
+        border: 1px solid #EDE8E0 !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        overflow: visible !important;
     }
     
     .assistant-message-content strong {
         white-space: nowrap !important;
         display: inline-block !important;
         max-width: none !important;
-        font-size: 15px !important; /* Ensure consistent font size */
+        font-size: 15px !important;
+        color: #D74120 !important;
     }
     
-    /* Follow-up question container and button styling - using dark blue company standard */
+    /* ===== NARRATIVE/EXPLANATION CONTENT ===== */
+    .narrative-content {
+        color: #2a2a2a;
+        padding: 18px 22px;
+        margin: 12px 0;
+        max-width: 100%;
+        word-wrap: break-word;
+        font-size: 15px;
+        line-height: 1.7;
+        font-style: normal !important;
+        font-weight: normal !important;
+        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%) !important;
+        border: 1px solid #EDE8E0 !important;
+        border-radius: 14px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    
+    /* ===== HOW I SOLVED THIS - EXPLANATION CARD ===== */
+    .explanation-card {
+        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+        border-left: 4px solid #FF612B;
+        padding: 18px 22px;
+        border-radius: 0 14px 14px 0;
+        margin: 16px 0;
+    }
+    
+    .explanation-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #FF612B;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .explanation-text {
+        color: #4a4a4a;
+        font-size: 14px;
+        line-height: 1.7;
+    }
+    
+    /* ===== DATASET BADGE - CYAN ===== */
+    .dataset-badge {
+        background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%);
+        border: 1px solid #D9F6FA;
+        padding: 12px 18px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #1a1a1a;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    
+    /* ===== TRUSTED SQL BADGE - GREEN ===== */
+    .trusted-badge {
+        background: linear-gradient(135deg, #e8fff3 0%, #FFFFFF 100%);
+        border: 2px solid #4ecdc4;
+        padding: 12px 18px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #0d7d74;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .trusted-badge-icon {
+        background: #4ecdc4;
+        color: white;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+    }
+    
+    /* ===== NEW SQL BADGE - GRAY ===== */
+    .new-sql-badge {
+        background: linear-gradient(135deg, #f8f9fa 0%, #FFFFFF 100%);
+        border: 1px solid #EDE8E0;
+        padding: 12px 18px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 500;
+        color: #6c757d;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    /* ===== KEY INSIGHTS CARD - CYAN BACKGROUND ===== */
+    .insights-card {
+        background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%);
+        border-radius: 16px;
+        padding: 22px 26px;
+        margin: 20px 0;
+        border: 1px solid rgba(217, 246, 250, 0.6);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+    }
+    
+    .insights-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+    
+    .insights-icon {
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(135deg, #F9A667 0%, #FF612B 100%);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.25);
+    }
+    
+    .insights-title {
+        font-weight: 700;
+        font-size: 16px;
+        color: #1a1a1a;
+    }
+    
+    .insight-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(237, 232, 224, 0.5);
+    }
+    
+    .insight-item:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    
+    .insight-bullet {
+        width: 8px;
+        height: 8px;
+        background: #FF612B;
+        border-radius: 50%;
+        margin-top: 7px;
+        flex-shrink: 0;
+    }
+    
+    .insight-text {
+        color: #2a2a2a;
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    
+    /* ===== REPORT RECOMMENDATION CARD ===== */
+    .report-card {
+        background: #FFFFFF;
+        border-radius: 16px;
+        padding: 22px 26px;
+        margin: 20px 0;
+        border: 2px dashed #F9A667;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .report-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 5px;
+        background: linear-gradient(90deg, #FF612B 0%, #F9A667 50%, #FFD1AB 100%);
+    }
+    
+    .report-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #F9A667;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .report-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: #1a1a1a;
+        margin-bottom: 14px;
+    }
+    
+    .report-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 18px;
+    }
+    
+    .filter-tag {
+        background: #FAF8F2;
+        border: 1px solid #EDE8E0;
+        padding: 8px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        color: #4a4a4a;
+        font-weight: 500;
+    }
+    
+    .open-report-btn {
+        background: linear-gradient(135deg, #FF612B 0%, #D74120 100%);
+        color: white !important;
+        padding: 14px 28px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none !important;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 16px rgba(255, 97, 43, 0.35);
+        border: none;
+        cursor: pointer;
+    }
+    
+    .open-report-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(255, 97, 43, 0.45);
+        color: white !important;
+    }
+    
+    /* ===== NEGATIVE NUMBER STYLING ===== */
+    .negative-value {
+        color: #D74120 !important;
+        font-weight: 600;
+    }
+    
+    /* ===== FOLLOW-UP CONTAINER ===== */
     .followup-container {
         margin: 1rem 0;
-        padding: 1rem;
-        background-color: #f8f9fa;
-        border-radius: 12px;
-        border-left: 4px solid #1e3a8a;
+        padding: 1.25rem;
+        background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+        border-radius: 14px;
+        border-left: 4px solid #FF612B;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     
     .followup-header {
         font-weight: 600;
-        color: #333;
-        margin-bottom: 0.8rem;
+        color: #1a1a1a;
+        margin-bottom: 1rem;
         font-size: 16px;
     }
     
@@ -2967,213 +3233,270 @@ def add_message_type_css():
         display: block;
         width: 100%;
         margin: 0.5rem 0;
-        padding: 12px 16px;
+        padding: 14px 18px;
         background-color: white;
-        border: 2px solid #1e3a8a;
-        border-radius: 8px;
-        color: #1e3a8a;
+        border: 2px solid #FF612B;
+        border-radius: 10px;
+        color: #D74120;
         text-align: left;
         cursor: pointer;
         transition: all 0.2s ease;
         font-size: 14px;
-        line-height: 1.4;
+        line-height: 1.5;
+        font-weight: 500;
     }
     
     .followup-button:hover {
-        background-color: #1e3a8a;
+        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%);
         color: white;
-        box-shadow: 0 2px 8px rgba(30, 58, 138, 0.2);
-    }
-    
-    /* Feedback section styling */
-    .feedback-section {
-        margin: 1rem 0;
-        padding: 0.5rem 0;
-        border-top: 1px solid #e0e0e0;
-    }
-    
-    /* Feedback buttons styling */
-    div[data-testid="column"] button {
-        width: 100% !important;
-        font-size: 14px !important;
-        padding: 8px 16px !important;
-        border-radius: 6px !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    /* Thumbs up button - green theme */
-    div[data-testid="column"]:first-child button {
-        background-color: #f0f9ff !important;
-        border: 2px solid #22c55e !important;
-        color: #22c55e !important;
-    }
-    
-    div[data-testid="column"]:first-child button:hover {
-        background-color: #22c55e !important;
-        color: white !important;
-    }
-    
-    /* Thumbs down button - orange theme */
-    div[data-testid="column"]:last-child button {
-        background-color: #fef3e2 !important;
-        border: 2px solid #f59e0b !important;
-        color: #f59e0b !important;
-    }
-    
-    div[data-testid="column"]:last-child button:hover {
-        background-color: #f59e0b !important;
-        color: white !important;
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3);
+        border-color: transparent;
     }
     
     .followup-button:active {
         transform: translateY(1px);
     }
     
-    /* Follow-up buttons container styling from working chat_old.py */
+    /* ===== FEEDBACK SECTION ===== */
+    .feedback-section {
+        margin: 1rem 0;
+        padding: 0.75rem 0;
+        border-top: 1px solid #EDE8E0;
+    }
+    
+    /* Thumbs up button - green theme */
+    div[data-testid="column"] button {
+        width: 100% !important;
+        font-size: 14px !important;
+        padding: 10px 18px !important;
+        border-radius: 10px !important;
+        transition: all 0.2s ease !important;
+        font-weight: 500 !important;
+    }
+    
+    div[data-testid="column"]:first-child button {
+        background-color: #f0fdf4 !important;
+        border: 2px solid #22c55e !important;
+        color: #16a34a !important;
+    }
+    
+    div[data-testid="column"]:first-child button:hover {
+        background-color: #22c55e !important;
+        color: white !important;
+        box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3) !important;
+    }
+    
+    /* Thumbs down button - Optum orange theme */
+    div[data-testid="column"]:last-child button {
+        background-color: #FFF7ED !important;
+        border: 2px solid #FF612B !important;
+        color: #D74120 !important;
+    }
+    
+    div[data-testid="column"]:last-child button:hover {
+        background-color: #FF612B !important;
+        color: white !important;
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3) !important;
+    }
+    
+    /* ===== FOLLOW-UP BUTTONS CONTAINER ===== */
     .followup-buttons-container {
         display: flex !important;
         flex-direction: column !important;
-        gap: 8px !important;
+        gap: 10px !important;
         align-items: stretch !important;
         justify-content: flex-start !important;
         max-width: 100% !important;
-        margin: 0.5rem 0 !important;
+        margin: 0.75rem 0 !important;
         padding: 0 !important;
     }
     
-    /* Follow-up buttons styling - using dark blue company standard */
+    /* ===== GENERAL BUTTON STYLING - OPTUM ORANGE ===== */
     .stButton > button {
         background-color: white !important;
-        color: #1e3a8a !important;
-        border: 1px solid #1e3a8a !important;
-        border-radius: 8px !important;
-        padding: 10px 16px !important;
+        color: #D74120 !important;
+        border: 2px solid #FF612B !important;
+        border-radius: 10px !important;
+        padding: 12px 18px !important;
         margin: 0 !important;
         width: 100% !important;
         text-align: left !important;
         font-size: 14px !important;
-        line-height: 1.4 !important;
+        line-height: 1.5 !important;
         transition: all 0.2s ease !important;   
         height: auto !important;
-        min-height: 40px !important;
+        min-height: 44px !important;
         white-space: normal !important;
         word-wrap: break-word !important;
+        font-weight: 500 !important;
     }
 
-
     .stButton > button:hover {
-        background-color: #1e3a8a !important;
+        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%) !important;
         color: white !important;
-        box-shadow: 0 1px 3px rgba(30, 58, 138, 0.2) !important;
-        transform: translateY(-0.5px) !important;
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3) !important;
+        transform: translateY(-1px) !important;
+        border-color: transparent !important;
     }
 
     .stButton > button:focus {
-        background-color: #1e3a8a !important;
+        background: linear-gradient(135deg, #FF612B 0%, #D74120 100%) !important;
         color: white !important;
-        box-shadow: 0 0 0 2px rgba(30, 58, 138, 0.25) !important;
+        box-shadow: 0 0 0 3px rgba(255, 97, 43, 0.2) !important;
         outline: none !important;
+        border-color: transparent !important;
     }
 
-    /* Make button containers flexible */
     .element-container .stButton {
         margin: 0 !important;
         flex: 0 0 auto !important;
     }
 
-    /* Override any conflicting Streamlit styles */
     .stButton button[kind="secondary"] {
         background-color: white !important;
-        color: #1e3a8a !important;
-        border-color: #1e3a8a !important;
+        color: #D74120 !important;
+        border-color: #FF612B !important;
     }
     
-    /* Chat input box styling - smaller initial size with auto-expansion */
+    /* ===== CHAT INPUT - OPTUM STYLED ===== */
     .stChatInput > div > div > textarea {
-        min-height: 45px !important;
+        min-height: 48px !important;
         max-height: 200px !important;
-        height: 45px !important;
+        height: 48px !important;
         resize: none !important;
         overflow-y: auto !important;
         word-wrap: break-word !important;
         white-space: pre-wrap !important;
-        font-size: 14px !important;
-        line-height: 1.4 !important;
-        padding: 12px 14px !important;
-        border-radius: 12px !important;
-        border: 2px solid #e1e5e9 !important;
+        font-size: 15px !important;
+        line-height: 1.5 !important;
+        padding: 14px 18px !important;
+        border-radius: 14px !important;
+        border: 2px solid #EDE8E0 !important;
         transition: all 0.2s ease !important;
+        background: #FFFFFF !important;
     }
     
     .stChatInput > div > div > textarea:focus {
-        border-color: #1e3a8a !important;
-        box-shadow: 0 0 0 2px rgba(30, 58, 138, 0.1) !important;
+        border-color: #FF612B !important;
+        box-shadow: 0 0 0 3px rgba(255, 97, 43, 0.1) !important;
         outline: none !important;
     }
     
-    /* Chat input container */
     .stChatInput {
         position: sticky !important;
         bottom: 0 !important;
-        background-color: white !important;
-        padding: 10px 0 !important;
-        border-top: 1px solid #e1e5e9 !important;
-        margin-top: 20px !important;
+        background: linear-gradient(180deg, transparent 0%, #FAF8F2 30%) !important;
+        padding: 16px 0 !important;
+        margin-top: 24px !important;
     }
     
-    /* Auto-expand textarea script integration */
     .stChatInput > div > div > textarea {
         field-sizing: content !important;
     }
     
-    /* Radio button styling - match font size with label */
+    /* ===== RADIO BUTTONS ===== */
     .stRadio > label {
         font-size: 14px !important;
         font-weight: 500 !important;
+        color: #4a4a4a !important;
     }
     
     .stRadio > div {
-        gap: 12px !important;
+        gap: 14px !important;
     }
     
     .stRadio > div > label > div {
         font-size: 14px !important;
     }
     
-    /* DataFrame styling - right align columns for better numerical data readability */
+    /* ===== DATAFRAME TABLE - ENHANCED ===== */
     .stDataFrame table {
         width: 100% !important;
+        border-collapse: collapse !important;
     }
     
     .stDataFrame table td, 
     .stDataFrame table th {
         text-align: right !important;
-        padding: 8px 12px !important;
-        border-bottom: 1px solid #e1e5e9 !important;
+        padding: 12px 16px !important;
+        border-bottom: 1px solid #EDE8E0 !important;
     }
     
-    /* Keep the first column (index/row labels) left-aligned if needed */
     .stDataFrame table td:first-child,
     .stDataFrame table th:first-child {
         text-align: left !important;
         font-weight: 500 !important;
     }
     
-    /* Header styling */
     .stDataFrame table th {
-        background-color: #f8f9fa !important;
+        background-color: #FAF8F2 !important;
         font-weight: 600 !important;
-        color: #1e3a8a !important;
-        border-bottom: 2px solid #1e3a8a !important;
+        color: #4a4a4a !important;
+        text-transform: uppercase !important;
+        font-size: 11px !important;
+        letter-spacing: 0.05em !important;
+        border-bottom: 2px solid #EDE8E0 !important;
     }
     
-    /* Alternating row colors for better readability */
     .stDataFrame table tr:nth-child(even) {
-        background-color: #f8f9fa !important;
+        background-color: #FAFAFA !important;
     }
     
     .stDataFrame table tr:hover {
-        background-color: #e3f2fd !important;
+        background-color: #FAF8F2 !important;
+    }
+    
+    /* Total row highlight - Optum Peach */
+    .stDataFrame table tr:last-child td {
+        background: linear-gradient(135deg, #FFD1AB 0%, #FFFFFF 100%) !important;
+        font-weight: 700 !important;
+        color: #D74120 !important;
+    }
+    
+    /* ===== SIDEBAR SESSION ITEMS ===== */
+    .session-item {
+        padding: 12px 14px;
+        background: #FFFFFF;
+        border-radius: 10px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: #4a4a4a;
+        cursor: pointer;
+        border: 1px solid #EDE8E0;
+        transition: all 0.2s ease;
+    }
+    
+    .session-item:hover {
+        border-color: #FF612B;
+        box-shadow: 0 2px 8px rgba(255, 97, 43, 0.15);
+    }
+    
+    .session-time {
+        font-size: 11px;
+        color: #888;
+        margin-top: 4px;
+    }
+    
+    /* ===== SIDEBAR SECTION STYLING ===== */
+    .sidebar-section {
+        background: #FFFFFF;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+        border: 1px solid #EDE8E0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    
+    .sidebar-section-title {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #F9A667;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     </style>
@@ -3186,23 +3509,17 @@ def add_message_type_css():
             if (!textarea.hasAttribute('data-auto-expand')) {
                 textarea.setAttribute('data-auto-expand', 'true');
                 
-                // Set initial height
-                textarea.style.height = '45px';
+                textarea.style.height = '48px';
                 
-                // Add input event listener
                 textarea.addEventListener('input', function() {
-                    // Reset height to calculate new height
-                    this.style.height = '45px';
-                    
-                    // Calculate new height based on scroll height
+                    this.style.height = '48px';
                     const newHeight = Math.min(this.scrollHeight, 200);
                     this.style.height = newHeight + 'px';
                 });
                 
-                // Add paste event listener
                 textarea.addEventListener('paste', function() {
                     setTimeout(() => {
-                        this.style.height = '45px';
+                        this.style.height = '48px';
                         const newHeight = Math.min(this.scrollHeight, 200);
                         this.style.height = newHeight + 'px';
                     }, 0);
@@ -3211,10 +3528,7 @@ def add_message_type_css():
         });
     }
     
-    // Run on page load
     document.addEventListener('DOMContentLoaded', autoExpand);
-    
-    // Run periodically to catch dynamically added textareas
     setInterval(autoExpand, 500);
     </script>
     """, unsafe_allow_html=True)
@@ -3239,48 +3553,52 @@ def main():
     add_message_type_css()
 
     with st.sidebar:
-        # Custom styling for the back button
+        # Custom styling for the back button - Optum styled
         st.markdown("""
         <style>
         .back-button {
             background-color: white;
-            color: #1e3a8a;
-            border: 1px solid #1e3a8a;
-            padding: 8px 16px;
-            border-radius: 4px;
+            color: #D74120;
+            border: 2px solid #FF612B;
+            padding: 10px 18px;
+            border-radius: 10px;
             text-decoration: none;
-            font-weight: 500;
+            font-weight: 600;
             display: inline-block;
             width: 100%;
             text-align: center;
             margin: 10px 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+            transition: all 0.2s ease;
         }
         .back-button:hover {
-            background-color: #f0f9ff;
+            background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%);
+            color: white;
+            border-color: transparent;
         }
         
-        /* Sidebar session history buttons - compact and small */
+        /* Sidebar session history buttons - Optum styled */
         [data-testid="stSidebar"] .stButton > button[key*="history_"] {
             text-align: left !important;
-            background-color: #f8f9fa !important;
-            border: 1px solid #e0e0e0 !important;
-            padding: 4px 6px !important;
-            margin: 2px 0 !important;
-            border-radius: 4px !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
+            background-color: #FFFFFF !important;
+            border: 1px solid #EDE8E0 !important;
+            padding: 8px 12px !important;
+            margin: 4px 0 !important;
+            border-radius: 8px !important;
+            font-size: 12px !important;
+            line-height: 1.3 !important;
             width: 100% !important;
             height: auto !important;
-            min-height: 24px !important;
+            min-height: 32px !important;
             white-space: nowrap !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
+            transition: all 0.2s ease !important;
         }
         
         [data-testid="stSidebar"] .stButton > button[key*="history_"]:hover {
-            background-color: #e9ecef !important;
-            border-color: #1e3a8a !important;
+            background-color: #FAF8F2 !important;
+            border-color: #FF612B !important;
+            box-shadow: 0 2px 8px rgba(255, 97, 43, 0.15) !important;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -3332,17 +3650,18 @@ def main():
                 render_sidebar_history()
         
         st.markdown("""
-        <div style="margin-top: -20px; margin-bottom: 10px;">
-            <h2 style="color: #1e3a8a; font-weight: 600; font-size: 1.8rem; margin-bottom: 0;">Finance Analytics Assistant</h2>
+        <div style="margin-top: -10px; margin-bottom: 16px;">
+            <h2 style="color: #D74120; font-weight: 700; font-size: 1.9rem; margin-bottom: 4px; letter-spacing: -0.02em;">Finance Analytics Assistant</h2>
+            <p style="color: #888; font-size: 12px; margin: 0; letter-spacing: 0.05em;">POWERED BY DANA</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Display current domain selection if available
+        # Display current domain selection if available - Optum styled
         if st.session_state.get('domain_selection'):
             domain_display = ", ".join(st.session_state.domain_selection)
             st.markdown(f"""
-            <div style="background-color: #e3f2fd; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; color: #1e3a8a; font-size: 0.9rem;">
-                🏢 <strong>Selected Team:</strong> {domain_display}
+            <div style="background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%); padding: 12px 16px; border-radius: 10px; margin-bottom: 14px; border: 1px solid #D9F6FA;">
+                <span style="color: #4a4a4a; font-size: 13px;">🏢 <strong style="color: #1a1a1a;">Selected Team:</strong> <span style="color: #D74120; font-weight: 600;">{domain_display}</span></span>
             </div>
             """, unsafe_allow_html=True)
         
@@ -3838,39 +4157,30 @@ def render_chat_message_enhanced(message, message_idx):
             col1, col2 = st.columns(2)
             
             with col1:
-                # Selected Datasets Box (Sky Blue)
+                # Selected Datasets Box - Optum Cyan styled badge
                 st.markdown(f"""
-                <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px;">
-                    <div style="display: flex; align-items: center;">
-                        <span style="font-size: 1rem; margin-right: 8px;">📊</span>
-                        <strong style="color: #1e3a8a; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
-                    </div>
+                <div class="dataset-badge">
+                    <span>📊</span>
+                    <span>Selected Datasets: {datasets_text}</span>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col2:
-                # Trusted SQL Indicator Box - conditional styling
+                # Trusted SQL Indicator Box - conditional Optum styling
                 if history_sql_used:
-                    box_bg = "#d4edda"
-                    box_border = "#28a745"
-                    box_color = "#155724"
-                    icon = "✅"
-                    label = "Trusted SQL Pattern Used"
-                else:
-                    box_bg = "#f8f9fa"
-                    box_border = "#dee2e6"
-                    box_color = "#6c757d"
-                    icon = "🔧"
-                    label = "New SQL Generated"
-                
-                st.markdown(f"""
-                <div style="background-color: {box_bg}; border: 1px solid {box_border}; border-radius: 8px; padding: 12px;">
-                    <div style="display: flex; align-items: center;">
-                        <span style="font-size: 1rem; margin-right: 8px;">{icon}</span>
-                        <strong style="color: {box_color}; font-size: 0.95rem;">{label}</strong>
+                    st.markdown(f"""
+                    <div class="trusted-badge">
+                        <span class="trusted-badge-icon">✓</span>
+                        <span>Trusted SQL Pattern Used</span>
                     </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="new-sql-badge">
+                        <span>🔧</span>
+                        <span>New SQL Generated</span>
+                    </div>
+                    """, unsafe_allow_html=True)
             return
 
         # NEW CODE: Suppress historical followup_questions message

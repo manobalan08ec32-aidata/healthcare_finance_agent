@@ -213,7 +213,7 @@ st.markdown("""
     /* Styled cards for sections */
     .metadata-card {
         background: white;
-        border: 1px solid #E0E0E0;
+        border: 1px solid #EDE8E0;
         border-radius: 12px;
         padding: 1.5rem;
         margin-bottom: 1.5rem;
@@ -232,7 +232,7 @@ st.markdown("""
     
     /* Dropdown styling */
     .stSelectbox > div > div {
-        border: 2px solid #2196F3 !important;
+        border: 2px solid #FF612B !important;
         border-radius: 8px !important;
     }
     
@@ -355,7 +355,7 @@ async def display_table_metadata(table_name, display_name):
             # Show dataset information with styled card
             st.markdown(f"""
             <div class="metadata-card">
-                <div class="card-title">� Table Description</div>
+                <div class="card-title">📝 Table Description</div>
                 <p style="margin: 0; line-height: 1.6; color: #333; word-wrap: break-word; white-space: pre-wrap;">{table_description}</p>
             </div>
             """, unsafe_allow_html=True)

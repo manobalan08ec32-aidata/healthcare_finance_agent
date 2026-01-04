@@ -119,10 +119,10 @@ st.markdown("""
         text-align: center;
         margin: 0.5rem 0;
         padding: 1.5rem 2rem;
-        background: #E8F4F8;
-        border: 2px solid #2196F3;
+        background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%);
+        border: 1px solid #D9F6FA;
         border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(33, 150, 243, 0.15);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
     
     .welcome-title {
@@ -160,13 +160,13 @@ st.markdown("""
     .team-note {
         font-size: 0.9rem;
         color: #333;
-        background: linear-gradient(135deg, #E8F4F8 0%, #F0F7FB 100%);
+        background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%);
         padding: 0.8rem;
         border-radius: 8px;
         margin-top: 1rem;
         text-align: left;
         line-height: 1.4;
-        border-left: 4px solid #2196F3;
+        border-left: 4px solid #FF612B;
     }
     
     /* Button section - MOVED UP MORE */
@@ -413,7 +413,7 @@ def main():
     # Note about datasets - only show after team selection, with larger font
     if selected_team:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #E8F4F8 0%, #F0F7FB 100%); padding: 1rem; border-radius: 8px; margin: 0.5rem 0; color: #333; font-size: 1.0rem; line-height: 1.4; text-align: left; border-left: 4px solid #2196F3;">
+        <div style="background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%); padding: 1rem; border-radius: 8px; margin: 0.5rem 0; color: #333; font-size: 1.0rem; line-height: 1.4; text-align: left; border-left: 4px solid #FF612B;">
             <strong style="color: #D74120;">📌 Note:</strong>
             <ul style="margin-left: 1.2em; margin-top: 0.5rem;">
                 <li>Ledger datasets contain a combination of PBM, HDP, and Specialty information. Both teams will have access to the entire Ledger datasets.</li>

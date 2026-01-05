@@ -1,34 +1,315 @@
-=== HISTORICAL QUESTIONS (GROUPED BY TABLE) ===
+async def search_metadata_sql(self, filter_list: List[str]) -> List[str]:
+        """
+        Search metadata with enhanced cascading priority:
+        1A. EXACT MATCH (Pure) - ALL values are exact matches
+        1B. EXACT MATCH (Mixed) - SOME values are exact, others partial
+        2. STARTS-WITH MATCH - Value starts with the full term
+        3. CONTAINS MATCH - Individual words found (with dynamic intelligent ranking)
+        """
+        try:
+            if not filter_list:
+                return []
+            
+            print(f"🔍 Starting enhanced search for filters: {filter_list}")
+            
+            # Build all match conditions for a SINGLE query
+            exact_conditions = []
+            starts_conditions = []
+            contains_conditions = []
+            
+            for term in filter_list:
+                term_clean = term.strip().lower()
+                escaped_exact = term_clean.replace("'", "\\'")
+                escaped_regex = term_clean.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
+                
+                # TIER 1: Exact match condition
+                exact_conditions.append(f"lower(trim(exploded_value)) = '{escaped_exact}'")
+                
+                # TIER 2: Starts-with condition
+                starts_conditions.append(f"lower(trim(exploded_value)) RLIKE '^{escaped_regex}\\\\b'")
+                
+                # TIER 3: Individual words
+                words = term_clean.split()
+                for word in words:
+                    if len(word) > 2:
+                        escaped_word = word.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)').replace('[', '\\[').replace(']', '\\]')
+                        contains_conditions.append(f"lower(trim(exploded_value)) RLIKE '(?i)\\\\b{escaped_word}'")
+            
+            # Build tier scoring logic
+            exact_clause = ' OR '.join(exact_conditions)
+            starts_clause = ' OR '.join(starts_conditions)
+            contains_clause = ' OR '.join(contains_conditions)
+            
+            # Combine all conditions for WHERE clause
+            all_conditions = f"({exact_clause}) OR ({starts_clause}) OR ({contains_clause})"
+            
+            # Tier assignment with tier tracking per value
+            tier_assignment = f"""
+                CASE 
+                    WHEN {exact_clause} THEN 1
+                    WHEN {starts_clause} THEN 2
+                    ELSE 3
+                END
+            """
+            
+            query = f"""
+            WITH matched_data AS (
+                SELECT
+                    column_name,
+                    trim(exploded_value) AS individual_value,
+                    {tier_assignment} AS match_tier
+                FROM prd_optumrx_orxfdmprdsa.rag.distinct_values_metadata1
+                LATERAL VIEW explode(split(distinct_values, ',')) AS exploded_value
+                WHERE {all_conditions}
+            ),
+            scored_aggregated AS (
+                SELECT
+                    column_name,
+                    collect_list(individual_value) AS all_matched_values,
+                    collect_list(match_tier) AS all_match_tiers,
+                    MIN(match_tier) AS best_tier
+                FROM matched_data
+                GROUP BY column_name
+            )
+            SELECT
+                column_name,
+                concat_ws(', ', slice(all_matched_values, 1, 5)) AS matched_values,
+                all_match_tiers,
+                best_tier
+            FROM scored_aggregated
+            ORDER BY best_tier ASC, column_name
+            LIMIT 7
+            """
+            
+            print(f"📊 Enhanced Query (First 500 chars): {query[:500]}...")
+            
+            # Execute ONCE using async method
+            result_data = await self.execute_sql_async_audit(query)
+            print('results_data_filter', result_data)
+            
+            # Convert DataFrame to list if needed
+            if hasattr(result_data, 'collect'):
+                # It's a Spark DataFrame - convert to list of dicts
+                result_list = [row.asDict() for row in result_data.collect()]
+                print(f"✅ Converted DataFrame to list: {len(result_list)} rows")
+            elif isinstance(result_data, list):
+                result_list = result_data
+            else:
+                print(f"❌ Unexpected result type: {type(result_data)}")
+                return []
+            
+            if not result_list:
+                print(f"❌ No matches found")
+                return []
+            
+            # Python filtering: Return ONLY the highest priority tier
+            return self._filter_by_priority_enhanced(result_list, filter_list)
+            
+        except Exception as e:
+            print(f"❌ Error in search_metadata_sql: {str(e)}")
+            return []
 
-- table_name: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-  id:14.0, what is the network product revenue or revenue for each line of business for July 2025
-  id:3.0, what is the actuals vs forecast 8+4 for membership for PBM for july 2025
-  id:2.0, what is the actuals vs forecast 8+4 or actuals vs 5+7 for July 2025 for PBM
-  id:9.0, what is the script counts (adjusted, volume),revenue, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core in september 2025
-  id:4.0, what is the PBM revenue by month jan-sep 2025 or what is the network product revenue from jan-sep 2025 for PBM
-  id:21.0, compare HDP revenue or HDP network revenue or Network product revenue for Q3 2025 VS q3 2024
-  id:7.0, what is the script counts (unadjusted, volume), adjusted script count, revenue per script (rate) or revenue per adjusted script count for Specialty in september 2025   
-  id:12.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core from jan to feb 2025
-  id:10.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for divvyDOSE, CPS Solutions, Infusion, Community Core, PharmScript, Specialty Core, Frontier, HDP Core september 2025 vs september 2024
-  id:15.0, what is the revenue for each line of business from jan to sept 2025 for PBM
-  id:6.0, what is the script counts (adjusted, volume) trends, unadjusted script count, revenue per script (rate) or revenue per adjusted script count trends for Specialty from jan to march 2025
-  id:1.0, what is the network product revenue or network revenue or revenue for PBM?
-  id:26.0, what is the rate variance,volume variance,mix variance for each lob or line of business for PBM from sep to oct 2025?
-  id:11.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate)for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth september 2025 vs september 2024
-  id:16.0, compare revenue for each line of business Q3 2025 vs Q3 2024
-  id:13.0, what is the script counts (adjusted, volume),revenue, unadjusted script count, revenue per script (rate) for Admin Fees, Emisar GPO, Retail Other, Retail, Mfr Discount, Workers Comp, Prior Auth from jan to feb 2025
-  id:27.0, what is the rate variance,volume variance,mix variance for PBM from sep to oct 2025?
-  id:5.0, compare PBM revenue or PBM network revenue or Network product revenue for Q3 2025 VS q3 2024
-  id:8.0, compare script counts (adjusted, volume), revenue per script (rate), revenue amount for Specialty Q3 2025 vs Q3 2024
 
-Raw LLM response: <json>
-{
-  "status": "match_found",
-  "selected_seq_id": 14.0,
-  "matched_question": "what is the network product revenue or revenue for each line of business for July 2025",
-  "table_name": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
-  "reasoning": "TIER B - revenue metric matches, date matches (July 2025), but filter differs (HDP vs line of business)",
-  "match_confidence": "MEDIUM",
-  "similarity_score": 85
-}
-</json>
+    def _filter_by_priority_enhanced(self, result_data: list, filter_list: List[str]) -> List[str]:
+        """
+        Enhanced filtering with:
+        - Tier 1A/1B split (purity check)
+        - Tier 3 dynamic intelligent ranking (NO HARDCODING)
+        """
+        if not result_data:
+            return []
+        
+        import json
+        
+        # Group results by tier with purity check for Tier 1
+        tier_1a_results = []  # Pure exact matches
+        tier_1b_results = []  # Mixed exact matches
+        tier_2_results = []
+        tier_3_results = []
+        
+        for row in result_data:
+            best_tier = int(row.get('best_tier', 3))
+            column_name = row.get('column_name', '')
+            matched_values = row.get('matched_values', '')
+            all_match_tiers_raw = row.get('all_match_tiers', [])
+            
+            # Parse all_match_tiers if it's a JSON string
+            if isinstance(all_match_tiers_raw, str):
+                try:
+                    all_match_tiers = json.loads(all_match_tiers_raw)
+                    # Convert string numbers to integers
+                    all_match_tiers = [int(tier) for tier in all_match_tiers]
+                except:
+                    all_match_tiers = []
+            elif isinstance(all_match_tiers_raw, list):
+                all_match_tiers = [int(tier) for tier in all_match_tiers_raw]
+            else:
+                all_match_tiers = []
+            
+            result_entry = {
+                'column_name': column_name,
+                'matched_values': matched_values,
+                'tier': best_tier,
+                'all_tiers': all_match_tiers
+            }
+            
+            if best_tier == 1:
+                # Check purity: Are ALL matched values exact matches?
+                if all_match_tiers and all(tier == 1 for tier in all_match_tiers):
+                    result_entry['sub_tier'] = '1A'
+                    tier_1a_results.append(result_entry)
+                else:
+                    result_entry['sub_tier'] = '1B'
+                    tier_1b_results.append(result_entry)
+            elif best_tier == 2:
+                tier_2_results.append(result_entry)
+            else:
+                tier_3_results.append(result_entry)
+        
+        print(f"\n📊 Results breakdown:")
+        print(f"   Tier 1A (PURE EXACT): {len(tier_1a_results)} columns")
+        print(f"   Tier 1B (MIXED EXACT): {len(tier_1b_results)} columns")
+        print(f"   Tier 2 (STARTS-WITH): {len(tier_2_results)} columns")
+        print(f"   Tier 3 (CONTAINS): {len(tier_3_results)} columns")
+        
+        # Return ONLY highest priority tier with results
+        if tier_1a_results:
+            print(f"✅ TIER 1A (PURE EXACT): Found {len(tier_1a_results)} matches - Returning only these")
+            return self._format_results(tier_1a_results[:7], "EXACT-PURE")
+        
+        if tier_1b_results:
+            print(f"✅ TIER 1B (MIXED EXACT): Found {len(tier_1b_results)} matches - Returning only these")
+            return self._format_results(tier_1b_results[:7], "EXACT-MIXED")
+        
+        if tier_2_results:
+            print(f"✅ TIER 2 (STARTS-WITH): Found {len(tier_2_results)} matches - Returning only these")
+            return self._format_results(tier_2_results[:7], "STARTS-WITH")
+        
+        if tier_3_results:
+            print(f"✅ TIER 3 (CONTAINS): Found {len(tier_3_results)} matches - Applying dynamic intelligent ranking...")
+            # Apply dynamic intelligent ranking for Tier 3
+            ranked_tier_3 = self._rank_tier_3_dynamic(tier_3_results, filter_list)
+            return self._format_results(ranked_tier_3[:7], "CONTAINS")
+        
+        print(f"❌ No results after filtering")
+        return []
+
+
+    def _rank_tier_3_dynamic(self, tier_3_results: list, filter_list: List[str]) -> list:
+        """
+        Dynamic intelligent ranking for Tier 3 results (NO HARDCODING)
+        
+        Scoring factors:
+        1. Word match count (50 points per word) - How many search words appear in values
+        2. Match completeness ratio (30 points) - % of search words found
+        3. Token boundary bonus (20 points) - Full word vs substring match
+        4. Column name relevance (15 points) - Column name semantic matching
+        """
+        # Extract all search words
+        search_words = []
+        for term in filter_list:
+            words = term.strip().lower().split()
+            search_words.extend([w for w in words if len(w) > 2])
+        
+        total_search_words = len(search_words)
+        print(f"   🔍 Search words for dynamic ranking: {search_words} (total: {total_search_words})")
+        
+        # Calculate dynamic composite score for each result
+        for result in tier_3_results:
+            column_name = result['column_name']
+            matched_values = result['matched_values'].lower()
+            
+            # SCORE 1: Word match count (50 points per unique word found)
+            words_found = set()
+            for word in search_words:
+                if word in matched_values:
+                    words_found.add(word)
+            word_match_count = len(words_found)
+            word_match_score = word_match_count * 50
+            
+            # SCORE 2: Match completeness ratio (30 points max)
+            if total_search_words > 0:
+                completeness_ratio = word_match_count / total_search_words
+                completeness_score = completeness_ratio * 30
+            else:
+                completeness_score = 0
+            
+            # SCORE 3: Token boundary quality (20 points max)
+            token_boundary_score = 0
+            for word in words_found:
+                # Check if word appears as full token (with word boundaries)
+                if re.search(r'\b' + re.escape(word) + r'\b', matched_values):
+                    token_boundary_score += 20 / len(words_found) if words_found else 0
+            
+            # SCORE 4: Column name relevance (15 points max)
+            column_name_lower = column_name.lower()
+            column_relevance_score = 0
+            
+            # Check if any search word appears in column name
+            for word in search_words:
+                if word in column_name_lower:
+                    column_relevance_score += 5
+            
+            # Semantic column name matching (medical/pharma related terms)
+            medical_terms = ['therapy', 'drug', 'medication', 'treatment', 'disease', 'diagnosis', 
+                            'class', 'category', 'type', 'vaccine', 'pharmaceutical']
+            for med_term in medical_terms:
+                if med_term in column_name_lower and any(word in matched_values for word in search_words):
+                    column_relevance_score += 10
+                    break
+            
+            # Cap at 15 points
+            column_relevance_score = min(column_relevance_score, 15)
+            
+            # COMPOSITE SCORE
+            composite_score = (
+                word_match_score + 
+                completeness_score + 
+                token_boundary_score + 
+                column_relevance_score
+            )
+            
+            # Store all scoring details
+            result['word_match_count'] = word_match_count
+            result['completeness_ratio'] = round(completeness_ratio * 100, 1) if total_search_words > 0 else 0
+            result['token_boundary_score'] = round(token_boundary_score, 1)
+            result['column_relevance_score'] = round(column_relevance_score, 1)
+            result['composite_score'] = round(composite_score, 1)
+            
+            print(f"   📊 {column_name}: Score={result['composite_score']} "
+                f"[Words:{word_match_count}/{total_search_words}, "
+                f"Complete:{result['completeness_ratio']}%, "
+                f"Token:{result['token_boundary_score']}, "
+                f"ColRel:{result['column_relevance_score']}]")
+        
+        # Sort by composite score (descending)
+        tier_3_results.sort(key=lambda x: x['composite_score'], reverse=True)
+        
+        print(f"   ✅ Dynamically ranked {len(tier_3_results)} Tier 3 results")
+        return tier_3_results
+
+
+    def _format_results(self, result_data: list, match_type: str) -> List[str]:
+        """
+        Format the query results into a list of strings
+        """
+        concatenated_results = []
+        
+        for row in result_data:
+            column_name = row.get('column_name', '')
+            matched_values = row.get('matched_values', '')
+            tier = row.get('tier', '')
+            sub_tier = row.get('sub_tier', '')
+            
+            # Additional info for Tier 3
+            extra_info = ""
+            if 'composite_score' in row:
+                extra_info = (f", Score:{row['composite_score']}")
+            
+            tier_label = sub_tier if sub_tier else tier
+            table_summary = f"Column: {column_name} (Tier: {tier_label}, Type: {match_type}{extra_info})\n  - Values: {matched_values}"
+            concatenated_results.append(table_summary)
+        
+        print(f"📋 Formatted {len(concatenated_results)} results for {match_type} matches")
+        return concatenated_results
+    

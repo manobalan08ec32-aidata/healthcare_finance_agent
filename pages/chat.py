@@ -9,12 +9,20 @@ import atexit
 import traceback
 import html
 from datetime import datetime
-from core.databricks_client import DatabricksClient
-from core.logger import setup_logger, log_with_user_context
-from workflows.langraph_workflow import AsyncHealthcareFinanceWorkflow
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Initialize logger
+# CRITICAL: Import config FIRST to set up Application Insights connection string
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
+
+# NOW import logger and other modules (after config is loaded)
+from core.logger import setup_logger, log_with_user_context
+from core.databricks_client import DatabricksClient
+from workflows.langraph_workflow import AsyncHealthcareFinanceWorkflow
+
+# Initialize logger (connection string is now set by config module)
 logger = setup_logger(__name__)
 
 # Page configuration - Force sidebar to be expanded
@@ -187,6 +195,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         'current_question': user_query,
         'session_id': session_id,
         'user_id': get_authenticated_user(),
+        'user_email': get_authenticated_user(),  # Add user email for logging context
         'user_questions_history': user_questions_history,
         'domain_selection': domain_selection,
         'user_selected_datasets': st.session_state.get('user_selected_datasets', []),  # List of selected datasets (empty = all)
@@ -323,7 +332,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     # Show initial status - workflow always starts with entry_router
     update_status_for_node('entry_router')
     
-    log_event('info', "Workflow started", question=user_question[:100] if user_question else "N/A")
+    log_event('info', "Workflow started", question=user_query[:100] if user_query else "N/A")
     
     # Reset stop flag at start
     st.session_state.stop_requested = False
@@ -654,6 +663,70 @@ def log_event(level: str, message: str, **extra):
     log_with_user_context(logger, level, message, user_email, session_id, **extra)
 
 
+# ============ COSMOS DB HELPER FUNCTIONS ============
+
+def is_cosmos_enabled() -> bool:
+    """Check if Cosmos DB integration is enabled"""
+    return os.getenv("COSMOS_DB_ENABLED", "false").lower() == "true"
+
+
+def load_session_snapshot_sync(user_id: str, session_date: str) -> Optional[Dict[str, Any]]:
+    """Synchronous wrapper to load session snapshot from Cosmos"""
+    if not is_cosmos_enabled():
+        return None
+    
+    try:
+        from core.cosmos_state_manager import get_cosmos_manager
+        manager = get_cosmos_manager()
+        return asyncio.run(manager.load_session_snapshot(user_id, session_date))
+    except Exception as e:
+        print(f"⚠️ Failed to load snapshot: {e}")
+        return None
+
+
+def save_session_snapshot_sync(user_id: str, session_date: str, state_dict: Dict[str, Any]) -> bool:
+    """Synchronous wrapper to save session snapshot to Cosmos"""
+    if not is_cosmos_enabled():
+        return False
+    
+    try:
+        from core.cosmos_state_manager import get_cosmos_manager
+        manager = get_cosmos_manager()
+        return asyncio.run(manager.save_session_snapshot(user_id, session_date, state_dict))
+    except Exception as e:
+        print(f"⚠️ Failed to save snapshot: {e}")
+        return False
+
+
+def save_state_snapshot():
+    """
+    Save entire session state to Cosmos DB after workflow completes.
+    Excludes Streamlit internal variables and temporary flags.
+    """
+    if not is_cosmos_enabled():
+        return
+    
+    user_email = get_authenticated_user()
+    if user_email == 'unknown_user':
+        return
+    
+    date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Collect all state variables (exclude internals)
+    state_to_save = {
+        k: v for k, v in st.session_state.items()
+        if not k.startswith('_') and k not in [
+            'session_id',
+            'original_session_id',
+            'cosmos_loaded',
+            'FormSubmitter'  # Streamlit internal
+        ]
+    }
+    
+    save_session_snapshot_sync(user_email, date, state_to_save)
+    print(f"💾 Saved {len(state_to_save)} state variables to Cosmos")
+
+
 def get_available_datasets():
     """
     Get available datasets from metadata.json based on current domain selection.
@@ -789,6 +862,10 @@ def initialize_session_state():
     if 'refresh_session_cache' not in st.session_state:
         st.session_state.refresh_session_cache = False
     
+    # Track if Cosmos state has been loaded for this session
+    if 'cosmos_loaded' not in st.session_state:
+        st.session_state.cosmos_loaded = False
+    
     # Authenticated user info should always come from main.py - don't initialize here
     # Just log what we have (or fallback if nothing was passed)
     authenticated_user = get_authenticated_user()
@@ -801,6 +878,32 @@ def initialize_session_state():
     # Warning if we're using fallback values (indicates main.py didn't pass user info)
     if authenticated_user == 'unknown_user':
         log_event('warning', "Using fallback user - main.py may not have passed user info")
+    
+    # ============ COSMOS DB STATE LOADING ============
+    # Load ENTIRE state snapshot from Cosmos DB on first initialization
+    # This handles instance switches, browser refreshes, and day continuity
+    if not st.session_state.cosmos_loaded and is_cosmos_enabled():
+        if authenticated_user != 'unknown_user':
+            date = datetime.now().strftime("%Y-%m-%d")
+            print(f"🔄 Loading session snapshot from Cosmos for {authenticated_user} on {date}")
+            
+            snapshot = load_session_snapshot_sync(authenticated_user, date)
+            
+            if snapshot:
+                # Restore ALL state variables from snapshot
+                # This overwrites the default values set above
+                for key, value in snapshot.items():
+                    if not key.startswith('_'):  # Skip Streamlit internals
+                        st.session_state[key] = value
+                
+                print(f"✅ Restored {len(snapshot)} state variables from Cosmos")
+                print(f"   - messages: {len(st.session_state.get('messages', []))}")
+                print(f"   - domain: {st.session_state.get('domain_selection')}")
+                print(f"   - datasets: {st.session_state.get('user_selected_datasets')}")
+            else:
+                print(f"ℹ️ No saved session snapshot for {date} - starting fresh")
+        
+        st.session_state.cosmos_loaded = True
     # Removed obsolete follow-up polling/background keys
 
 # ============ CHAT HISTORY MANAGEMENT ============
@@ -985,7 +1088,6 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
     
     # Show feedback buttons if not already submitted
     if not st.session_state.get(f"{feedback_key}_submitted", False):
-        st.markdown("---")
         st.markdown("**Was this helpful?** ")
         
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
@@ -1287,12 +1389,9 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         report_card_html = f'''
         <div class="report-card">
             <div class="report-label">
-                <span>📈</span> Recommended Report
+                <span>📈</span> Recommended Report to reconcile
             </div>
             <div class="report-title">{html.escape(report_name)}</div>
-            <div style="font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
-                This will be available only during testing phase
-            </div>
             <div class="report-filters">
                 {filter_tags_html if filter_tags_html else '<span class="filter-tag">No filters specified</span>'}
             </div>
@@ -1865,19 +1964,13 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
         session_id = st.session_state.get('session_id', 'unknown')
         
         # Construct email subject
-        subject = f"FDM Bot Feedback Alert - User: {user_name}"
+        subject = f"FDM Bot Feedback Alert raised by User: {user_name}"
         
         # Construct email body
         body = f"""
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
     <h2 style="color: #d9534f;">FDM Bot Feedback - Needs Improvement</h2>
-    
-    <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #d9534f; margin: 20px 0;">
-        <p><strong>User:</strong> {user_name} ({user_email})</p>
-        <p><strong>Session ID:</strong> {session_id}</p>
-        <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S CST')}</p>
-    </div>
     
     <h3 style="color: #0275d8;">Question Asked:</h3>
     <div style="background-color: #e7f3ff; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
@@ -1900,6 +1993,12 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
     </div>
     
     <hr style="border: none; border-top: 1px solid #ddd; margin: 25px 0;">
+
+    <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #d9534f; margin: 20px 0;">
+        <p><strong>User:</strong> {user_name} </p>
+        <p><strong>Session ID:</strong> {session_id}</p>
+        <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S CST')}</p>
+    </div>
     
     <p style="color: #5cb85c; font-weight: bold;">
         🔔 The FDM team will review this feedback on priority and reach out if any additional information is required.
@@ -2122,17 +2221,23 @@ Remember: The goal is an accurate, proportional retelling. If there's little to 
 def render_last_session_overview():
     """Fetch and display a brief overview of the user's last session"""
     try:
+        print(f"🔍 DEBUG: render_last_session_overview called")
+        print(f"   messages count: {len(st.session_state.messages)}")
+        print(f"   session_explicitly_loaded: {st.session_state.get('session_explicitly_loaded', False)}")
+        print(f"   first_question_asked: {st.session_state.get('first_question_asked', False)}")
+        print(f"   session_overview_shown: {st.session_state.get('session_overview_shown', False)}")
+        
         # Only show if this is a fresh session (no messages yet)
         if st.session_state.messages:
-            return
-        
-        # Don't show overview on fresh page load - wait for user to ask a question or select session
-        if not st.session_state.get('session_explicitly_loaded', False) and not st.session_state.get('first_question_asked', False):
+            print("❌ EARLY RETURN: Messages already exist - not showing overview")
             return
         
         # Check if we've already shown the session overview in this session
         if st.session_state.get('session_overview_shown', False):
+            print("❌ EARLY RETURN: Overview already shown - not showing again")
             return
+        
+        print("✅ All checks passed - proceeding to fetch and display overview")
         
         # Fetch the last session summary
         last_summary = asyncio.run(_fetch_last_session_summary())
@@ -2162,11 +2267,15 @@ def render_last_session_overview():
         
         # Generate LLM narrative overview for all sessions
         try:
+            print("🎬 Starting LLM overview generation...")
             spinner_placeholder = st.empty()
             with spinner_placeholder, st.spinner("✍️ Writing the story of our last conversation..."):
+                print("⏳ Spinner active - calling _generate_session_overview")
                 overview="This feature is disabled to save cost for now. Will be enabled during demo's"
                 # overview = asyncio.run(_generate_session_overview(narrative_summary))
+                print(f"✅ LLM response received: {len(overview) if overview else 0} chars")
             spinner_placeholder.empty()
+            print("✅ Spinner cleared")
             
             
         except Exception as e:
@@ -2516,6 +2625,14 @@ def render_sidebar_history():
         <div class="sidebar-section-title">
             <span>🕐</span> Recent Sessions
         </div>
+        <style>
+        /* Dark blue border for session history selectbox */
+        div[data-testid="stSelectbox"][key="session_dropdown"] > div > div,
+        [data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div {
+            border: 2px solid #1e3a8a !important;
+            border-radius: 6px !important;
+        }
+        </style>
     """, unsafe_allow_html=True)
     
     # Check if we have a database client first
@@ -2657,91 +2774,73 @@ def render_sidebar_history():
 
 
 def render_sidebar_dataset_selector():
-    """Render dataset selector in sidebar with compact dropdown and checkboxes for multi-select"""
+    """Render dataset selector in sidebar with simple single-select dropdown"""
     
     # Get available datasets
     datasets = get_available_datasets()
     
-    # Remove "All Datasets" from the list
-    available_datasets = [d for d in datasets if d != "All Datasets"]
+    # Keep "All Datasets" at the beginning as default option
+    available_datasets = datasets  # Already has "All Datasets" first
     
     # Debug: Log available datasets
     print(f"🔍 Available datasets: {available_datasets} (Total: {len(available_datasets)})")
+    
+    # Display header with Optum styled section title
+    st.markdown("""
+        <div class="sidebar-section-title">
+            <span>🗂️</span> Filter by Dataset (Optional)
+        </div>
+        <style>
+        /* Dark blue border for dataset selectbox */
+        div[data-testid="stSelectbox"][key="dataset_selectbox"] > div > div,
+        div[data-testid="stSelectbox"]:has(div[data-baseweb="select"]) > div > div {
+            border: 2px solid #1e3a8a !important;
+            border-radius: 6px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     
     # Initialize selection in session state if not exists
     if 'user_selected_datasets' not in st.session_state:
         st.session_state.user_selected_datasets = []
     
-    # Handle legacy format conversion
-    legacy_selection = st.session_state.get('selected_dataset_filter', [])
-    if isinstance(legacy_selection, str):
-        if legacy_selection != "All Datasets":
-            st.session_state.user_selected_datasets = [legacy_selection]
-    elif isinstance(legacy_selection, list) and legacy_selection:
-        st.session_state.user_selected_datasets = legacy_selection
+    # Determine the default index for the dropdown
+    default_index = 0  # Default to "All Datasets"
     
-    # Display compact header with Optum styled section title
-    current_selections = st.session_state.user_selected_datasets
-    selection_text = f"{len(current_selections)} selected" if current_selections else "All Datasets"
+    # If user has a previous selection, find its index
+    if st.session_state.user_selected_datasets and len(st.session_state.user_selected_datasets) > 0:
+        selected_dataset = st.session_state.user_selected_datasets[0]
+        try:
+            default_index = available_datasets.index(selected_dataset)
+        except ValueError:
+            default_index = 0  # Fallback to "All Datasets" if not found
     
-    st.markdown(f"""
-        <div class="sidebar-section-title">
-            <span>🗂️</span> Datasets
-        </div>
-        <div style="font-size: 12px; color: #4a4a4a; margin-bottom: 10px;">
-            <span style="color: #FF612B; font-weight: 600;">{selection_text}</span>
-        </div>
-    """, unsafe_allow_html=True)
+    # Create simple selectbox dropdown
+    selected_dataset = st.selectbox(
+        "Select a dataset:",
+        options=available_datasets,
+        index=default_index,
+        key="dataset_selectbox",
+        label_visibility="collapsed"  # Hide the label, we have our own header
+    )
     
-    # Create compact expander with dropdown symbol
-    with st.expander("▼ Select Datasets", expanded=False):
-        # Add CSS for compact, clean styling
-        st.markdown("""
-            <style>
-            /* Compact checkbox labels */
-            div[data-testid="stExpander"] .stCheckbox {
-                margin-bottom: 2px !important;
-            }
-            div[data-testid="stExpander"] .stCheckbox label {
-                font-size: 0.7rem !important;
-                line-height: 1.2 !important;
-            }
-            /* Reduce expander padding */
-            div[data-testid="stExpander"] > div {
-                padding-top: 4px !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        # Create compact checkboxes for each dataset
-        for dataset in available_datasets:
-            is_selected = dataset in st.session_state.user_selected_datasets
-            
-            # Use checkbox with callback to handle selection changes
-            def toggle_dataset(dataset_name):
-                """Toggle dataset selection"""
-                if dataset_name in st.session_state.user_selected_datasets:
-                    st.session_state.user_selected_datasets.remove(dataset_name)
-                else:
-                    st.session_state.user_selected_datasets.append(dataset_name)
-            
-            # Create checkbox
-            checked = st.checkbox(
-                dataset, 
-                value=is_selected, 
-                key=f"dataset_check_{dataset}",
-                on_change=toggle_dataset,
-                args=(dataset,)
-            )
+    # Update session state based on selection
+    if selected_dataset == "All Datasets":
+        # Empty list means all datasets
+        st.session_state.user_selected_datasets = []
+    else:
+        # Single dataset selected, store as list for compatibility
+        st.session_state.user_selected_datasets = [selected_dataset]
     
     # Also update the legacy field for backward compatibility
     st.session_state.selected_dataset_filter = st.session_state.user_selected_datasets
     
     # Log the selection
     if st.session_state.user_selected_datasets:
-        print(f"📊 Datasets selected: {', '.join(st.session_state.user_selected_datasets)}")
+        print(f"📊 Dataset selected: {st.session_state.user_selected_datasets[0]}")
     else:
-        print(f"📊 No datasets selected (All Datasets)")
+        print(f"📊 No dataset filter (All Datasets)")
+
 
 
 
@@ -2928,7 +3027,7 @@ def add_message_type_css():
         gap: 16px;
     }
     
-    /* ===== USER MESSAGE - OPTUM ORANGE GRADIENT ===== */
+    /* ===== USER MESSAGE - SOFT PEACH BACKGROUND WITH BLACK TEXT ===== */
     .user-message {
         display: flex;
         justify-content: flex-start;
@@ -2937,15 +3036,15 @@ def add_message_type_css():
     }
     
     .user-message-content {
-        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%) !important;
-        color: white !important;
+        background: #FFD1AB !important;
+        color: #1a1a1a !important;
         padding: 14px 20px;
         border-radius: 20px 20px 6px 20px;
         max-width: none;
         min-width: 200px;
         word-wrap: break-word;
         border: none !important;
-        box-shadow: 0 4px 16px rgba(255, 97, 43, 0.3);
+        box-shadow: 0 4px 12px rgba(255, 209, 171, 0.4);
         font-weight: 500;
     }
     
@@ -3610,6 +3709,8 @@ def main():
         
         if st.button("Back to Main Page", key="back_to_main"):
             st.switch_page("main.py")
+        
+        st.markdown("---")
     
     try:
         workflow = get_session_workflow()
@@ -3638,8 +3739,7 @@ def main():
                 with st.spinner("🔄 Loading application and fetching session history..."):
                     # Fetch history in background while showing spinner
                     with st.sidebar:
-                        st.markdown("---")
-                        # Order: Dataset Selection → Recent Sessions → Back button
+                        # Order: Dataset Selection → Recent Sessions
                         render_sidebar_dataset_selector()
                         st.markdown("---")
                         render_sidebar_history()
@@ -3648,14 +3748,13 @@ def main():
         else:
             # History already cached, just render sidebar
             with st.sidebar:
-                st.markdown("---")
-                # Order: Dataset Selection → Recent Sessions → Back button
+                # Order: Dataset Selection → Recent Sessions
                 render_sidebar_dataset_selector()
                 st.markdown("---")
                 render_sidebar_history()
         
         st.markdown("""
-        <div style="margin-top: -10px; margin-bottom: 16px;">
+        <div style="margin-top: -20px; margin-bottom: 12px;">
             <h2 style="color: #D74120; font-weight: 700; font-size: 1.9rem; margin-bottom: 4px; letter-spacing: -0.02em;">Finance Analytics Assistant</h2>
             <p style="color: #888; font-size: 12px; margin: 0; letter-spacing: 0.05em;">POWERED BY DANA</p>
         </div>
@@ -3856,6 +3955,11 @@ def main():
                     st.session_state.sql_rendered = False
                     st.session_state.narrative_rendered = False
                     st.session_state.followup_state = None
+                    
+                    # ============ COSMOS DB: SAVE COMPLETE STATE SNAPSHOT ============
+                    # Workflow is complete - save entire state to Cosmos
+                    save_state_snapshot()
+                    
                     st.rerun()
         
         # Handle drillthrough execution after strategic analysis has been rendered
@@ -3893,6 +3997,11 @@ def main():
                     # Clear the flag to prevent re-running
                     st.session_state.strategic_rendered = False
                     st.session_state.drillthrough_state = None
+                    
+                    # ============ COSMOS DB: SAVE COMPLETE STATE SNAPSHOT ============
+                    # Drillthrough analysis complete - save entire state to Cosmos
+                    save_state_snapshot()
+                    
                     st.rerun()
 
         st.markdown("""

@@ -6,25 +6,13 @@ async def search_column_values(
         max_values_per_column: int = 5
     ) -> List[str]:
         """
-        Search for values across columns with tiered matching and scoring.
+        Search for values across columns with tiered matching.
         
-        Priority Order:
-            Tier 1: Exact match (full term matches value exactly)
-            Tier 2: Prefix match (value starts with term)
-            Tier 3: Contains match (term found within value)
-        
-        Scoring:
-            - Values matching more search terms rank higher
-            - Full phrase match scores higher than individual words
-        
-        Args:
-            search_terms: List of values to search (e.g., ["covid vaccine", "ozempic"])
-            column_index: Loaded index dictionary
-            max_columns: Maximum columns to return (default 7)
-            max_values_per_column: Maximum matched values per column (default 5)
-            
-        Returns:
-            List of formatted strings: ["column_name - value1, value2", ...]
+        Priority:
+            Tier 1: Exact match (value == search term)
+            Tier 2: Prefix match (value starts with search term)
+            Tier 3: Contains ALL words (for multi-word search)
+            Tier 4: Contains SOME words (fallback only if no Tier 1-3)
         """
         
         if not search_terms:
@@ -36,184 +24,128 @@ async def search_column_values(
             print("⚠️ No columns data found in column index")
             return []
         
-        # Build search list: full phrases + individual words
-        # Structure: [(term, priority_weight), ...]
-        # Full phrase gets weight 10, individual words get weight 5
-        search_items = []
+        # Build search list
+        search_phrases = []  # Full phrases
         
         for term in search_terms:
             term_lower = term.strip().lower()
-            if not term_lower:
-                continue
-            
-            # Add full phrase with high weight
-            search_items.append({"term": term_lower, "weight": 10, "is_phrase": True})
-            
-            # Add individual words with lower weight
-            words = term_lower.split()
-            if len(words) > 1:
-                for word in words:
-                    if len(word) > 2:  # Skip very short words
-                        # Avoid duplicates
-                        if not any(s["term"] == word for s in search_items):
-                            search_items.append({"term": word, "weight": 5, "is_phrase": False})
+            if term_lower:
+                words = term_lower.split()
+                search_phrases.append({
+                    "phrase": term_lower,
+                    "words": [w for w in words if len(w) > 2],
+                    "is_multi_word": len(words) > 1
+                })
         
-        print(f"🔍 Search items: {[(s['term'], s['weight']) for s in search_items]}")
+        print(f"🔍 Search phrases: {[s['phrase'] for s in search_phrases]}")
         
         # Track results per column
-        # Structure: {column_name: {"tier": int, "values": {value: {"tier": int, "score": int}}}}
+        # Structure: {column_name: {"tier": int, "values": {value: {"tier": int, "matched_words": int}}}}
         column_matches = {}
         
-        # Process each column
         for col_name, values in columns_data.items():
             
             for value in values:
-                value_tier = None
-                value_score = 0
-                matched_terms = []
+                best_tier = None
+                best_matched_words = 0
                 
-                # Check each search term against this value
-                for search_item in search_items:
-                    term = search_item["term"]
-                    weight = search_item["weight"]
+                for search_item in search_phrases:
+                    phrase = search_item["phrase"]
+                    words = search_item["words"]
+                    is_multi_word = search_item["is_multi_word"]
                     
-                    # Determine match type for this term-value pair
-                    match_type = None
+                    # TIER 1: Exact match
+                    if value == phrase:
+                        tier = 1
+                        matched_words = len(words)
                     
-                    if value == term:
-                        # Exact match
-                        match_type = "exact"
-                        term_tier = 1
-                    elif value.startswith(term):
-                        # Prefix match
-                        match_type = "prefix"
-                        term_tier = 2
-                    elif term in value:
-                        # Contains match
-                        match_type = "contains"
-                        term_tier = 3
+                    # TIER 2: Prefix match
+                    elif value.startswith(phrase):
+                        tier = 2
+                        matched_words = len(words)
                     
-                    if match_type:
-                        matched_terms.append(term)
-                        value_score += weight
+                    # TIER 3/4: Contains logic
+                    else:
+                        # Count how many words are in the value
+                        words_found = [w for w in words if w in value]
+                        matched_words = len(words_found)
                         
-                        # Keep best (lowest) tier for this value
-                        if value_tier is None or term_tier < value_tier:
-                            value_tier = term_tier
+                        if matched_words == 0:
+                            continue  # No match at all
+                        
+                        if is_multi_word:
+                            if matched_words == len(words):
+                                # ALL words found → Tier 3
+                                tier = 3
+                            else:
+                                # SOME words found → Tier 4 (low priority)
+                                tier = 4
+                        else:
+                            # Single word search, contains match → Tier 3
+                            tier = 3
+                    
+                    # Keep best tier (lowest number)
+                    if best_tier is None or tier < best_tier:
+                        best_tier = tier
+                        best_matched_words = matched_words
+                    elif tier == best_tier and matched_words > best_matched_words:
+                        best_matched_words = matched_words
                 
-                # If value matched any term, record it
-                if value_tier is not None:
+                # Record match if found
+                if best_tier is not None:
                     if col_name not in column_matches:
-                        column_matches[col_name] = {"best_tier": value_tier, "values": {}}
+                        column_matches[col_name] = {"best_tier": best_tier, "values": {}}
                     
-                    # Update column's best tier
-                    if value_tier < column_matches[col_name]["best_tier"]:
-                        column_matches[col_name]["best_tier"] = value_tier
+                    if best_tier < column_matches[col_name]["best_tier"]:
+                        column_matches[col_name]["best_tier"] = best_tier
                     
-                    # Store value with its tier and score
                     column_matches[col_name]["values"][value] = {
-                        "tier": value_tier,
-                        "score": value_score,
-                        "matched_terms": matched_terms
+                        "tier": best_tier,
+                        "matched_words": best_matched_words
                     }
         
-        # Now filter: if exact match exists for a term, remove partial matches for that term
-        # Find terms that have exact matches somewhere
-        terms_with_exact = set()
-        for col_name, col_data in column_matches.items():
-            for value, value_info in col_data["values"].items():
-                if value_info["tier"] == 1:
-                    # This value is an exact match, so the term equals the value
-                    terms_with_exact.add(value)
+        # CRITICAL: If Tier 1, 2, or 3 matches exist, remove Tier 4
+        has_good_matches = any(
+            col_data["best_tier"] <= 3 
+            for col_data in column_matches.values()
+        )
         
-        print(f"✅ Terms with exact matches: {terms_with_exact}")
-        
-        # Filter out partial matches for terms that have exact matches
-        if terms_with_exact:
-            for col_name, col_data in column_matches.items():
-                values_to_remove = []
+        if has_good_matches:
+            for col_name, col_data in list(column_matches.items()):
+                # Remove Tier 4 values
+                col_data["values"] = {
+                    v: info for v, info in col_data["values"].items()
+                    if info["tier"] <= 3
+                }
                 
-                for value, value_info in col_data["values"].items():
-                    if value_info["tier"] > 1:  # Partial match
-                        # Check if all matched terms for this value have exact matches elsewhere
-                        matched_terms = value_info["matched_terms"]
-                        if all(term in terms_with_exact for term in matched_terms):
-                            values_to_remove.append(value)
-                
-                for value in values_to_remove:
-                    del col_data["values"][value]
-                
-                # Recalculate best tier after removal
+                # Recalculate best tier
                 if col_data["values"]:
-                    col_data["best_tier"] = min(v["tier"] for v in col_data["values"].values())
+                    col_data["best_tier"] = min(info["tier"] for info in col_data["values"].values())
+            
+            # Remove columns with no values left
+            column_matches = {k: v for k, v in column_matches.items() if v["values"]}
         
-        # Remove columns with no values left
-        column_matches = {k: v for k, v in column_matches.items() if v["values"]}
-        
-        # Sort columns by best_tier, then by best value score within column
-        def column_sort_key(item):
-            col_name, col_data = item
-            best_tier = col_data["best_tier"]
-            # Best score among values in this column
-            best_score = max(v["score"] for v in col_data["values"].values())
-            return (best_tier, -best_score, col_name)
-        
-        sorted_columns = sorted(column_matches.items(), key=column_sort_key)
+        # Sort columns: tier (asc), then column name
+        sorted_columns = sorted(
+            column_matches.items(),
+            key=lambda x: (x[1]["best_tier"], x[0])
+        )
         
         # Format output
         results = []
         for col_name, col_data in sorted_columns[:max_columns]:
-            # Sort values within column: by tier (asc), then score (desc)
+            # Sort values: tier (asc), matched_words (desc)
             sorted_values = sorted(
                 col_data["values"].items(),
-                key=lambda x: (x[1]["tier"], -x[1]["score"])
+                key=lambda x: (x[1]["tier"], -x[1]["matched_words"])
             )
             
-            # Take top N values
             top_values = [v[0] for v in sorted_values[:max_values_per_column]]
             values_str = ", ".join(top_values)
             
-            best_tier = col_data["best_tier"]
-            best_score = max(v["score"] for v in col_data["values"].values())
-            
+            tier = col_data["best_tier"]
             results.append(f"{col_name} - {values_str}")
-            print(f"   Tier {best_tier}, Score {best_score}: {col_name} → {top_values}")
+            print(f"   Tier {tier}: {col_name} → {top_values}")
         
         print(f"✅ Search complete: Found {len(results)} matching columns")
         return results
-```
-
----
-
-## Example Walkthrough
-
-**Input:** `["covid vaccine"]`
-
-**Search items built:**
-```
-[("covid vaccine", 10), ("covid", 5), ("vaccine", 5)]
-```
-
-**Processing value `"covid-19 vaccines"`:**
-```
-- "covid vaccine" in "covid-19 vaccines"? YES (contains) → tier 3, score +10
-- "covid" in "covid-19 vaccines"? YES (contains) → tier 3, score +5
-- "vaccine" in "covid-19 vaccines"? YES (contains) → tier 3, score +5
-
-Result: tier=3, score=20, matched_terms=["covid vaccine", "covid", "vaccine"]
-```
-
-**Processing value `"covidien m"`:**
-```
-- "covid vaccine" in "covidien m"? NO
-- "covid" in "covidien m"? YES (contains) → tier 3, score +5
-- "vaccine" in "covidien m"? NO
-
-Result: tier=3, score=5, matched_terms=["covid"]
-```
-
-**Final ranking:**
-```
-1. therapy_class_name - covid-19 vaccines (Tier 3, Score 20) ← TOP
-2. drug_name - covid-19 flu a+b test kit (Tier 3, Score 15)
-3. DRUG_MANUFCTR_NM - covidien m (Tier 3, Score 5) ← LOWER

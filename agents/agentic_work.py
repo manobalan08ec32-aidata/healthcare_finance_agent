@@ -66,8 +66,13 @@ STAGE 2: APPLY USER'S CLARIFICATION (Only if RELEVANT)
 The user's response resolves the ambiguity from Phase 1.
 Apply it as HIGH CONFIDENCE override - no further validation needed.
 
+CRITICAL RULE: One filter value = One column mapping
+- User's clarification specifies which ONE column to use
+- Do NOT use OR across multiple columns
+- Apply the user's choice directly
+
 INTEGRATION RULES:
-- If user specified a column: Use that exact column
+- If user specified a column: Use that exact column (e.g., "use therapy_class_name" -> filter on therapy_class_name only)
 - If user specified a filter value: Apply to the column they indicated
 - If user clarified a calculation: Implement their exact formula
 - If user defined a time period: Use their exact dates/ranges
@@ -258,6 +263,7 @@ followup_validation: RELEVANT | NEW_QUESTION | TOPIC_DRIFT
 clarification_applied: [what the user clarified and how it was applied]
 term_mappings: [term]->[column](Y) based on user clarification
 filter_resolution: [column]=[value](Y) based on user clarification
+history_filter_resolution: [value]->[column](from history) | N/A | user_override
 intent: breakdown | aggregate | comparison | top-N | calculation
 mandatory_filters: [filter1](Y applied), [filter2](Y applied)
 history_pattern: FULL_REUSE | PARTIAL | STRUCTURAL | NONE

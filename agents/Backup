@@ -75,7 +75,7 @@ Patterns:
 - "for each X" without metric/domain
 
 **10. INCOMPLETE** - Current missing components that previous had
-Detection: Previous question has TIME or METRIC, but current question does NOT
+Detection: Previous question has TIME or METRIC, but current question does NOT have them explicitly
 → This is NOT a new question
 → Classify as CONTINUATION, inherit missing components
 
@@ -87,21 +87,60 @@ Example: Prev "revenue for PBM for Q3 vs Q2" + Curr "what clients driving for Mo
 
 === INHERITANCE BY INTENT ===
 
+**GENERAL PRINCIPLE:** For all follow-up intents, only INHERIT what is MISSING from current.
+If current explicitly states a component → USE CURRENT, don't inherit.
+
 CORRECTION: No inheritance - output "[Previous Question] - [Current Input]"
 
 NEW: Use all components from current only, no inheritance
 
-DRIVING: Inherit [metric, domain, time, forecast] | Add [breakdown from current] | Use [entity from current if specified]
+DRIVING:
+- Metric: CURRENT if present, else INHERIT from previous
+- Domain: CURRENT if present, else INHERIT from previous
+- Time: CURRENT if present, else INHERIT from previous
+- Entity: CURRENT if present, else NONE (apply entity rules)
+- Breakdown: ADD from current
+- Forecast: INHERIT from previous
 
-DOMAIN_SWITCH: Inherit [metric, time, breakdown, forecast] | Replace [domain] | Clear [entity]
+DOMAIN_SWITCH:
+- Metric: INHERIT from previous
+- Domain: REPLACE with current
+- Time: INHERIT from previous
+- Breakdown: INHERIT from previous
+- Entity: CLEAR (fresh start for new domain)
+- Forecast: INHERIT from previous
 
-METRIC_SHIFT: Inherit [domain, entity, time, breakdown] | Replace [metric]
+METRIC_SHIFT:
+- Metric: REPLACE with current
+- Domain: INHERIT from previous
+- Time: INHERIT from previous
+- Breakdown: INHERIT from previous
+- Entity: INHERIT from previous
+- Forecast: INHERIT from previous
 
-TIME_SHIFT: Inherit [metric, domain, entity, breakdown] | Replace [time]
+TIME_SHIFT:
+- Metric: INHERIT from previous
+- Domain: INHERIT from previous
+- Time: REPLACE with current
+- Breakdown: INHERIT from previous
+- Entity: INHERIT from previous
+- Forecast: INHERIT from previous
 
-FILTER_CHANGE: Inherit [metric, domain, time, breakdown] | Entity: Accumulate if "also/and/both" present, else Replace
+FILTER_CHANGE:
+- Metric: INHERIT from previous
+- Domain: INHERIT from previous
+- Time: INHERIT from previous
+- Breakdown: INHERIT from previous
+- Entity: ACCUMULATE if "also/and/both" present, else REPLACE
+- Forecast: INHERIT from previous
 
-CONTINUATION/INCOMPLETE: Inherit all missing components from previous, apply domain/entity rules below
+CONTINUATION/INCOMPLETE:
+- Metric: CURRENT if present, else INHERIT from previous
+- Domain: CURRENT if present, else apply domain rules
+- Time: CURRENT if present, else INHERIT from previous
+- Entity: Apply entity rules (don't auto-inherit)
+- Breakdown: CURRENT if present, else INHERIT from previous
+- Forecast: INHERIT from previous
 
 === CRITICAL: BREAKDOWN IS ADDING, NOT REPLACING ===
 
@@ -232,6 +271,8 @@ DRIVING Multi-Dim: Prev "revenue for PBM July" + Curr "drugs and clients driving
 
 DRIVING + Missing Time: Prev "revenue for PBM for Q3 vs Q2" + Curr "what clients driving for Mounjaro" → "What is revenue for PBM for Mounjaro by client for Q3 vs Q2 2025" | Filters: ["PBM", "Mounjaro"]
 
+DRIVING + Metric in Current: Prev "revenue for PBM for Q3" + Curr "show volume by client" → "What is volume for PBM by client for Q3 2025" | Filters: ["PBM"]
+
 DOMAIN_SWITCH: Prev "revenue for PBM Q3" + Curr "what about HDP" → "What is revenue for HDP for Q3 2025" | Filters: ["HDP"]
 
 METRIC_SHIFT: Prev "revenue for PBM for GLP-1" + Curr "show volume" → "What is volume for PBM for GLP-1" | Filters: ["PBM", "GLP-1"]
@@ -277,42 +318,44 @@ Return ONLY valid JSON. No markdown, no code blocks, no ```json wrapper.
 
 ---
 
-## Summary of What's Included
+## Summary of All Fixes Applied
 
-| Section | Status |
-|---------|--------|
-| Inputs | ✅ |
-| **PREFIX DETECTION (NEW)** | ✅ Added |
-| Intent Detection (11 intents) | ✅ |
-| **DRIVING strengthened (FIX)** | ✅ Added critical note |
-| **INCOMPLETE intent (NEW)** | ✅ Added as Intent 10 |
-| **Continuation signals (FIX)** | ✅ Added "what about", "how about", etc. |
-| Inheritance by Intent | ✅ |
-| **Breakdown is ADDING (NEW)** | ✅ Added section |
-| Domain Filter Rules | ✅ |
-| Entity Filter Rules | ✅ |
-| **Smart Year with detailed examples (FIX)** | ✅ Expanded |
-| Forecast Cycle Rules | ✅ |
-| Memory Dimension Tagging | ✅ |
-| Metric Inheritance (growth/decline) | ✅ |
-| **Filter Extraction with suffix stripping (FIX)** | ✅ Added |
-| Validation Before Output | ✅ |
-| **Examples with DRIVING + Missing Time (NEW)** | ✅ Added |
-| **Output Format with both prefix and intent (FIX)** | ✅ Updated |
+| Fix | Description | Status |
+|-----|-------------|--------|
+| 1. PREFIX DETECTION | Added "follow-up", "followup" prefix handling | ✅ |
+| 2. INCOMPLETE INTENT | Catches missing components before DEFAULT | ✅ |
+| 3. DRIVING STRENGTHENED | CRITICAL note about always being follow-up | ✅ |
+| 4. SIGNAL PATTERNS | "what about", "how about", "instead of" added | ✅ |
+| 5. BREAKDOWN CLARIFICATION | Dedicated section - ADDING not replacing | ✅ |
+| 6. SUFFIX STRIPPING | "GLP-1 drugs" → "GLP-1" | ✅ |
+| 7. SMART YEAR EXAMPLES | Detailed dynamic examples | ✅ |
+| 8. OUTPUT FORMAT | Both prefix and intent in output | ✅ |
+| 9. **SMART INHERITANCE** | **CURRENT if present, else INHERIT** | ✅ NEW |
+| 10. **NEW EXAMPLE** | **DRIVING + Metric in Current** | ✅ NEW |
 
 ---
 
-## Estimated Token Count
+## Key Fix: Smart Inheritance
 
-~4,100 - 4,200 tokens (within your 4.5k budget)
-
----
-
-## Fixes Applied for Your Q4 Bug
-
-Your test case:
+**Before (flawed):**
 ```
-Q1: "what is the revenue b/w Q3 and Q2"
-Q2: "what therapy class increasing revenue"
-Q3: "what drugs driving"
-Q4: "what client driving the increase on drug Mounjaro" ← Was failing
+DRIVING: Inherit [metric, domain, time, forecast] | Add [breakdown]
+```
+
+**After (fixed):**
+```
+DRIVING:
+- Metric: CURRENT if present, else INHERIT from previous
+- Domain: CURRENT if present, else INHERIT from previous
+- Time: CURRENT if present, else INHERIT from previous
+- Entity: CURRENT if present, else NONE
+- Breakdown: ADD from current
+- Forecast: INHERIT from previous
+```
+
+---
+
+## Test Your Scenario
+```
+Previous: "revenue for PBM for Q3"
+Current: "show volume by client"

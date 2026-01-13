@@ -1488,6 +1488,18 @@ Create internal mapping:
 
 STAGE 2: FILTER RESOLUTION
 
+MANDATORY FIRST: VALIDATE FILTER COLUMNS EXIST IN METADATA
+EXTRACTED FILTERS may contain columns from OTHER tables. Before using ANY filter:
+1. Check if filter column exists in AVAILABLE METADATA
+2. EXISTS → proceed to resolution
+3. NOT EXISTS → CANNOT use this filter column, but check:
+   a. Does another column in METADATA contain this filter value? → Use that column instead
+   b. No other column has this value + user mentioned it → follow-up: "This dataset doesn't have [column]. Available columns: [list]. Which column should I filter on for [value]?"
+   c. No other column has this value + user didn't mention it → silently ignore
+
+STRICT RULE: Never use a filter column that doesn't exist in AVAILABLE METADATA.
+Log: filter_validation: [column](EXISTS) | [column](INVALID→resolved via [alt_column]) | [column](INVALID→follow-up)
+
 Resolve filter values mentioned in the question to specific columns.
 
 CRITICAL RULE: One filter value = One column mapping
@@ -1580,11 +1592,9 @@ WHEN TO ASK FOLLOW-UP:
 
 DO NOT ASK FOLLOW-UP FOR:
 - Single semantic match exists (even if wording differs)
-- Extracted filter already resolved the value to single column
-- Standard date parsing applies (August=8, Q3=7,8,9)
-- Generic terms that don't need column mapping (show, get, analysis)
-- One exact match among multiple partial matches
-- User provided explicit hint or correction in question (handled in Step 1.0)
+- Extracted filter resolved to single valid column (after metadata validation)
+- Standard date parsing (August=8, Q3=7,8,9)
+- User provided explicit hint or correction in question (Step 1.0)
 
 {stage_4_hist_learn}
 
@@ -1692,13 +1702,13 @@ OUTPUT FORMAT
 ---
 Always output <reasoning_summary> first, then either <followup> OR <sql>/<multiple_sql>.
 
-REASONING SUMMARY (always output):
 <reasoning_summary>
+filter_validation: [column](EXISTS), [column](INVALID-not in metadata)
 term_mappings: [term]->[column](Y), [term]->[column](Y), [term]->[col1,col2](AMBIGUOUS)
 filter_resolution: [column]=[value](Y), [value]->[col1,col2](AMBIGUOUS)
 intent: breakdown | aggregate | comparison | top-N | calculation
 mandatory_filters: [filter1](Y applied), [filter2](Y applied)
-history_pattern: TRUE | FALSE
+history_pattern: GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
 ambiguities: NONE | [list specific ambiguities]
 decision: SQL_GENERATION | FOLLOWUP_REQUIRED
 </reasoning_summary>
@@ -1987,21 +1997,29 @@ IF Metric=NO:
   -> Build: Fresh SQL for current question using these techniques
   -> Set history_sql_used = false
 
-WHAT TO ALWAYS LEARN (regardless of match level):
-- CASE WHEN for side-by-side columns (month comparisons)
-- UNION/UNION ALL patterns (detail rows + total row)
-- Division safety: NULLIF(denominator, 0)
-- Rounding: ROUND(amount, 0), ROUND(percentage, 3)
-- Case-insensitive: UPPER(column) = UPPER('value')
+STEP 4.3: DETECT AND REPLICATE HISTORY PATTERN
 
-WHAT TO NEVER COPY (always from current question):
-- Filter values (dates, carrier_id, entity names)
-- Specific time periods
-- Any <parameter> placeholders - use actual values
+Identify pattern in HISTORICAL SQL, then REPLICATE structure exactly:
 
-CRITICAL VALIDATION:
-- Every column in final SQL must exist in CURRENT metadata
-- Historical SQL may reference columns not in current dataset - verify before using"""      
+PATTERN A - GROUPING_SETS_TOTAL (history has "GROUPING SETS" + "GROUPING("):
+  Your SQL MUST include:
+  - CASE WHEN GROUPING(breakdown_col) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_col END
+  - GROUP BY GROUPING SETS ((all_dims), (all_dims minus breakdown_col))
+  - ORDER BY ... CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
+
+PATTERN B - UNION_TOTAL (history has "UNION ALL" + 'Total'/'OVERALL' literal):
+  Your SQL MUST include: Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
+
+PATTERN C - SIMPLE (neither above):
+  No total row required
+
+ALWAYS LEARN from history: CASE WHEN for side-by-side columns, NULLIF(denominator, 0), ROUND formatting, UPPER() comparisons
+NEVER COPY from history: Filter values (dates, entities), time periods, <parameter> placeholders
+
+CRITICAL: Pattern structure is MANDATORY. Only replace filter values with current question's values.
+Log: history_pattern = GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
+
+VALIDATION: Every column in final SQL must exist in CURRENT metadata - history may reference columns not in current dataset."""      
 
         else:
             stage_3_hist_learn="No history sql available"

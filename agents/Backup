@@ -12,7 +12,9 @@ async def search_column_values(
             - Tier 1: Exact match
             - Tier 2: Prefix match
             - Tier 3: Contains full phrase
-            - Tier 4: RLIKE with word boundary for each word
+            - Tier 4: ALL words with boundary
+            - Tier 5: FIRST N-1 words (fallback, only if Tier 1-4 empty)
+            - Tier 6: FIRST 3 words (fallback, only if Tier 1-5 empty)
         """
         
         if not search_terms:
@@ -27,10 +29,14 @@ async def search_column_values(
             """
             Creates regex pattern for word with boundary.
             Allows optional 's' for plurals.
-            Pattern: (^|[^a-z])word(s)?([^a-z]|$)
             """
             escaped = escape_sql(word)
             return f"(^|[^a-z]){escaped}(s)?($|[^a-z0-9])"
+        
+        # Build combined RLIKE condition for list of words
+        def build_rlike_condition(words):
+            conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
+            return " AND ".join(conditions)
         
         # Process search terms
         search_items = []
@@ -46,7 +52,8 @@ async def search_column_values(
             search_items.append({
                 "phrase": term_lower,
                 "words": words,
-                "is_multi_word": is_multi_word
+                "is_multi_word": is_multi_word,
+                "word_count": len(words)
             })
         
         if not search_items:
@@ -54,25 +61,34 @@ async def search_column_values(
         
         print(f"🔍 Search items: {[s['phrase'] for s in search_items]}")
         
-        # Build SQL conditions
+        # Build SQL conditions for WHERE clause
         all_conditions = []
         
         for item in search_items:
             phrase = item["phrase"]
             words = item["words"]
             is_multi_word = item["is_multi_word"]
+            word_count = item["word_count"]
             phrase_escaped = escape_sql(phrase)
             
             if is_multi_word:
-                # Multi-word: exact, prefix, contains, regex
+                # Exact, prefix, contains
                 all_conditions.append(f"value_lower = '{phrase_escaped}'")
                 all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
                 all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
                 
-                # Regex: all words with boundary
-                regex_conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
-                combined_regex = " AND ".join(regex_conditions)
-                all_conditions.append(f"({combined_regex})")
+                # Tier 4: All words
+                all_conditions.append(f"({build_rlike_condition(words)})")
+                
+                # Tier 5: First N-1 words (for 3+ words)
+                if word_count >= 3:
+                    first_n_minus_1 = words[:word_count - 1]
+                    all_conditions.append(f"({build_rlike_condition(first_n_minus_1)})")
+                
+                # Tier 6: First 3 words (for 5+ words)
+                if word_count >= 5:
+                    first_3 = words[:3]
+                    all_conditions.append(f"({build_rlike_condition(first_3)})")
             else:
                 # Single word: exact, prefix, contains
                 all_conditions.append(f"value_lower = '{phrase_escaped}'")
@@ -88,6 +104,7 @@ async def search_column_values(
             phrase = item["phrase"]
             words = item["words"]
             is_multi_word = item["is_multi_word"]
+            word_count = item["word_count"]
             phrase_escaped = escape_sql(phrase)
             
             # Tier 1: Exact
@@ -100,12 +117,20 @@ async def search_column_values(
             tier_cases.append(f"WHEN value_lower LIKE '%{phrase_escaped}%' THEN 3")
             
             if is_multi_word:
-                # Tier 4: All words with boundary (any order)
-                regex_conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
-                combined_regex = " AND ".join(regex_conditions)
-                tier_cases.append(f"WHEN {combined_regex} THEN 4")
+                # Tier 4: All words with boundary
+                tier_cases.append(f"WHEN {build_rlike_condition(words)} THEN 4")
+                
+                # Tier 5: First N-1 words (for 3+ words)
+                if word_count >= 3:
+                    first_n_minus_1 = words[:word_count - 1]
+                    tier_cases.append(f"WHEN {build_rlike_condition(first_n_minus_1)} THEN 5")
+                
+                # Tier 6: First 3 words (for 5+ words)
+                if word_count >= 5:
+                    first_3 = words[:3]
+                    tier_cases.append(f"WHEN {build_rlike_condition(first_3)} THEN 6")
         
-        tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 5 END"
+        tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 7 END"
         
         # Build query
         query = f"""
@@ -115,7 +140,7 @@ async def search_column_values(
             {tier_case_statement} as tier
         FROM prd_optumrx_orxfdmprdsa.rag.column_values_index
         WHERE {where_clause}
-        ORDER BY column_name, tier, value_lower
+        ORDER BY tier, column_name, value_lower
         """
         
         print(f"🔍 Executing search query...")
@@ -142,14 +167,23 @@ async def search_column_values(
             for row in rows:
                 row["tier"] = int(row["tier"])
             
-            # Filter out Tier 5 (shouldn't match but just in case)
-            rows = [r for r in rows if r["tier"] <= 4]
+            # Filter out Tier 7 (no match)
+            rows = [r for r in rows if r["tier"] <= 6]
             
             if not rows:
                 print("❌ No valid matches found")
                 return []
             
-            print(f"✅ Found {len(rows)} matches")
+            print(f"✅ Found {len(rows)} total matches before tier filtering")
+            
+            # Apply exclusive tier group logic
+            rows = self._apply_tier_group_filter(rows)
+            
+            if not rows:
+                print("❌ No matches after tier group filtering")
+                return []
+            
+            print(f"✅ Found {len(rows)} matches after tier filtering")
             
             # Group by column
             column_data = {}
@@ -198,3 +232,36 @@ async def search_column_values(
             import traceback
             traceback.print_exc()
             return []
+    
+    
+    def _apply_tier_group_filter(self, rows: List[dict]) -> List[dict]:
+        """
+        Apply exclusive tier group filtering.
+        
+        Groups:
+            - Primary (Tier 1-4): Always return if any match exists
+            - Fallback 1 (Tier 5): Only if Tier 1-4 are ALL empty
+            - Fallback 2 (Tier 6): Only if Tier 1-5 are ALL empty
+        """
+        
+        # Separate rows by tier group
+        primary_rows = [r for r in rows if r["tier"] <= 4]
+        fallback_1_rows = [r for r in rows if r["tier"] == 5]
+        fallback_2_rows = [r for r in rows if r["tier"] == 6]
+        
+        print(f"   📊 Tier groups: Primary(1-4)={len(primary_rows)}, Fallback1(5)={len(fallback_1_rows)}, Fallback2(6)={len(fallback_2_rows)}")
+        
+        # Return based on priority
+        if primary_rows:
+            print(f"   ✅ Returning Primary tier (1-4) results")
+            return primary_rows
+        
+        if fallback_1_rows:
+            print(f"   ✅ Returning Fallback 1 tier (5) results")
+            return fallback_1_rows
+        
+        if fallback_2_rows:
+            print(f"   ✅ Returning Fallback 2 tier (6) results")
+            return fallback_2_rows
+        
+        return []

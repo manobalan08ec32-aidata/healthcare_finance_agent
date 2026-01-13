@@ -146,7 +146,7 @@ class LLMRouterAgent:
             
             # 2. Call search_column_values (NEW) if filter values exist
             # FILTER OUT common categorical values (case-insensitive), pass only meaningful values
-            common_categorical_values = {'pbm','pbm retail', 'hdp', 'home delivery', 'mail', 'specialty','sp','claim fee','claim cost','admin fee','claimfee','claimcost','adminfee','8+4','9+3','2+10','5+7','optum','retail'}
+            common_categorical_values = {'pbm','pbm retail', 'hdp', 'home delivery', 'mail', 'specialty','sp','claim fee','claim cost','activity fee','claimfee','claimcost','activityfee','8+4','9+3','2+10','5+7','optum','retail'}
             print("Current Timestamp before filter value call", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             # Filter out common categorical values
             meaningful_filter_values = []
@@ -655,14 +655,16 @@ CRITICAL: Use ONLY the exact attribute names listed in each dataset's "attrs" fi
 - IF question needs NO attributes (summary/total only):
   * Keep all tables with required metrics
 
-**RULE 6: FILTER VALUE DISAMBIGUATION**
+**RULE 6: FILTER VALUE PRESENCE CHECK**
+⚠️ Your job: TABLE selection. SQL generator handles column selection.
+
 When filter values exist in metadata:
-- Check filter_metadata for column matches
-- IF value found in SINGLE column → AUTO-SELECT that column
-- IF value found in MULTIPLE columns:
-  * Only ONE column has COMPLETE match → AUTO-SELECT that column
-  * Multiple columns have matches → Mark needs_disambiguation
-  * Example: "covid vaccine" in [drug_name, therapy_class_name] → needs_disambiguation
+- IF value in ANY column of table → Table supports this filter ✅
+- IF value in MULTIPLE columns of SAME table → Still OK, don't ask follow-up (SQL gen picks column)
+- Only ask clarification if multiple TABLES qualify (handled in Rule 9)
+- Store all matching columns in selected_filter_context for SQL generator
+
+Example: "covid" in Claims[drug_name, therapy_class] → Keep Claims, pass both columns to SQL gen
 
 **RULE 7: TIE-BREAKER - HIGH-LEVEL TABLE PRIORITY**
 Apply when multiple tables remain after Rules 1-6:
@@ -718,7 +720,7 @@ For SUCCESS:
   "functional_names": ["user_friendly_name"],
   "selection_reasoning": "1-2 lines explaining selection",
   "high_level_table_selected": true/false,
-  "selected_filter_context": "column: [actual_column_name], values: [sample_values]" // if filter applied
+  "selected_filter_context": "columns: [col1, col2], values: [samples]" // all columns with filter (SQL gen chooses)
 
 For NEEDS_DISAMBIGUATION:
 
@@ -1215,7 +1217,7 @@ CRITICAL: Be decisive about response type to avoid processing loops.
         # NEW: Search for historical SQL feedback BEFORE generating SQL
         # This ensures we only search for SQL from the selected dataset(s)
         print(f"🔍 Searching feedback SQL embeddings for selected dataset(s): {selected_datasets}")
-        feedback_results = await self.db_client.search_feedback_sql_embeddings(current_question, table_names=selected_datasets)
+        feedback_results = await self.db_client.sp_vector_search_feedback_sql(current_question, table_names=selected_datasets)
         
         # Process feedback results with LLM selection
         matched_sql = ''
@@ -1363,23 +1365,24 @@ IF Metric=YES AND Grouping=YES AND Type=YES:
 
 IF Metric=YES AND (Grouping=NO OR Type=NO):
   -> PARTIAL PATTERN REUSE
-  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods
+  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods,OVERALL TOTALS
   -> Rebuild: GROUP BY from current question
   -> Set history_sql_used = partial
 
 IF Metric=NO:
   -> STRUCTURAL LEARNING ONLY
-  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting
+  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting,OVERALL TOTALS
   -> Build: Fresh SQL for current question using these techniques
   -> Set history_sql_used = false
 
 WHAT TO ALWAYS LEARN (regardless of match level):
+- OVERALL TOTAL PATTERNS
 - CASE WHEN for side-by-side columns (month comparisons)
 - UNION/UNION ALL patterns (detail rows + total row)
 - Division safety: NULLIF(denominator, 0)
 - Rounding: ROUND(amount, 0), ROUND(percentage, 3)
 - Case-insensitive: UPPER(column) = UPPER('value')
-
+ 
 WHAT TO NEVER COPY (always from current question):
 - Filter values (dates, carrier_id, entity names)
 - Specific time periods
@@ -1452,16 +1455,12 @@ HIGH CONFIDENCE (proceed without asking):
   Example: "network revenue" -> revenue_amount (only revenue column exists)
 - Standard date parsing
   Example: "August 2025" -> month=8, year=2025
-  Example: "Q3" -> month IN (7,8,9) or quarter=3
 
 LOW CONFIDENCE - AMBIGUOUS (must ask follow-up):
 - Multiple columns in SAME semantic category
-  Example: "revenue" -> [gross_revenue, net_revenue, total_revenue]
-  Example: "date" -> [service_date, fill_date, process_date]
-  Example: "cost" -> [drug_cost, admin_cost, shipping_cost]
-- Generic term with multiple plausible interpretations
+  Example: "revenue" -> [gross_revenue, net_revenue] or "cost" -> [drug_cost, admin_cost]
+- Generic term with multiple interpretations
   Example: "amount" -> [revenue_amount, cost_amount, margin_amount]
-  Example: "rate" -> [fill_rate, dispense_rate, rejection_rate]
 
 NO MATCH (explain limitation, never invent):
 - Business term has zero related columns in metadata
@@ -1490,11 +1489,29 @@ Create internal mapping:
 STAGE 2: FILTER RESOLUTION
 
 Resolve filter values mentioned in the question to specific columns.
-Use EXTRACTED FILTER VALUES as the source of truth.
 
+CRITICAL RULE: One filter value = One column mapping
+- A single filter value (e.g., "covid vaccine", "MPDOVA") must map to ONE column only
+- Do NOT use OR across multiple columns for a single filter value
+- If value appears in multiple columns and cannot be resolved -> AMBIGUOUS -> Ask follow-up
+
+Use three sources for resolution: HISTORY SQL + EXTRACTED FILTERS + Question hints
+Check priorities in order - stop at first successful resolution.
+
+PRIORITY 1: History SQL Column Resolution (if history available)
+If HISTORY SQL exists AND filter value appears in multiple columns in EXTRACTED FILTERS:
+  A. Check which column HISTORY SQL used for this/similar filter
+  B. Verify column exists in current EXTRACTED FILTERS with the value
+  C. If both met -> Use history's column (HIGH CONFIDENCE, no follow-up)
+  D. If not -> Continue to Priority 2
+
+⚠️ EXCEPTION - TIME FILTERS: Do NOT use history for year/month/quarter/date filters. Always use current question's time period.
+
+Example: Question "covid vaccine revenue", Extracted has covid in [drug_name, therapy_class_name, drg_lbl_nm]
+History SQL uses: WHERE UPPER(therapy_class_name) LIKE '%COVID%' -> Use therapy_class_name
 RESOLUTION PRIORITY (check in order):
 
-PRIORITY 1: Question has ATTRIBUTE + VALUE
+PRIORITY 2: Question has ATTRIBUTE + VALUE
 If question mentions both the dimension AND the value:
 - "revenue by carrier for MPDOVA" -> Check EXTRACTED FILTERS for which column has MPDOVA
   - If carrier_id=MPDOVA in extracted -> Use carrier_id
@@ -1502,7 +1519,7 @@ If question mentions both the dimension AND the value:
   - If neither has MPDOVA -> Ask follow-up
 - "product category HDP" -> Check EXTRACTED FILTERS for product_category=HDP
 
-PRIORITY 2: Question has VALUE only (no attribute hint)
+PRIORITY 3: Question has VALUE only (no attribute hint)
 Check EXTRACTED FILTER VALUES section:
 
 SCENARIO A - Single column has match:
@@ -1524,7 +1541,7 @@ SCENARIO D - One EXACT match, others PARTIAL:
   Extracted: carrier_id=MPDOVA (exact), client_id=MPDO (partial)
   -> Use exact match (carrier_id). No follow-up needed.
 
-PRIORITY 3: Value not in extracted filters
+PRIORITY 4: Value not in extracted filters
 If value is in question but NOT in extracted filters:
 - Check if it's a standard value (month name, year, etc.) -> Parse directly
 - If can't resolve -> Ask follow-up
@@ -1761,7 +1778,7 @@ CRITICAL REMINDERS:
 
         for attempt in range(self.max_retries):
             try:
-                print('sql llm prompt', assessment_prompt)
+                # print('sql llm prompt', assessment_prompt)
                 print("Current Timestamp before SQL writer:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
@@ -2082,6 +2099,11 @@ STAGE 2: APPLY USER'S CLARIFICATION (Only if RELEVANT)
 
 The user's response resolves the ambiguity from Phase 1.
 Apply it as HIGH CONFIDENCE override - no further validation needed.
+
+CRITICAL RULE: One filter value = One column mapping
+- User's clarification specifies which ONE column to use
+- Do NOT use OR across multiple columns
+- Apply the user's choice directly
 
 INTEGRATION RULES:
 - If user specified a column: Use that exact column

@@ -551,3 +551,16 @@ WHERE UPPER(ledger) = UPPER('GAAP')
 <sql_story>
 This query retrieves revenue data from the ledger actual vs forecast table for Home Delivery (Mail) products in July 2025. It filters for GAAP ledger entries and Revenue metric type, then sums the total revenue amount for the specified time period and product category.
 </sql_story>
+
+
+history_section= f"""
+HISTORICAL SQL REFERENCE (Internal Use Only - Do NOT mention to user)
+PREVIOUS QUESTION: {history_question_match}
+TABLE: {matched_table_name}
+
+<historical_sql>
+{matched_sql}
+</historical_sql>
+
+PURPOSE: History represents LEARNED DETAIL PREFERENCES. When history shows breakdowns/totals, ENHANCE current response with same detail level even if user's question is simple.
+    """

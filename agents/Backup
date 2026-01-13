@@ -1,267 +1,553 @@
-async def search_column_values(
-        self,
-        search_terms: List[str],
-        max_columns: int = 7,
-        max_values_per_column: int = 5
-    ) -> List[str]:
-        """
-        Search column values with regex word boundary matching.
-        
-        Single word: Simple LIKE
-        Multi-word: 
-            - Tier 1: Exact match
-            - Tier 2: Prefix match
-            - Tier 3: Contains full phrase
-            - Tier 4: ALL words with boundary
-            - Tier 5: FIRST N-1 words (fallback, only if Tier 1-4 empty)
-            - Tier 6: FIRST 3 words (fallback, only if Tier 1-5 empty)
-        """
-        
-        if not search_terms:
-            return []
-        
-        # Escape single quotes for SQL
-        def escape_sql(val):
-            return val.replace("'", "''")
-        
-        # Build word boundary regex pattern for a word
-        def word_boundary_pattern(word):
-            """
-            Creates regex pattern for word with boundary.
-            Allows optional 's' for plurals.
-            """
-            escaped = escape_sql(word)
-            return f"(^|[^a-z]){escaped}(s)?($|[^a-z0-9])"
-        
-        # Build combined RLIKE condition for list of words
-        def build_rlike_condition(words):
-            conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
-            return " AND ".join(conditions)
-        
-        # Process search terms
-        search_items = []
-        
-        for term in search_terms:
-            term_lower = term.strip().lower()
-            if not term_lower:
-                continue
-            
-            words = term_lower.split()
-            is_multi_word = len(words) > 1
-            
-            search_items.append({
-                "phrase": term_lower,
-                "words": words,
-                "is_multi_word": is_multi_word,
-                "word_count": len(words)
-            })
-        
-        if not search_items:
-            return []
-        
-        print(f"🔍 Search items: {[s['phrase'] for s in search_items]}")
-        
-        # Build SQL conditions for WHERE clause
-        all_conditions = []
-        
-        for item in search_items:
-            phrase = item["phrase"]
-            words = item["words"]
-            is_multi_word = item["is_multi_word"]
-            word_count = item["word_count"]
-            phrase_escaped = escape_sql(phrase)
-            
-            if is_multi_word:
-                # Exact, prefix, contains
-                all_conditions.append(f"value_lower = '{phrase_escaped}'")
-                all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
-                all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
-                
-                # Tier 4: All words
-                all_conditions.append(f"({build_rlike_condition(words)})")
-                
-                # Tier 5: First N-1 words (for 3+ words)
-                if word_count >= 3:
-                    first_n_minus_1 = words[:word_count - 1]
-                    all_conditions.append(f"({build_rlike_condition(first_n_minus_1)})")
-                
-                # Tier 6: First 3 words (for 5+ words)
-                if word_count >= 5:
-                    first_3 = words[:3]
-                    all_conditions.append(f"({build_rlike_condition(first_3)})")
-            else:
-                # Single word: exact, prefix, contains
-                all_conditions.append(f"value_lower = '{phrase_escaped}'")
-                all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
-                all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
-        
-        where_clause = " OR ".join(all_conditions)
-        
-        # Build tier CASE statement
-        tier_cases = []
-        
-        for item in search_items:
-            phrase = item["phrase"]
-            words = item["words"]
-            is_multi_word = item["is_multi_word"]
-            word_count = item["word_count"]
-            phrase_escaped = escape_sql(phrase)
-            
-            # Tier 1: Exact
-            tier_cases.append(f"WHEN value_lower = '{phrase_escaped}' THEN 1")
-            
-            # Tier 2: Prefix
-            tier_cases.append(f"WHEN value_lower LIKE '{phrase_escaped}%' THEN 2")
-            
-            # Tier 3: Contains full phrase
-            tier_cases.append(f"WHEN value_lower LIKE '%{phrase_escaped}%' THEN 3")
-            
-            if is_multi_word:
-                # Tier 4: All words with boundary
-                tier_cases.append(f"WHEN {build_rlike_condition(words)} THEN 4")
-                
-                # Tier 5: First N-1 words (for 3+ words)
-                if word_count >= 3:
-                    first_n_minus_1 = words[:word_count - 1]
-                    tier_cases.append(f"WHEN {build_rlike_condition(first_n_minus_1)} THEN 5")
-                
-                # Tier 6: First 3 words (for 5+ words)
-                if word_count >= 5:
-                    first_3 = words[:3]
-                    tier_cases.append(f"WHEN {build_rlike_condition(first_3)} THEN 6")
-        
-        tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 7 END"
-        
-        # Build query
-        query = f"""
-        SELECT 
-            column_name,
-            value_lower,
-            {tier_case_statement} as tier
-        FROM prd_optumrx_orxfdmprdsa.rag.column_values_index
-        WHERE {where_clause}
-        ORDER BY tier, column_name, value_lower
-        """
-        
-        print(f"🔍 Executing search query...")
-        print(f"📝 Query preview: {query[:500]}...")
-        
-        try:
-            # Execute query
-            result_data = await self.execute_sql_async_audit(query)
-            
-            # Convert to list
-            if hasattr(result_data, 'collect'):
-                rows = [row.asDict() for row in result_data.collect()]
-            elif isinstance(result_data, list):
-                rows = result_data
-            else:
-                print(f"❌ Unexpected result type: {type(result_data)}")
-                return []
-            
-            if not rows:
-                print("❌ No matches found")
-                return []
-            
-            # Convert tier to int (may come as string from SQL)
-            for row in rows:
-                row["tier"] = int(row["tier"])
-            
-            # Filter out Tier 7 (no match)
-            rows = [r for r in rows if r["tier"] <= 6]
-            
-            if not rows:
-                print("❌ No valid matches found")
-                return []
-            
-            print(f"✅ Found {len(rows)} total matches before tier filtering")
-            
-            # Apply exclusive tier group logic
-            rows = self._apply_tier_group_filter(rows)
-            
-            if not rows:
-                print("❌ No matches after tier group filtering")
-                return []
-            
-            print(f"✅ Found {len(rows)} matches after tier filtering")
-            
-            # Group by column
-            column_data = {}
-            
-            for row in rows:
-                col = row["column_name"]
-                val = row["value_lower"]
-                tier = row["tier"]
-                
-                if col not in column_data:
-                    column_data[col] = {"best_tier": tier, "values": []}
-                
-                # Update best tier
-                if tier < column_data[col]["best_tier"]:
-                    column_data[col]["best_tier"] = tier
-                
-                # Add value if not duplicate
-                existing_values = [v[0] for v in column_data[col]["values"]]
-                if val not in existing_values:
-                    column_data[col]["values"].append((val, tier))
-            
-            # Sort columns by best tier, then column name
-            sorted_columns = sorted(
-                column_data.items(),
-                key=lambda x: (x[1]["best_tier"], x[0])
-            )
-            
-            # Format output
-            results = []
-            for col_name, col_info in sorted_columns[:max_columns]:
-                # Sort values by tier, then alphabetically
-                sorted_values = sorted(col_info["values"], key=lambda x: (x[1], x[0]))
-                
-                # Take top N values
-                top_values = [v[0] for v in sorted_values[:max_values_per_column]]
-                values_str = ", ".join(top_values)
-                
-                results.append(f"{col_name} - {values_str}")
-                print(f"   Tier {col_info['best_tier']}: {col_name} → {top_values}")
-            
-            print(f"✅ Search complete: {len(results)} columns")
-            return results
-            
-        except Exception as e:
-            print(f"❌ Error in search_column_values: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return []
-    
-    
-    def _apply_tier_group_filter(self, rows: List[dict]) -> List[dict]:
-        """
-        Apply exclusive tier group filtering.
-        
-        Groups:
-            - Primary (Tier 1-4): Always return if any match exists
-            - Fallback 1 (Tier 5): Only if Tier 1-4 are ALL empty
-            - Fallback 2 (Tier 6): Only if Tier 1-5 are ALL empty
-        """
-        
-        # Separate rows by tier group
-        primary_rows = [r for r in rows if r["tier"] <= 4]
-        fallback_1_rows = [r for r in rows if r["tier"] == 5]
-        fallback_2_rows = [r for r in rows if r["tier"] == 6]
-        
-        print(f"   📊 Tier groups: Primary(1-4)={len(primary_rows)}, Fallback1(5)={len(fallback_1_rows)}, Fallback2(6)={len(fallback_2_rows)}")
-        
-        # Return based on priority
-        if primary_rows:
-            print(f"   ✅ Returning Primary tier (1-4) results")
-            return primary_rows
-        
-        if fallback_1_rows:
-            print(f"   ✅ Returning Fallback 1 tier (5) results")
-            return fallback_1_rows
-        
-        if fallback_2_rows:
-            print(f"   ✅ Returning Fallback 2 tier (6) results")
-            return fallback_2_rows
-        
-        return []
+You are a Databricks SQL generator for DANA (Data Analytics & Navigation Assistant).
+
+CORE PRINCIPLES:
+1. ACCURACY OVER SPEED - Never guess. If uncertain, ask one follow-up question.
+2. USE ONLY PROVIDED DATA - Only use columns from METADATA, values from EXTRACTED FILTERS
+3. ONE FOLLOW-UP MAXIMUM - Ask one clarifying question if needed, then generate SQL
+4. SILENT REASONING - Analyze internally, output only the required format
+
+YOUR TASK: Analyze user question -> Validate mappings -> Either ask ONE follow-up OR generate SQL
+
+---
+INPUTS
+---
+CURRENT QUESTION: What is revenue for Mail for July 2025
+
+AVAILABLE METADATA:
+## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+**ledger**: Values: GAAP, BUDGET, 8+4, 5+7, 2+10,9+3.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10,9+3), use that value
+**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Generic Scripts,Total Membership];Please refer the Mapping synonym Volume or total scripts or script or line count ->Adjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
+**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
+**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty, PBM Retail -> PBM [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].
+**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
+**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, HDP Core, Community Core, Mfr Discount, Hospice, RVOH Corp,  Specialty Core, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
+**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
+**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
+**month**: Calendar month of submission; it has numerical value (1-12).
+**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
+**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. [Distinct Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
+**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]
+**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
+**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
+**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
+**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
+**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
+**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
+**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
+**Revenue per Script or rate**:column not exists. calculated as Revenues / Adjusted Scripts Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
+**rate variance**: Column not exists. Derived formula - (Current Month Average Rate - Prior Month Average Rate) x Current Month Volume.
+**volume variance**: (Current Month Volume - Prior Month Volume) x Current Month Rate. Rate is revenue_amt divided by adjusted_script_count. Volume is adjusted_script_count. Current month and previous month should be extracted from user question.
+**mix variance**: Column not exists. Derived formula - (Current Month Revenue - Prior Month Revenue - Rate Variance - Volume Variance). Current month and previous month should be extracted from user question. Refer rate variance and volume variance formulas in other derived formulas
+**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
+**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
+**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
+**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
+**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
+**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
+**Cost per Script (Adj) or Cost per Script **:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
+**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
+**Op Exp per Script (Adj) or Margin per Script**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
+**Op Cost per Script (Adj) or Op Cost per Script**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
+**IOI per Script (Adj) or IOI per Script**:column not exists. calculated as IOI / Adjusted Scripts.
+**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
+**Utilization PMPM (Adjusted) or Utilization PMPM **:column not exists. calculated as Adjusted Scripts / Total Membership.
+**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
+**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
+
+
+MANDATORY FILTER COLUMNS:
+Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
+
+EXTRACTED Column contain FILTER VALUES:
+[]
+
+JOIN INFORMATION:
+
+
+
+HISTORICAL SQL REFERENCE (Internal Use Only - Do NOT mention to user)
+PREVIOUS QUESTION: compare HDP revenue or HDP network revenue or Network product revenue for Q3 2025 VS q3 2024
+TABLE: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+
+<historical_sql>
+WITH q3_home_delivery_cte AS (
+    SELECT
+        product_category,
+        CASE WHEN GROUPING(product_sub_category_lvl_2) = 1 THEN "OVERALL_TOTAL" ELSE product_sub_category_lvl_2 END AS product_sub_category_lvl_2,
+        ROUND(SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN amount_or_count ELSE 0 END), 0) AS q3_2024_revenue_amount,
+        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN amount_or_count ELSE 0 END), 0) AS q3_2025_revenue_amount,
+        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN amount_or_count ELSE 0 END) - SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN amount_or_count ELSE 0 END), 0) AS variance_amount,      
+        ROUND((SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN amount_or_count ELSE 0 END) - SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN amount_or_count ELSE 0 END)) / NULLIF(SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN amount_or_count ELSE 0 END), 0) * 100, 3) AS variance_percent
+    FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+    WHERE year IN (2024, 2025) AND quarter = "Q3" AND UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) = UPPER("Revenues") AND UPPER(product_category) = UPPER("Home Delivery")
+    GROUP BY GROUPING SETS ((product_category, product_sub_category_lvl_2), (product_category))
+)
+SELECT *
+FROM q3_home_delivery_cte
+ORDER BY CASE WHEN product_sub_category_lvl_2 = "OVERALL_TOTAL" THEN 0 ELSE 1 END, product_sub_category_lvl_2;
+</historical_sql>
+
+Use this in Stage 4 to determine pattern reuse level.
+
+
+STAGE 1: SEMANTIC ANALYSIS
+
+Analyze the question using CONFIDENCE-BASED mapping (not word-for-word matching).
+
+STEP 1.0: EXTRACT USER HINTS/CORRECTIONS (check FIRST before any mapping)
+If user explicitly provides guidance in their question, treat as HIGH CONFIDENCE override:
+- Column specification: "use carrier_id", "based on drug_cost" -> Use that exact column
+- Clarification: "I mean X not Y", "specifically the net_revenue" -> Use specified column
+- Exclusion: "ignore therapy class", "don't group by month" -> Exclude from query
+- Correction: "not carrier_name, use carrier_id" -> Apply correction directly
+
+These user hints override any ambiguity - skip follow-up for terms user already clarified.
+
+STEP 1.1: IDENTIFY MEANINGFUL TERMS
+Extract terms that need column mapping:
+- EXTRACT: Metrics (revenue, cost, margin, amount, count)
+- EXTRACT: Dimensions (carrier, product, category, month, year)
+- EXTRACT: Filter values (MPDOVA, HDP, August, 2025)
+- SKIP: Generic words (show, get, give, data, analysis, performance, please)
+
+STEP 1.2: SEMANTIC COLUMN MAPPING
+For each meaningful term, find semantically related columns in METADATA:
+
+HIGH CONFIDENCE (proceed without asking):
+- ONE column semantically matches, even if wording differs
+  Example: "network revenue" -> revenue_amount (only revenue column exists)
+- Standard date parsing
+  Example: "August 2025" -> month=8, year=2025
+
+LOW CONFIDENCE - AMBIGUOUS (must ask follow-up):
+- Multiple columns in SAME semantic category
+  Example: "revenue" -> [gross_revenue, net_revenue] or "cost" -> [drug_cost, admin_cost]
+- Generic term with multiple interpretations
+  Example: "amount" -> [revenue_amount, cost_amount, margin_amount]
+
+NO MATCH (explain limitation, never invent):
+- Business term has zero related columns in metadata
+  Example: "customer satisfaction" -> not available
+  Example: "NPS score" -> not in this dataset
+- NEVER invent columns or calculations for unmapped terms
+
+STEP 1.3: INTENT DETECTION FOR MULTIPLE VALUES
+When user mentions multiple specific values (HDP, SP) or time periods (Jan to Dec):
+
+DEFAULT BEHAVIOR - Show breakdown (GROUP BY the dimension):
+- "revenue for HDP, SP" -> GROUP BY product_category (show each separately)
+- "revenue Jan to March" -> GROUP BY month (show each month)
+- "revenue for drug1, drug2" -> GROUP BY drug_name (show each drug)
+
+EXCEPTION - Aggregate only if explicit language:
+- "total revenue for HDP and SP combined" -> No GROUP BY, aggregate together
+- "sum of Jan through March" -> No GROUP BY month, aggregate together
+
+STEP 1.4: BUILD MAPPING SUMMARY
+Create internal mapping:
+- term_mappings: [term]->[column](confidence) | [term]->[col1,col2](AMBIGUOUS)
+- intent: breakdown | aggregate | comparison
+- ambiguities: list any LOW CONFIDENCE mappings
+
+STAGE 2: FILTER RESOLUTION
+
+MANDATORY FIRST: VALIDATE FILTER COLUMNS EXIST IN METADATA
+EXTRACTED FILTERS may contain columns from OTHER tables. Before using ANY filter:
+1. Check if filter column exists in AVAILABLE METADATA
+2. EXISTS → proceed to resolution
+3. NOT EXISTS → CANNOT use this filter column, but check:
+   a. Does another column in METADATA contain this filter value? → Use that column instead
+   b. No other column has this value + user mentioned it → follow-up: "This dataset doesn't have [column]. Available columns: [list]. Which column should I filter on for [value]?"
+   c. No other column has this value + user didn't mention it → silently ignore
+
+STRICT RULE: Never use a filter column that doesn't exist in AVAILABLE METADATA.
+Log: filter_validation: [column](EXISTS) | [column](INVALID→resolved via [alt_column]) | [column](INVALID→follow-up)
+
+Resolve filter values mentioned in the question to specific columns.
+
+CRITICAL RULE: One filter value = One column mapping
+- A single filter value (e.g., "covid vaccine", "MPDOVA") must map to ONE column only
+- Do NOT use OR across multiple columns for a single filter value
+- If value appears in multiple columns and cannot be resolved -> AMBIGUOUS -> Ask follow-up
+
+Use three sources for resolution: HISTORY SQL + EXTRACTED FILTERS + Question hints
+Check priorities in order - stop at first successful resolution.
+
+PRIORITY 1: History SQL Column Resolution (if history available)
+If HISTORY SQL exists AND filter value appears in multiple columns in EXTRACTED FILTERS:
+  A. Check which column HISTORY SQL used for this/similar filter
+  B. Verify column exists in current EXTRACTED FILTERS with the value
+  C. If both met -> Use history's column (HIGH CONFIDENCE, no follow-up)
+  D. If not -> Continue to Priority 2
+
+⚠️ EXCEPTION - TIME FILTERS: Do NOT use history for year/month/quarter/date filters. Always use current question's time period.
+
+Example: Question "covid vaccine revenue", Extracted has covid in [drug_name, therapy_class_name, drg_lbl_nm]
+History SQL uses: WHERE UPPER(therapy_class_name) LIKE '%COVID%' -> Use therapy_class_name
+RESOLUTION PRIORITY (check in order):
+
+PRIORITY 2: Question has ATTRIBUTE + VALUE
+If question mentions both the dimension AND the value:
+- "revenue by carrier for MPDOVA" -> Check EXTRACTED FILTERS for which column has MPDOVA
+  - If carrier_id=MPDOVA in extracted -> Use carrier_id
+  - If carrier_name=MPDOVA in extracted -> Use carrier_name
+  - If neither has MPDOVA -> Ask follow-up
+- "product category HDP" -> Check EXTRACTED FILTERS for product_category=HDP
+
+PRIORITY 3: Question has VALUE only (no attribute hint)
+Check EXTRACTED FILTER VALUES section:
+
+SCENARIO A - Single column has match:
+  Extracted shows: carrier_id=MPDOVA (only match)
+  -> Use carrier_id='MPDOVA'. No follow-up needed.
+
+SCENARIO B - Multiple columns have exact match with attribute hint in question:
+  Question: "carrier MPDOVA"
+  Extracted: carrier_id=MPDOVA, client_id=MPDOVA
+  -> Question says "carrier" -> Check which carrier column has value -> Use that one
+
+SCENARIO C - Multiple columns have exact match, NO attribute hint:
+  Question: "revenue for MPDOVA"
+  Extracted: carrier_id=MPDOVA (exact), client_id=MPDOVA (exact)
+  -> Genuinely ambiguous -> MUST ask follow-up
+
+SCENARIO D - One EXACT match, others PARTIAL:
+  Question: "revenue for MPDOVA"
+  Extracted: carrier_id=MPDOVA (exact), client_id=MPDO (partial)
+  -> Use exact match (carrier_id). No follow-up needed.
+
+PRIORITY 4: Value not in extracted filters
+If value is in question but NOT in extracted filters:
+- Check if it's a standard value (month name, year, etc.) -> Parse directly
+- If can't resolve -> Ask follow-up
+
+FILTER RESOLUTION OUTPUT:
+- filters_resolved: [column=value](Y) | [value->[col1,col2]](AMBIGUOUS)
+
+STAGE 3: DECISION GATE
+
+DECISION LOGIC:
+- IF any AMBIGUOUS mappings from Stage 1 or Stage 2:
+  -> Output <followup> with specific question
+  -> Output <reasoning_summary>
+  -> STOP - Do not generate SQL
+
+- IF all mappings are HIGH CONFIDENCE:
+  -> Skip follow-up
+  -> Proceed to Stage 4 (History) and Stage 5 (SQL Generation)
+
+WHEN TO ASK FOLLOW-UP:
+1. AMBIGUOUS METRIC: Multiple columns could be the requested metric
+   Ask: "Which [term] are you looking for?"
+   Show: Available columns from metadata
+
+2. AMBIGUOUS FILTER: Value matches multiple columns, no attribute hint
+   Ask: "The value '[X]' exists in multiple columns. Which one?"
+   Show: Columns where value was found
+
+3. UNDEFINED CALCULATION: User asks for metric not in metadata and no clear formula
+   Ask: "How should [metric] be calculated?"
+   Show: Available columns that could be used
+
+4. VAGUE TIME REFERENCE: "recently", "a while ago" (not "last month", "YTD")
+   Ask: "What time period specifically?"
+   Show: Available time columns
+
+DO NOT ASK FOLLOW-UP FOR:
+- Single semantic match exists (even if wording differs)
+- Extracted filter resolved to single valid column (after metadata validation)
+- Standard date parsing (August=8, Q3=7,8,9)
+- User provided explicit hint or correction in question (Step 1.0)
+
+
+
+STAGE 4: HISTORICAL SQL PATTERN MATCHING
+
+This stage determines HOW to use historical SQL (if available).
+Historical SQL is an INTERNAL optimization - never mention it to user.
+
+IF NO HISTORICAL SQL AVAILABLE:
+- Skip this stage
+- Generate SQL fresh in Stage 5
+- Set history_sql_used = false
+
+IF HISTORICAL SQL IS AVAILABLE:
+
+STEP 4.1: SEMANTIC COMPARISON
+Compare current question vs historical question:
+
+A. SAME METRIC REQUESTED?
+   Current asks for: [identify metric]
+   Historical had: [identify metric]
+   Match: YES / NO
+
+B. SAME GROUPING DIMENSIONS?
+   Current groups by: [identify dimensions]
+   Historical grouped by: [identify dimensions]
+   Match: YES / NO
+
+C. SAME ANALYSIS TYPE?
+   Types: breakdown | top-N | comparison | trend | calculation
+   Current: [type]
+   Historical: [type]
+   Match: YES / NO
+
+STEP 4.2: PATTERN DECISION MATRIX
+
+IF Metric=YES AND Grouping=YES AND Type=YES:
+  -> FULL PATTERN REUSE
+  -> Copy entire SQL structure
+  -> Replace ONLY filter values (dates, entities) with current values
+  -> Set history_sql_used = true
+
+IF Metric=YES AND (Grouping=NO OR Type=NO):
+  -> PARTIAL PATTERN REUSE
+  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods,OVERALL TOTALS
+  -> Rebuild: GROUP BY from current question
+  -> Set history_sql_used = partial
+
+IF Metric=NO:
+  -> STRUCTURAL LEARNING ONLY
+  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting,OVERALL TOTALS
+  -> Build: Fresh SQL for current question using these techniques
+  -> Set history_sql_used = false
+
+STEP 4.3: DETECT AND REPLICATE HISTORY PATTERN
+
+Identify pattern in HISTORICAL SQL, then REPLICATE structure exactly:
+
+PATTERN A - GROUPING_SETS_TOTAL (history has "GROUPING SETS" + "GROUPING("):
+  Your SQL MUST include:
+  - CASE WHEN GROUPING(breakdown_col) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_col END
+  - GROUP BY GROUPING SETS ((all_dims), (all_dims minus breakdown_col))
+  - ORDER BY ... CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
+
+PATTERN B - UNION_TOTAL (history has "UNION ALL" + 'Total'/'OVERALL' literal):
+  Your SQL MUST include: Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
+
+PATTERN C - SIMPLE (neither above):
+  No total row required
+
+ALWAYS LEARN from history: CASE WHEN for side-by-side columns, NULLIF(denominator, 0), ROUND formatting, UPPER() comparisons
+NEVER COPY from history: Filter values (dates, entities), time periods, <parameter> placeholders
+
+CRITICAL: Pattern structure is MANDATORY. Only replace filter values with current question's values.
+Log: history_pattern = GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
+
+VALIDATION: Every column in final SQL must exist in CURRENT metadata - history may reference columns not in current dataset.
+
+STAGE 5: SQL GENERATION
+Generate SQL using resolved mappings from Stage 1-2 and patterns from Stage 4.
+
+PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
+
+M1. MANDATORY FILTERS - Must be in WHERE clause
+Check MANDATORY FILTER COLUMNS input
+- If ledger is MANDATORY -> WHERE ledger = 'GAAP' AND ...
+- If product_category='PBM' is MANDATORY -> WHERE product_category = 'PBM' AND ...
+
+M2. CASE-INSENSITIVE STRING COMPARISON
+- Always use: WHERE UPPER(column) = UPPER('value')
+- Never use: WHERE column = 'value'
+
+M3. SAFE DIVISION
+- Always use: NULLIF(denominator, 0)
+- Never use: bare division that could divide by zero
+
+M4. NUMERIC FORMATTING
+- Amounts: ROUND(value, 0) AS column_name
+- Percentages: ROUND(value, 3) AS column_pct
+
+PRIORITY 1: METRIC TYPE HANDLING (critical for calculations)
+
+When table has metric_type column (Revenue, COGS, Expenses, etc.):
+
+FOR CALCULATIONS (margin, ratios, differences):
+Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
+
+CORRECT:
+SELECT
+    ledger, year, month,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) -
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS gross_margin
+FROM table
+WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
+GROUP BY ledger, year, month
+
+WRONG (breaks calculations):
+GROUP BY ledger, metric_type  -- Creates separate rows, can't calculate across
+
+FOR LISTING INDIVIDUAL METRICS:
+Only GROUP BY metric_type when user explicitly asks to see each metric as separate rows.
+
+PRIORITY 2: COMPONENT DISPLAY RULE
+
+For ANY calculated metric, show source components:
+
+Example for "cost per script by carrier":
+SELECT
+  carrier_id,
+  SUM(total_cost) AS total_cost,
+  COUNT(script_id) AS script_count,
+  ROUND(SUM(total_cost) / NULLIF(COUNT(script_id), 0), 2) AS cost_per_script
+FROM table
+GROUP BY carrier_id
+
+PRIORITY 3: QUERY PATTERNS
+
+PATTERN - TOP N:
+SELECT column, SUM(metric) AS metric
+FROM table
+WHERE [mandatory filters]
+GROUP BY column
+ORDER BY metric DESC
+LIMIT N
+
+PATTERN - TIME COMPARISON (side-by-side periods):
+SELECT dimension,
+       SUM(CASE WHEN month = 7 THEN metric END) AS jul_value,
+       SUM(CASE WHEN month = 8 THEN metric END) AS aug_value
+FROM table
+WHERE [mandatory filters] AND month IN (7, 8)
+GROUP BY dimension
+
+PATTERN - PERCENTAGE OF TOTAL:
+SELECT column,
+       SUM(metric) AS value,
+       ROUND(SUM(metric) * 100.0 /
+             (SELECT SUM(metric) FROM table WHERE [same filters]), 3) AS pct
+FROM table
+WHERE [mandatory filters]
+GROUP BY column
+
+PATTERN - BREAKDOWN BY MULTIPLE VALUES (default for multiple values mentioned):
+SELECT product_category, SUM(revenue) AS revenue
+FROM table
+WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
+GROUP BY product_category
+
+PATTERN - MULTI-TABLE (when JOIN provided):
+SELECT t1.dimension, SUM(t1.metric) AS m1, SUM(t2.metric) AS m2
+FROM table1 t1
+[JOIN clause from input]
+WHERE t1.mandatory_filter = value
+GROUP BY t1.dimension
+
+---
+OUTPUT FORMAT
+---
+Always output <reasoning_summary> first, then either <followup> OR <sql>/<multiple_sql>.
+
+<reasoning_summary>
+filter_validation: [column](EXISTS), [column](INVALID-not in metadata)
+term_mappings: [term]->[column](Y), [term]->[column](Y), [term]->[col1,col2](AMBIGUOUS)
+filter_resolution: [column]=[value](Y), [value]->[col1,col2](AMBIGUOUS)
+intent: breakdown | aggregate | comparison | top-N | calculation
+mandatory_filters: [filter1](Y applied), [filter2](Y applied)
+history_pattern: GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
+ambiguities: NONE | [list specific ambiguities]
+decision: SQL_GENERATION | FOLLOWUP_REQUIRED
+</reasoning_summary>
+
+IF FOLLOWUP REQUIRED:
+<followup>
+I need one clarification to generate accurate SQL:
+
+[Specific ambiguity]: [Direct question]
+
+Available options:
+1. [column_1] - [description]
+2. [column_2] - [description]
+
+Please specify which one.
+</followup>
+
+[STOP HERE - Do not output SQL]
+
+IF SQL GENERATION:
+
+For SINGLE query:
+<sql>
+[Complete Databricks SQL]
+</sql>
+
+<sql_story>
+[2-3 sentences in business-friendly language explaining:
+ - What table/data is being queried
+ - What filters are applied
+ - What metric/calculation is returned]
+</sql_story>
+
+<history_sql_used>true | false</history_sql_used>
+
+For MULTIPLE queries:
+<multiple_sql>
+<query1_title>[Short title - max 8 words]</query1_title>
+<query1>[SQL]</query1>
+<query2_title>[Short title]</query2_title>
+<query2>[SQL]</query2>
+</multiple_sql>
+
+<sql_story>
+[2-3 sentences explaining the queries]
+</sql_story>
+
+<history_sql_used>true | false</history_sql_used>
+
+HISTORY_SQL_USED VALUES:
+- true = Used historical SQL structure with filter replacement
+- false = Generated fresh (no history or history not applicable)
+
+
+EXECUTION INSTRUCTION
+Execute stages in order. Stop at Stage 3 if follow-up needed.
+
+1. STAGE 1: Semantic Analysis -> Map terms to columns (confidence-based)
+2. STAGE 2: Filter Resolution -> Resolve filter values to columns using EXTRACTED FILTERS
+3. STAGE 3: Decision Gate -> If ANY ambiguity: output follow-up and STOP
+4. STAGE 4: History Pattern -> Determine reuse level (if history available)
+5. STAGE 5: SQL Generation -> Build SQL with mandatory requirements
+
+OUTPUT REQUIREMENTS:
+- Always output <reasoning_summary> first
+- Then output either <followup> OR (<sql> + <sql_story> + <history_sql_used>)
+- Never output both <followup> and <sql>
+
+CRITICAL REMINDERS:
+- Every mandatory filter MUST be in WHERE clause
+- Use UPPER() for all string comparisons
+- Show calculation components (don't just show the result)
+- Default to GROUP BY when multiple values mentioned (unless "total" language)
+- Only ask follow-up for genuine ambiguity, not for semantic matches
+- Filter resolution uses EXTRACTED FILTERS as source of truth
+
+Current Timestamp before SQL writer: 2026-01-14 00:56:25
+📊 Input tokens: 7736 | Output tokens: 344 | Response time: 7.62s
+sql llm response <reasoning_summary>
+filter_validation: All columns exist in metadata
+term_mappings: revenue->Revenues(Y), Mail->Home Delivery(Y), July->month=7(Y), 2025->year=2025(Y)
+filter_resolution: ledger=GAAP(Y applied - default for no actuals/forecast/budget mentioned)
+intent: aggregate
+mandatory_filters: ledger(Y applied - GAAP default)
+history_pattern: NONE
+ambiguities: NONE
+decision: SQL_GENERATION
+</reasoning_summary>
+
+<sql>
+SELECT
+    ROUND(SUM(amount_or_count), 0) AS revenue_amount
+FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
+WHERE UPPER(ledger) = UPPER('GAAP')
+    AND UPPER(metric_type) = UPPER('Revenues')
+    AND UPPER(product_category) = UPPER('Home Delivery')
+    AND year = 2025
+    AND month = 7
+</sql>
+
+<sql_story>
+This query retrieves revenue data from the ledger actual vs forecast table for Home Delivery (Mail) products in July 2025. It filters for GAAP ledger entries and Revenue metric type, then sums the total revenue amount for the specified time period and product category.
+</sql_story>

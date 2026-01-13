@@ -1,361 +1,200 @@
-prompt = f"""
-You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values.
-
-=== INPUTS ===
-Current Input: "{current_question}"
-Previous Question: "{previous_question if previous_question else 'None'}"
-History: {history_context}
-Current Date: {current_month_name} {current_year} (Month {current_month})
-Current Year: {current_year}
-Previous Year: {previous_year}
-Forecast Cycle: {current_forecast_cycle}
-Memory: {memory_context_json if memory_dimensions else 'None'}
-
-=== PREFIX DETECTION (Apply First) ===
-
-Check and strip these prefixes before intent detection:
-- "new question", "NEW:" → Force NEW intent, strip prefix
-- "follow-up", "followup", "FOLLOW-UP:" → Force CONTINUATION intent, strip prefix
-- "validation", "wrong", "fix", "incorrect" → Force CORRECTION intent, strip prefix
-- None found → Proceed to intent detection with original question
-
-=== INTENT DETECTION (First Match Wins) ===
-
-Analyze current input in this priority order. STOP at first match.
-
-**1. CORRECTION** - User providing SQL/query hints or fixes
-Patterns: "use X column", "wrong column", "join with", "group by", "fix", "correct", "should be X not Y", "instead of X", "the sql", "modify", "change to"
-→ Action: Output "[Previous Question] - [Current Input Verbatim]" (no rewrite, just concatenate)
-
-**2. NON_BUSINESS** - Not a healthcare analytics question
-- Greeting: hi, hello, help, what can you do → response_message="I help with healthcare finance analytics"
-- DML/DDL: INSERT, UPDATE, DELETE, CREATE, DROP → response_message="Data modification not supported"
-- Invalid: No healthcare/finance terms present:
-  * Metrics: revenue, claims, expenses, cost, scripts, forecast, actuals, billed amount, fee
-  * Entities: drugs, therapies, carriers, clients, pharmacies, GLP-1, Wegovy
-  * Analysis: increase, decrease, variance, trend, breakdown, by, for
-→ is_valid=false
-
-**3. NEW** - Fresh question, no inheritance needed
-Triggers: Previous is "None" OR prefix forced NEW OR complete self-contained question with metric+time+domain
-→ Action: Use only current components, apply smart year/forecast rules
-
-**4. DRIVING** - User wants breakdown by dimension
-Patterns: "what X driving", "which X causing", "show me X driving", "breakdown by X", "by X" (at end), "for each X", "at X level", "top X by", "drill down by X"
-Where X = drug, client, carrier, pharmacy, therapy, LOB
-Multi-dimension: "drugs and clients driving" → both breakdowns
-Filter+Dimension: "for Wegovy, what clients driving" → filter + breakdown
-
-**CRITICAL:** DRIVING is ALWAYS a follow-up pattern, NEVER a new question (unless no previous exists)
-- Even if current has entity filter (e.g., "for Mounjaro")
-- Even if current has metric term (e.g., "increase", "decline")
-- If TIME is missing from current → MUST inherit from previous
-- If METRIC is missing from current → MUST inherit from previous
-
-**5. DOMAIN_SWITCH** - Switching between PBM/HDP/SP/Mail/Specialty/Retail
-Detection: Current has domain AND previous has DIFFERENT domain, OR "what about PBM/HDP/SP"
-
-**6. METRIC_SHIFT** - Asking for different metric
-Detection: Current has metric (revenue/cost/volume/scripts/claims/expense/fee) AND previous has DIFFERENT metric, OR "show volume instead", "what about cost"
-
-**7. TIME_SHIFT** - Asking for different time period
-Detection: Current has time reference different from previous, OR "for Q3 instead", "July numbers"
-
-**8. FILTER_CHANGE** - Adding, replacing, or drilling into entity filters
-- ACCUMULATE if trigger words: "also", "and", "both", "include", "along with", "as well as"
-- REPLACE if no trigger words: current entity replaces previous
-- DRILL_DOWN if: "specifically X", "particularly X", "within that", "just X", "only X" → replaces broader filter with more specific (e.g., GLP-1 → Wegovy)
-
-**9. CONTINUATION** - Implicit reference to previous context
-Patterns:
-- Pronouns: that, this, those, it, them
-- Continuation signals: "what about...", "how about...", "and the...", "also show..."
-- Shift signals: "instead of...", "but for...", "now for..."
-- Growth/decline terms without metric: "the decline", "the increase", "the growth"
-- "for each X" without metric/domain
-
-**10. INCOMPLETE** - Current missing components that previous had
-Detection: Previous question has TIME or METRIC, but current question does NOT have them explicitly
-→ This is NOT a new question
-→ Classify as CONTINUATION, inherit missing components
-
-Example: Prev "revenue for PBM for Q3 vs Q2" + Curr "what clients driving for Mounjaro"
-→ Current has entity (Mounjaro), breakdown (client), but NO TIME
-→ Must inherit Q3 vs Q2 from previous
-
-**11. DEFAULT → NEW** - If none above match, treat as new question
-
-=== INHERITANCE BY INTENT ===
-
-**GENERAL PRINCIPLE:** For all follow-up intents, only INHERIT what is MISSING from current.
-If current explicitly states a component → USE CURRENT, don't inherit.
-
-CORRECTION: No inheritance - output "[Previous Question] - [Current Input]"
-
-NEW: Use all components from current only, no inheritance
-
-DRIVING:
-- Metric: CURRENT if present, else INHERIT from previous
-- Domain: CURRENT if present, else INHERIT from previous
-- Time: CURRENT if present, else INHERIT from previous
-- Entity: CURRENT if present, else NONE (apply entity rules)
-- Breakdown: ADD from current
-- Forecast: INHERIT from previous
-
-DOMAIN_SWITCH:
-- Metric: INHERIT from previous
-- Domain: REPLACE with current
-- Time: INHERIT from previous
-- Breakdown: INHERIT from previous
-- Entity: CLEAR (fresh start for new domain)
-- Forecast: INHERIT from previous
-
-METRIC_SHIFT:
-- Metric: REPLACE with current
-- Domain: INHERIT from previous
-- Time: INHERIT from previous
-- Breakdown: INHERIT from previous
-- Entity: INHERIT from previous
-- Forecast: INHERIT from previous
-
-TIME_SHIFT:
-- Metric: INHERIT from previous
-- Domain: INHERIT from previous
-- Time: REPLACE with current
-- Breakdown: INHERIT from previous
-- Entity: INHERIT from previous
-- Forecast: INHERIT from previous
-
-FILTER_CHANGE:
-- Metric: INHERIT from previous
-- Domain: INHERIT from previous
-- Time: INHERIT from previous
-- Breakdown: INHERIT from previous
-- Entity: ACCUMULATE if "also/and/both" present, else REPLACE
-- Forecast: INHERIT from previous
-
-CONTINUATION/INCOMPLETE:
-- Metric: CURRENT if present, else INHERIT from previous
-- Domain: CURRENT if present, else apply domain rules
-- Time: CURRENT if present, else INHERIT from previous
-- Entity: Apply entity rules (don't auto-inherit)
-- Breakdown: CURRENT if present, else INHERIT from previous
-- Forecast: INHERIT from previous
-
-=== CRITICAL: BREAKDOWN IS ADDING, NOT REPLACING ===
-
-When current says "for each X", "by X", "breakdown by X":
-- This is ADDING a breakdown dimension
-- This is NOT replacing domain or other filters
-- MUST inherit domain if current has no domain
-
-Example: Prev "revenue for PBM for July" + Curr "for each LOB"
-→ Final: "revenue for PBM for each LOB for July" (inherit domain PBM, ADD breakdown)
-
-=== DOMAIN FILTER RULES ===
-
-Current HAS domain + Previous HAS domain → REPLACE with current
-Current HAS domain + Previous NO domain → USE current
-Current NO domain + Previous HAS domain → INHERIT from previous
-Current NO domain + Previous NO domain → No domain
-
-Examples:
-- Prev "PBM" + Curr "HDP" → "HDP" (replace)
-- Prev "PBM" + Curr "GLP-1" → "PBM for GLP-1" (inherit domain)
-- Prev "PBM" + Curr "by carrier" → "PBM by carrier" (inherit domain)
-
-=== ENTITY FILTER RULES ===
-
-Current HAS entity + Previous HAS entity + Accumulation words (also/and/both/include) → ACCUMULATE both
-Current HAS entity + Previous HAS entity + No accumulation words → REPLACE with current
-Current HAS entity + Previous NO entity → USE current
-Current NO entity + Previous HAS entity → DO NOT INHERIT
-Current NO entity + Previous NO entity → No entity
-
-Examples:
-- Prev "GLP-1" + Curr "Wegovy" → "Wegovy" (replace)
-- Prev "GLP-1" + Curr "also Ozempic" → "GLP-1 and Ozempic" (accumulate)
-- Prev "GLP-1" + Curr "by carrier" → "by carrier" (don't inherit entity)
-
-=== SMART YEAR ASSIGNMENT ===
-
-When user mentions month/quarter WITHOUT year, assign based on current month ({current_month_name}):
-- Mentioned month ≤ current month ({current_month}) → Use {current_year}
-- Mentioned month > current month ({current_month}) → Use {previous_year}
-
-**Examples (current date is {current_month_name} {current_year}):**
-- User asks "December" → December (month 12) is {"BEFORE" if 12 < current_month else "AFTER" if 12 > current_month else "SAME AS"} {current_month_name} (month {current_month}) → Use {previous_year if 12 > current_month else current_year}
-- User asks "January" → January (month 1) is {"BEFORE" if 1 < current_month else "AFTER" if 1 > current_month else "SAME AS"} {current_month_name} (month {current_month}) → Use {previous_year if 1 > current_month else current_year}
-
-**CRITICAL:** When user says just "December" in {current_month_name}, they mean the MOST RECENT December, which is December {previous_year if current_month < 12 else current_year}!
-
-Quarter rules:
-- Q1 (Jan-Mar): {current_year if current_month >= 3 else previous_year}
-- Q2 (Apr-Jun): {current_year if current_month >= 6 else previous_year}
-- Q3 (Jul-Sep): {current_year if current_month >= 9 else previous_year}
-- Q4 (Oct-Dec): {current_year if current_month >= 12 else previous_year}
-
-=== FORECAST CYCLE RULES ===
-
-- "forecast" alone → add "{current_forecast_cycle}"
-- "actuals vs forecast" → add "actuals vs forecast {current_forecast_cycle}"
-- Cycle alone (8+4) → add "forecast 8+4"
-- Both present → keep as-is
-
-=== MEMORY DIMENSION TAGGING ===
-
-If memory exists AND current value matches memory:
-- Extract dimension KEY from memory
-- Tag in rewritten question: "for [dimension_key] [value]"
-
-Example: Memory {{"client_id": ["57760"]}} + User "revenue for 57760" → "revenue for client_id 57760"
-
-=== METRIC INHERITANCE FOR GROWTH/DECLINE TERMS ===
-
-If current contains: decline, growth, increase, decrease, trending, rising, falling
-AND no metric BEFORE the term ("the decline" vs "revenue decline"):
-→ Inherit metric from previous, place BEFORE the term
-
-Example: Prev "revenue for PBM" + Curr "show the decline" → "show the revenue decline for PBM"
-
-=== FILTER EXTRACTION (From Final Rewritten Question) ===
-
-**STEP 1: Preserve Compound Terms**
-Keep multi-word terms together matching these patterns:
-[word] fee → "admin fee", "EGWP fee", "dispensing fee", "network fee"
-[word] rate → "generic rate", "discount rate"
-[word] pharmacy → "specialty pharmacy", "retail pharmacy"
-[word] delivery → "home delivery", "mail delivery"
-
-**STEP 2: Extract These Values**
-Domains: PBM, HDP, SP, Specialty, Mail, Retail, Home Delivery
-Forecast cycles: 8+4, 4+8, 0+12
-Drug names, therapy classes, carrier codes, client codes
-Compound fee types from Step 1
-
-**STEP 3: Strip Dimension Prefixes AND Suffixes**
-Prefixes to strip:
-- "for drug name Wegovy" → "Wegovy"
-- "for therapy class GLP-1" → "GLP-1"
-- "for carrier MDOVA" → "MDOVA"
-
-Suffixes to strip:
-- "GLP-1 drugs" → "GLP-1"
-- "Wegovy medication" → "Wegovy"
-- "diabetes therapy" → "diabetes"
-- "Mounjaro drug" → "Mounjaro"
-
-**STEP 4: Never Extract**
-Dimension labels: therapy class, drug name, carrier, client, LOB, line of business
-Pure standalone metrics: revenue, cost, expense, volume, scripts, claims (BUT KEEP compound fees like "admin fee")
-Operators: by, for, breakdown, versus, vs
-Time: Q1-Q4, months, years
-Pure numbers without context
-
-=== VALIDATION BEFORE OUTPUT ===
-
-Before finalizing rewritten_question, verify:
-- If intent requires domain inheritance AND previous had domain → domain MUST be in output
-- If intent requires metric inheritance AND previous had metric → metric MUST be in output
-- If time is partial (no year) → year MUST be assigned
-- If forecast mentioned → cycle MUST be present
-- If domain inherited → domain MUST appear in filter_values
-
-=== EXAMPLES ===
-
-DRIVING: Prev "revenue for PBM for July" + Curr "what clients driving" → "What is revenue for PBM by client for July 2025" | Filters: ["PBM"]
-
-DRIVING + Filter: Prev "revenue for PBM" + Curr "for Wegovy, what clients driving" → "What is revenue for PBM for Wegovy by client" | Filters: ["PBM", "Wegovy"]
-
-DRIVING Multi-Dim: Prev "revenue for PBM July" + Curr "drugs and clients driving" → "What is revenue for PBM by drug by client for July 2025" | Filters: ["PBM"]
-
-DRIVING + Missing Time: Prev "revenue for PBM for Q3 vs Q2" + Curr "what clients driving for Mounjaro" → "What is revenue for PBM for Mounjaro by client for Q3 vs Q2 2025" | Filters: ["PBM", "Mounjaro"]
-
-DRIVING + Metric in Current: Prev "revenue for PBM for Q3" + Curr "show volume by client" → "What is volume for PBM by client for Q3 2025" | Filters: ["PBM"]
-
-DOMAIN_SWITCH: Prev "revenue for PBM Q3" + Curr "what about HDP" → "What is revenue for HDP for Q3 2025" | Filters: ["HDP"]
-
-METRIC_SHIFT: Prev "revenue for PBM for GLP-1" + Curr "show volume" → "What is volume for PBM for GLP-1" | Filters: ["PBM", "GLP-1"]
-
-CONTINUATION: Prev "revenue for PBM July" + Curr "for each LOB" → "What is revenue for PBM by LOB for July 2025" | Filters: ["PBM"]
-
-FILTER_ADD: Prev "revenue for Wegovy" + Curr "also Ozempic" → "What is revenue for Wegovy and Ozempic" | Filters: ["Wegovy", "Ozempic"]
-
-FILTER_REPLACE: Prev "revenue for GLP-1" + Curr "for Wegovy" → "What is revenue for Wegovy" | Filters: ["Wegovy"]
-
-DRILL_DOWN: Prev "revenue for GLP-1 for PBM" + Curr "specifically Wegovy" → "What is revenue for PBM for Wegovy" | Filters: ["PBM", "Wegovy"]
-
-CORRECTION: Prev "revenue for PBM Q3" + Curr "use service_dt not admit_dt" → "revenue for PBM Q3 - use service_dt not admit_dt" | Filters: ["PBM"]
-
-NEW with Smart Year: Prev "None" + Curr "December revenue for PBM" → "What is revenue for PBM for December {previous_year if current_month < 12 else current_year}" | Filters: ["PBM"]
-
-COMPOUND FEE: Curr "show admin fee and EGWP fee for HDP" → "What is admin fee and EGWP fee for HDP" | Filters: ["admin fee", "EGWP fee", "HDP"]
-
-=== OUTPUT FORMAT ===
-
-Return ONLY valid JSON. No markdown, no code blocks, no ```json wrapper.
-
-{{
-  "analysis": {{
-    "detected_prefix": "new question|follow-up|validation|none",
-    "detected_intent": "CORRECTION|NON_BUSINESS|NEW|DRIVING|DOMAIN_SWITCH|METRIC_SHIFT|TIME_SHIFT|FILTER_CHANGE|CONTINUATION|INCOMPLETE",
-    "input_type": "greeting|dml_ddl|business_question|invalid",
-    "is_valid_business_question": true|false,
-    "response_message": "only for non-business questions"
-  }},
-  "rewrite": {{
-    "rewritten_question": "complete question with full context",
-    "question_type": "what|why|how",
-    "user_message": "brief explanation of what was inherited/changed (empty if NEW)"
-  }},
-  "filters": {{
-    "filter_values": ["extracted", "values", "only"]
-  }}
-}}
-
-"""
-```
-
----
-
-## Summary of All Fixes Applied
-
-| Fix | Description | Status |
-|-----|-------------|--------|
-| 1. PREFIX DETECTION | Added "follow-up", "followup" prefix handling | ✅ |
-| 2. INCOMPLETE INTENT | Catches missing components before DEFAULT | ✅ |
-| 3. DRIVING STRENGTHENED | CRITICAL note about always being follow-up | ✅ |
-| 4. SIGNAL PATTERNS | "what about", "how about", "instead of" added | ✅ |
-| 5. BREAKDOWN CLARIFICATION | Dedicated section - ADDING not replacing | ✅ |
-| 6. SUFFIX STRIPPING | "GLP-1 drugs" → "GLP-1" | ✅ |
-| 7. SMART YEAR EXAMPLES | Detailed dynamic examples | ✅ |
-| 8. OUTPUT FORMAT | Both prefix and intent in output | ✅ |
-| 9. **SMART INHERITANCE** | **CURRENT if present, else INHERIT** | ✅ NEW |
-| 10. **NEW EXAMPLE** | **DRIVING + Metric in Current** | ✅ NEW |
-
----
-
-## Key Fix: Smart Inheritance
-
-**Before (flawed):**
-```
-DRIVING: Inherit [metric, domain, time, forecast] | Add [breakdown]
-```
-
-**After (fixed):**
-```
-DRIVING:
-- Metric: CURRENT if present, else INHERIT from previous
-- Domain: CURRENT if present, else INHERIT from previous
-- Time: CURRENT if present, else INHERIT from previous
-- Entity: CURRENT if present, else NONE
-- Breakdown: ADD from current
-- Forecast: INHERIT from previous
-```
-
----
-
-## Test Your Scenario
-```
-Previous: "revenue for PBM for Q3"
-Current: "show volume by client"
+async def search_column_values(
+        self,
+        search_terms: List[str],
+        max_columns: int = 7,
+        max_values_per_column: int = 5
+    ) -> List[str]:
+        """
+        Search column values with regex word boundary matching.
+        
+        Single word: Simple LIKE
+        Multi-word: 
+            - Tier 1: Exact match
+            - Tier 2: Prefix match
+            - Tier 3: Contains full phrase
+            - Tier 4: RLIKE with word boundary for each word
+        """
+        
+        if not search_terms:
+            return []
+        
+        # Escape single quotes for SQL
+        def escape_sql(val):
+            return val.replace("'", "''")
+        
+        # Build word boundary regex pattern for a word
+        def word_boundary_pattern(word):
+            """
+            Creates regex pattern for word with boundary.
+            Allows optional 's' for plurals.
+            Pattern: (^|[^a-z])word(s)?([^a-z]|$)
+            """
+            escaped = escape_sql(word)
+            return f"(^|[^a-z]){escaped}(s)?($|[^a-z0-9])"
+        
+        # Process search terms
+        search_items = []
+        
+        for term in search_terms:
+            term_lower = term.strip().lower()
+            if not term_lower:
+                continue
+            
+            words = term_lower.split()
+            is_multi_word = len(words) > 1
+            
+            search_items.append({
+                "phrase": term_lower,
+                "words": words,
+                "is_multi_word": is_multi_word
+            })
+        
+        if not search_items:
+            return []
+        
+        print(f"🔍 Search items: {[s['phrase'] for s in search_items]}")
+        
+        # Build SQL conditions
+        all_conditions = []
+        
+        for item in search_items:
+            phrase = item["phrase"]
+            words = item["words"]
+            is_multi_word = item["is_multi_word"]
+            phrase_escaped = escape_sql(phrase)
+            
+            if is_multi_word:
+                # Multi-word: exact, prefix, contains, regex
+                all_conditions.append(f"value_lower = '{phrase_escaped}'")
+                all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
+                all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
+                
+                # Regex: all words with boundary
+                regex_conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
+                combined_regex = " AND ".join(regex_conditions)
+                all_conditions.append(f"({combined_regex})")
+            else:
+                # Single word: exact, prefix, contains
+                all_conditions.append(f"value_lower = '{phrase_escaped}'")
+                all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
+                all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
+        
+        where_clause = " OR ".join(all_conditions)
+        
+        # Build tier CASE statement
+        tier_cases = []
+        
+        for item in search_items:
+            phrase = item["phrase"]
+            words = item["words"]
+            is_multi_word = item["is_multi_word"]
+            phrase_escaped = escape_sql(phrase)
+            
+            # Tier 1: Exact
+            tier_cases.append(f"WHEN value_lower = '{phrase_escaped}' THEN 1")
+            
+            # Tier 2: Prefix
+            tier_cases.append(f"WHEN value_lower LIKE '{phrase_escaped}%' THEN 2")
+            
+            # Tier 3: Contains full phrase
+            tier_cases.append(f"WHEN value_lower LIKE '%{phrase_escaped}%' THEN 3")
+            
+            if is_multi_word:
+                # Tier 4: All words with boundary (any order)
+                regex_conditions = [f"value_lower RLIKE '{word_boundary_pattern(w)}'" for w in words]
+                combined_regex = " AND ".join(regex_conditions)
+                tier_cases.append(f"WHEN {combined_regex} THEN 4")
+        
+        tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 5 END"
+        
+        # Build query
+        query = f"""
+        SELECT 
+            column_name,
+            value_lower,
+            {tier_case_statement} as tier
+        FROM prd_optumrx_orxfdmprdsa.rag.column_values_index
+        WHERE {where_clause}
+        ORDER BY column_name, tier, value_lower
+        """
+        
+        print(f"🔍 Executing search query...")
+        print(f"📝 Query preview: {query[:500]}...")
+        
+        try:
+            # Execute query
+            result_data = await self.execute_sql_async_audit(query)
+            
+            # Convert to list
+            if hasattr(result_data, 'collect'):
+                rows = [row.asDict() for row in result_data.collect()]
+            elif isinstance(result_data, list):
+                rows = result_data
+            else:
+                print(f"❌ Unexpected result type: {type(result_data)}")
+                return []
+            
+            if not rows:
+                print("❌ No matches found")
+                return []
+            
+            # Convert tier to int (may come as string from SQL)
+            for row in rows:
+                row["tier"] = int(row["tier"])
+            
+            # Filter out Tier 5 (shouldn't match but just in case)
+            rows = [r for r in rows if r["tier"] <= 4]
+            
+            if not rows:
+                print("❌ No valid matches found")
+                return []
+            
+            print(f"✅ Found {len(rows)} matches")
+            
+            # Group by column
+            column_data = {}
+            
+            for row in rows:
+                col = row["column_name"]
+                val = row["value_lower"]
+                tier = row["tier"]
+                
+                if col not in column_data:
+                    column_data[col] = {"best_tier": tier, "values": []}
+                
+                # Update best tier
+                if tier < column_data[col]["best_tier"]:
+                    column_data[col]["best_tier"] = tier
+                
+                # Add value if not duplicate
+                existing_values = [v[0] for v in column_data[col]["values"]]
+                if val not in existing_values:
+                    column_data[col]["values"].append((val, tier))
+            
+            # Sort columns by best tier, then column name
+            sorted_columns = sorted(
+                column_data.items(),
+                key=lambda x: (x[1]["best_tier"], x[0])
+            )
+            
+            # Format output
+            results = []
+            for col_name, col_info in sorted_columns[:max_columns]:
+                # Sort values by tier, then alphabetically
+                sorted_values = sorted(col_info["values"], key=lambda x: (x[1], x[0]))
+                
+                # Take top N values
+                top_values = [v[0] for v in sorted_values[:max_values_per_column]]
+                values_str = ", ".join(top_values)
+                
+                results.append(f"{col_name} - {values_str}")
+                print(f"   Tier {col_info['best_tier']}: {col_name} → {top_values}")
+            
+            print(f"✅ Search complete: {len(results)} columns")
+            return results
+            
+        except Exception as e:
+            print(f"❌ Error in search_column_values: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []

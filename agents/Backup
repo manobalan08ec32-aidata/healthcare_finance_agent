@@ -1,4 +1,223 @@
- You are a Databricks SQL generator for DANA (Data Analytics & Navigation Assistant).
+async def _assess_and_generate_sql_async(self, context: Dict, state: Dict) -> Dict[str, Any]:
+        """SQL generation with optional historical learning context"""
+        
+        current_question = context.get('current_question', '')
+        dataset_metadata = context.get('dataset_metadata', '')
+        join_clause = state.get('join_clause', '')
+        selected_filter_context = context.get('selected_filter_context')
+        
+        
+        # Get selected datasets for table filtering
+        selected_datasets = state.get('selected_dataset', [])
+        filter_metadata_results=state.get('filter_metadata_results',[])
+        # NEW: Search for historical SQL feedback BEFORE generating SQL
+        # This ensures we only search for SQL from the selected dataset(s)
+        print(f"🔍 Searching feedback SQL embeddings for selected dataset(s): {selected_datasets}")
+        feedback_results = await self.db_client.sp_vector_search_feedback_sql(current_question, table_names=selected_datasets)
+        
+        # Process feedback results with LLM selection
+        matched_sql = ''
+        history_question_match = ''
+        matched_table_name = ''
+        
+        if feedback_results:
+            print(f"🤖 Analyzing {len(feedback_results)} feedback SQL candidates from selected dataset(s)...")
+            feedback_selection_result = await self.db_client._llm_feedback_selection(feedback_results, state)
+            
+            if feedback_selection_result.get('status') == 'match_found':
+                # Extract seq_id from the LLM selection result
+                matched_seq_id = feedback_selection_result.get('seq_id')
+                
+                # Filter feedback results to find the matching record
+                matched_record = None
+                for result in feedback_results:
+                    if result.get('seq_id') == matched_seq_id:
+                        matched_record = result
+                        break
+                
+                if matched_record:
+                    # Extract matched results
+                    history_question_match = matched_record.get('user_question', '')
+                    matched_sql = matched_record.get('sql_query', '')
+                    matched_table_name = matched_record.get('table_name', '')
+                    
+                    # Store in state for consistency
+                    state['history_question_match'] = history_question_match
+                    state['matched_sql'] = matched_sql
+                    state['matched_table_name'] = matched_table_name
+                    
+                    print(f"✅ Feedback match found from {matched_table_name}")
+                    print(f"   Matched question: {history_question_match[:100]}...")
+                else:
+                    print(f"⚠️ Matched seq_id {matched_seq_id} not found in results")
+            else:
+                print(f"ℹ️ No suitable feedback SQL match found (status: {feedback_selection_result.get('status')})")
+        else:
+            print(f"ℹ️ No feedback SQL embeddings found for selected dataset(s)")
+        
+        # Check if history exists and is relevant
+        has_history = bool(matched_sql and history_question_match and matched_table_name)
+        
+        # Check if we have multiple tables
+        selected_datasets = state.get('selected_dataset', [])
+
+        # Define mandatory column mapping
+        mandatory_column_mapping = {
+            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": [
+                "Ledger"
+            ],"prd_optumrx_orxfdmprdsa.rag.pbm_claims": [
+                "product_category='PBM'"
+            ]
+        }
+        
+        # Extract mandatory columns based on selected datasets
+        mandatory_columns_info = []
+        if isinstance(selected_datasets, list):
+            for dataset in selected_datasets:
+                if dataset in mandatory_column_mapping:
+                    mandatory_columns = mandatory_column_mapping[dataset]
+                    for col in mandatory_columns:
+                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
+                else:
+                    mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
+        
+        # Format mandatory columns for prompt
+        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "No mandatory columns required"
+        
+        # Format selected filter context for prompt
+        filter_context_text = ""
+        if selected_filter_context:
+            filter_context_text = f"""
+    SELECTED FILTER CONTEXT Available for SQL generation if the filter values exactly matches:
+        {selected_filter_context}
+
+    """
+        
+        has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
+
+        # NEW: Build conditional history context
+        history_section = ""
+        check_5_text = "**CHECK 5: Historical SQL availability**: N/A (no historical reference)"
+
+        if has_history:
+            history_section= f"""
+HISTORICAL SQL REFERENCE (Internal Use Only - Do NOT mention to user)
+PREVIOUS QUESTION: {history_question_match}
+TABLE: {matched_table_name}
+
+<historical_sql>
+{matched_sql}
+</historical_sql>
+
+PURPOSE: History represents LEARNED DETAIL PREFERENCES. When history shows breakdowns/totals, ENHANCE current response with same detail level even if user's question is simple.
+    """
+        else:
+            history_section =  """---
+HISTORICAL SQL REFERENCE
+---
+No historical SQL available. Generate fresh SQL in Stage 5.
+    """
+        if has_history:
+            stage_4_hist_learn="""
+
+STAGE 4: HISTORICAL SQL PATTERN MATCHING
+
+PURPOSE: Historical SQL represents LEARNED DETAIL PREFERENCES. Your goal is to ENHANCE simple questions with historical detail patterns - not just copy SQL.
+PRINCIPLE: If history shows breakdown + totals for a dimension, provide that detail level even if user asks a simple question.
+Never mention history to user.
+
+IF NO HISTORICAL SQL AVAILABLE:
+- Skip this stage
+- Generate SQL fresh in Stage 5
+- Set history_sql_used = false
+
+IF HISTORICAL SQL IS AVAILABLE:
+
+STEP 4.1: SEMANTIC COMPARISON
+Compare current question vs historical question:
+
+A. SAME METRIC REQUESTED?
+   Current asks for: [identify metric]
+   Historical had: [identify metric]
+   Match: YES / NO
+
+B. SAME GROUPING DIMENSIONS?
+   Current groups by: [identify dimensions]
+   Historical grouped by: [identify dimensions]
+   Match: YES / NO
+
+C. SAME ANALYSIS TYPE?
+   Types: breakdown | top-N | comparison | trend | calculation
+   Current: [type]
+   Historical: [type]
+   Match: YES / NO
+
+STEP 4.2: PATTERN DECISION MATRIX
+
+IF Metric=YES AND Grouping=YES AND Type=YES:
+  -> FULL PATTERN REUSE
+  -> Copy entire SQL structure
+  -> Replace ONLY filter values (dates, entities) with current values
+  -> Set history_sql_used = true
+
+IF Metric=YES AND (Grouping=NO OR Type=NO):
+  -> PARTIAL PATTERN REUSE + DETAIL ENHANCEMENT
+  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods, OVERALL TOTALS
+  -> CRITICAL - BREAKDOWN INHERITANCE:
+     If history breaks down by sub-dimension (e.g., product_sub_category_lvl_2)
+     AND current question filters on parent (e.g., product_category='Home Delivery')
+     AND user did NOT say "total only" / "just sum" / "aggregate"
+     → INCLUDE the sub-breakdown with OVERALL_TOTAL row
+     → This ENHANCES a simple question with useful detail
+  -> Set history_sql_used = true
+
+IF Metric=NO:
+  -> STRUCTURAL LEARNING ONLY
+  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting, OVERALL TOTALS
+  -> Build: Fresh SQL for current question using these techniques
+  -> Set history_sql_used = false
+
+STEP 4.3: DETECT AND REPLICATE HISTORY PATTERN
+
+Identify pattern in HISTORICAL SQL, then REPLICATE structure exactly:
+
+PATTERN A - GROUPING_SETS_TOTAL (history has "GROUPING SETS" + "GROUPING("):
+  Your SQL MUST include:
+  - CASE WHEN GROUPING(breakdown_col) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_col END
+  - GROUP BY GROUPING SETS ((all_dims), (all_dims minus breakdown_col))
+  - ORDER BY ... CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
+  
+  WHEN TO APPLY (any of these):
+  - User explicitly asks for breakdown
+  - History has breakdown on sub-dimension + current filters parent dimension + same metric
+  - User asks comparison across time periods
+  
+  ONLY SKIP WHEN: User explicitly says "total only", "just the sum", "single number"
+
+PATTERN B - UNION_TOTAL (history has "UNION ALL" + 'Total'/'OVERALL' literal):
+  Your SQL MUST include: Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
+  
+  WHEN TO APPLY: Same conditions as Pattern A
+
+PATTERN C - SIMPLE (neither above):
+  No total row required
+
+ALWAYS LEARN from history: CASE WHEN for side-by-side columns, NULLIF(denominator, 0), ROUND formatting, UPPER() comparisons
+NEVER COPY from history: Filter values (dates, entities), time periods, <parameter> placeholders
+
+CRITICAL: Pattern structure is MANDATORY when conditions met. Only replace filter values with current question's values.
+Log: history_pattern = GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
+
+VALIDATION: Every column in final SQL must exist in CURRENT metadata - history may reference columns not in current dataset."""      
+
+        else:
+            stage_4_hist_learn="No history sql available"
+
+        
+        # 🆕 STORE history_section in state for follow-up SQL generation
+        state['sql_history_section'] = history_section
+   
+        assessment_prompt = f"""You are a Databricks SQL generator for DANA (Data Analytics & Navigation Assistant).
 
 CORE PRINCIPLES:
 1. ACCURACY OVER SPEED - Never guess. If uncertain, ask one follow-up question.
@@ -11,87 +230,20 @@ YOUR TASK: Analyze user question -> Validate mappings -> Either ask ONE follow-u
 ---
 INPUTS
 ---
-CURRENT QUESTION: What is revenue for Specialty for July 2025
+CURRENT QUESTION: {current_question}
 
 AVAILABLE METADATA:
-## Table: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-
-**ledger**: Values: GAAP, BUDGET, 8+4, 5+7, 2+10,9+3.If the question does not mention actuals, forecast, or budget, set ledger = GAAP.Any mention of actuals → GAAP.Any mention of budget → BUDGET.Any mention of forecast:If a cycle is specified (e.g., 8+4, 5+7, 2+10,9+3), use that value
-**metric_type**: Allowed values [COGS Post Reclass,SG&A Post Reclass,IOI,Operating Earnings,Balance Sheet,Revenues,Corporate Costs,Total Workforce FTE,90 Day Scripts,Unadjusted Scripts,Interest Income,30 Day Scripts,Adjusted Scripts,ORx Capture Count,Other Capture Count,Generic Scripts,Total Membership];Please refer the Mapping synonym Volume or total scripts or script or line count ->Adjusted Scripts, expense ->COGS Post Reclass and Revenue -> Revenues. When the user are asking for overall comparisons between actuals vs forecast vs budget or actuals alone, always include a GROUP BY clause on the metric_type column to ensure accurate results. If the user asks for a specific metric type, use it in the filter clause.
-**amount_or_count**: Contains either amount or count values for each metric type, and these must not be aggregated (e.g., summed) without applying appropriate filters or grouping by the metric_type column. The metric_type column includes distinct values such as Unadjusted Scripts, Adjusted Scripts, 30 Day Scripts, 90 Day Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, and Total Membership,etc. Even when attributes like product_category are present in the user question, any calculation involving actuals or forecast comparisons must include a GROUP BY metric_type clause to ensure accurate results
-**product_category**: High-level category of products or services.HDP->Home Delivery, Mail->Home Delivery and SP->Specialty, PBM Retail -> PBM [Values: PBM, Home Delivery, Other Products, Community Pharmacies, Workers Comp, Specialty, RVOH].
-**product_sub_category_lvl_1**: First-level subcategory under product_category. [Values: Home Delivery, Specialty, Core PBM, Other Products, Community Pharmacies, RVOH, Hospice, Workers Comp]
-**product_sub_category_lvl_2**: Second-level subcategory for more granularity. [Values: divvyDOSE, Retail, GPO, Optum Store, Infusion, Unknown, Workers Comp, Healthline/Healthgrades, HDP Core, Community Core, Mfr Discount, Hospice, RVOH Corp,  Specialty Core, Prior Auth, Distribution, Frontier, PharmScript, Retail, Prevention, CPS Solutions, Nuvaila, Admin Fees, Optum Perks, Other Products]
-**transaction_date**: Exact transaction date (YYYY-MM-DD). Supports monthly, quarterly, and annual trend analysis.
-**year**: Calendar year of claim submission; supports YoY comparisons.contains like 2025.
-**month**: Calendar month of submission; it has numerical value (1-12).
-**quarter**: Calendar quarter; supports quarter-over-quarter analysis.contains Q1,Q2,Q3,Q4
-**line_of_business**:called as LOB. Business or customer segment.C&S (Community & State), E&I (Employer & Individual), M&R(Medicare & Retirement), Optum, External. [Distinct Values: C&S, E&I, M&R, Rev Reclass, External, Optum]
-**ora_client_id**: This contain unique 5-6 digit client code.Client ID and Client Name exists only for Actuals → GAAP and is NULL for Forecast or Budget; if a user requests client-level comparison involving Forecast or Budget, respond with: Client-level information is available only for Actuals.Sample values [MDOVA,PDIND,MDCSP,57939]
-**ora_client_description**: This contains client description. Return alongside client_id for user-facing reports .Sample values [MDOVA OVATIONS MAPD/MA ONLY/RDS,PDIND PDP INDIVIDUAL]
-**Cost %**: column not exists. calculated metric as COGS Post Reclass / Revenues.
-**Gross Margin**:column not exists. calculated as Revenues - COGS Post Reclass.
-**Gross Margin %**:column not exists. calculated as Gross Margin / Revenues
-**Operating Expenses %**:column not exists. calculated as SG&A Post Reclass / Revenues.
-**Operating Cost %**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Revenues.
-**IOI or Internal Operating Income %**:column not exists. calculated as IOI / Revenues.
-**Revenue per Script or rate**:column not exists. calculated as Revenues / Adjusted Scripts Scripts. Use this by default for Volume or Revenue per script calculation.This will be used for rate variance , volume variance and mix variance.
-**rate variance**: Column not exists. Derived formula - (Current Month Average Rate - Prior Month Average Rate) x Current Month Volume.
-**volume variance**: (Current Month Volume - Prior Month Volume) x Current Month Rate. Rate is revenue_amt divided by adjusted_script_count. Volume is adjusted_script_count. Current month and previous month should be extracted from user question.
-**mix variance**: Column not exists. Derived formula - (Current Month Revenue - Prior Month Revenue - Rate Variance - Volume Variance). Current month and previous month should be extracted from user question. Refer rate variance and volume variance formulas in other derived formulas
-**Cost per Script (Unadj)**:column not exists.calculated as COGS Post Reclass / Unadjusted Scripts.
-**Margin per Script (Unadj)**:column not exists. (Revenues − COGS Post Reclass) / Unadjusted Scripts
-**Op Exp per Script (Unadj)**:column not exists. calculated as SG&A Post Reclass / Unadjusted Scripts.
-**Op Cost per Script (Unadj)**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Unadjusted Scripts.
-**IOI per Script (Unadj)**: column not exists. calculated as IOI / Unadjusted Scripts.
-**Revenue per Script (Adj)**:column not exists. calculated as Revenues / Adjusted Scripts.
-**Cost per Script (Adj) or Cost per Script **:column not exists. calculated as COGS Post Reclass / Adjusted Scripts.
-**Margin per Script (Adj)**:column not exists. calculated as (Revenues − COGS Post Reclass) / Adjusted Scripts.
-**Op Exp per Script (Adj) or Margin per Script**:column not exists. calculated as SG&A Post Reclass / Adjusted Scripts.
-**Op Cost per Script (Adj) or Op Cost per Script**:column not exists. calculated as (COGS Post Reclass + SG&A Post Reclass) / Adjusted Scripts.
-**IOI per Script (Adj) or IOI per Script**:column not exists. calculated as IOI / Adjusted Scripts.
-**Utilization PMPM (Unadjusted)**:column not exists. calculated as Unadjusted Scripts / Total Membership.
-**Utilization PMPM (Adjusted) or Utilization PMPM **:column not exists. calculated as Adjusted Scripts / Total Membership.
-**SP Capture %**: column not exists.Specialty pharmacy capture rate; ORx Capture Count / (ORx Capture Count + Other Capture Count).
-**Generic Penetration %**:column not exists. calculated as Generic Scripts / Unadjusted Scripts
-
-
+{dataset_metadata}
 MANDATORY FILTER COLUMNS:
-Table prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast: Ledger (MANDATORY)
+{mandatory_columns_text}
 
 EXTRACTED Column contain FILTER VALUES:
-None
+{filter_metadata_results}
 
 JOIN INFORMATION:
+{join_clause}
 
-
-
-HISTORICAL SQL REFERENCE (Internal Use Only - Do NOT mention to user)
-PREVIOUS QUESTION: compare script counts (adjusted, volume), revenue per script (rate), revenue amount for Specialty Q3 2025 vs Q3 2024
-TABLE: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-
-<historical_sql>
-WITH q3_specialty_cte AS (
-    SELECT
-        product_category,
-        CASE WHEN GROUPING(product_sub_category_lvl_2) = 1 THEN "OVERALL_TOTAL" ELSE product_sub_category_lvl_2 END AS product_sub_category_lvl_2,
-        ROUND(SUM(CASE WHEN year = 2024 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Revenues") THEN amount_or_count ELSE 0 END), 0) AS q3_2024_revenue,
-        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Revenues") THEN amount_or_count ELSE 0 END), 0) AS q3_2025_revenue,
-        ROUND(SUM(CASE WHEN year = 2024 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Revenues") THEN amount_or_count ELSE 0 END)/NULLIF(SUM(CASE WHEN year = 2024 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Adjusted Scripts") THEN amount_or_count ELSE 0 END), 0), 3) AS q3_2024_revenue_per_script,
-        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Revenues") THEN amount_or_count ELSE 0 END)/NULLIF(SUM(CASE WHEN year = 2025 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Adjusted Scripts") THEN amount_or_count ELSE 0 END), 0), 3) AS q3_2025_revenue_per_script,
-        ROUND(SUM(CASE WHEN year = 2024 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Adjusted Scripts") THEN amount_or_count ELSE 0 END), 0) AS q3_2024_adjusted_script_count,
-        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" AND UPPER(metric_type) = UPPER("Adjusted Scripts") THEN amount_or_count ELSE 0 END), 0) AS q3_2025_adjusted_script_count
-    FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-    WHERE year IN (2024, 2025) AND quarter = "Q3" AND UPPER(ledger) = UPPER("GAAP") AND UPPER(metric_type) IN (UPPER("Adjusted Scripts"), UPPER("Revenues")) AND UPPER(product_category) = UPPER("Specialty")
-    GROUP BY GROUPING SETS ((product_category, product_sub_category_lvl_2), (product_category))
-)
-SELECT *
-FROM q3_specialty_cte
-ORDER BY CASE WHEN product_sub_category_lvl_2 = "OVERALL_TOTAL" THEN 0 ELSE 1 END, product_sub_category_lvl_2;
-</historical_sql>
-
-PURPOSE: History represents LEARNED DETAIL PREFERENCES. When history shows breakdowns/totals, ENHANCE current response with same detail level even if user's question is simple.
-
+{history_section}
 
 STAGE 1: SEMANTIC ANALYSIS
 
@@ -262,97 +414,7 @@ DO NOT ASK FOLLOW-UP FOR:
 - Standard date parsing (August=8, Q3=7,8,9)
 - User provided explicit hint or correction in question (Step 1.0)
 
-
-
-STAGE 4: HISTORICAL SQL PATTERN MATCHING
-
-PURPOSE: Historical SQL represents LEARNED DETAIL PREFERENCES. Your goal is to ENHANCE simple questions with historical detail patterns - not just copy SQL.
-PRINCIPLE: If history shows breakdown + totals for a dimension, provide that detail level even if user asks a simple question.
-Never mention history to user.
-
-IF NO HISTORICAL SQL AVAILABLE:
-- Skip this stage
-- Generate SQL fresh in Stage 5
-- Set history_sql_used = false
-
-IF HISTORICAL SQL IS AVAILABLE:
-
-STEP 4.1: SEMANTIC COMPARISON
-Compare current question vs historical question:
-
-A. SAME METRIC REQUESTED?
-   Current asks for: [identify metric]
-   Historical had: [identify metric]
-   Match: YES / NO
-
-B. SAME GROUPING DIMENSIONS?
-   Current groups by: [identify dimensions]
-   Historical grouped by: [identify dimensions]
-   Match: YES / NO
-
-C. SAME ANALYSIS TYPE?
-   Types: breakdown | top-N | comparison | trend | calculation
-   Current: [type]
-   Historical: [type]
-   Match: YES / NO
-
-STEP 4.2: PATTERN DECISION MATRIX
-
-IF Metric=YES AND Grouping=YES AND Type=YES:
-  -> FULL PATTERN REUSE
-  -> Copy entire SQL structure
-  -> Replace ONLY filter values (dates, entities) with current values
-  -> Set history_sql_used = true
-
-IF Metric=YES AND (Grouping=NO OR Type=NO):
-  -> PARTIAL PATTERN REUSE + DETAIL ENHANCEMENT
-  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods, OVERALL TOTALS
-  -> CRITICAL - BREAKDOWN INHERITANCE:
-     If history breaks down by sub-dimension (e.g., product_sub_category_lvl_2)
-     AND current question filters on parent (e.g., product_category='Home Delivery')
-     AND user did NOT say "total only" / "just sum" / "aggregate"
-     → INCLUDE the sub-breakdown with OVERALL_TOTAL row
-     → This ENHANCES a simple question with useful detail
-  -> Set history_sql_used = true
-
-IF Metric=NO:
-  -> STRUCTURAL LEARNING ONLY
-  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting, OVERALL TOTALS
-  -> Build: Fresh SQL for current question using these techniques
-  -> Set history_sql_used = false
-
-STEP 4.3: DETECT AND REPLICATE HISTORY PATTERN
-
-Identify pattern in HISTORICAL SQL, then REPLICATE structure exactly:
-
-PATTERN A - GROUPING_SETS_TOTAL (history has "GROUPING SETS" + "GROUPING("):
-  Your SQL MUST include:
-  - CASE WHEN GROUPING(breakdown_col) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_col END
-  - GROUP BY GROUPING SETS ((all_dims), (all_dims minus breakdown_col))
-  - ORDER BY ... CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
-
-  WHEN TO APPLY (any of these):
-  - User explicitly asks for breakdown
-  - History has breakdown on sub-dimension + current filters parent dimension + same metric
-  - User asks comparison across time periods
-
-  ONLY SKIP WHEN: User explicitly says "total only", "just the sum", "single number"
-
-PATTERN B - UNION_TOTAL (history has "UNION ALL" + 'Total'/'OVERALL' literal):
-  Your SQL MUST include: Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
-
-  WHEN TO APPLY: Same conditions as Pattern A
-
-PATTERN C - SIMPLE (neither above):
-  No total row required
-
-ALWAYS LEARN from history: CASE WHEN for side-by-side columns, NULLIF(denominator, 0), ROUND formatting, UPPER() comparisons
-NEVER COPY from history: Filter values (dates, entities), time periods, <parameter> placeholders
-
-CRITICAL: Pattern structure is MANDATORY when conditions met. Only replace filter values with current question's values.
-Log: history_pattern = GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
-
-VALIDATION: Every column in final SQL must exist in CURRENT metadata - history may reference columns not in current dataset.
+{stage_4_hist_learn}
 
 STAGE 5: SQL GENERATION
 Generate SQL using resolved mappings from Stage 1-2 and patterns from Stage 4.
@@ -384,11 +446,11 @@ FOR CALCULATIONS (margin, ratios, differences):
 Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
 
 CORRECT:
-SELECT
+SELECT 
     ledger, year, month,
     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) -
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) - 
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS gross_margin
 FROM table
 WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
@@ -405,7 +467,7 @@ PRIORITY 2: COMPONENT DISPLAY RULE
 For ANY calculated metric, show source components:
 
 Example for "cost per script by carrier":
-SELECT
+SELECT 
   carrier_id,
   SUM(total_cost) AS total_cost,
   COUNT(script_id) AS script_count,
@@ -434,7 +496,7 @@ GROUP BY dimension
 PATTERN - PERCENTAGE OF TOTAL:
 SELECT column,
        SUM(metric) AS value,
-       ROUND(SUM(metric) * 100.0 /
+       ROUND(SUM(metric) * 100.0 / 
              (SELECT SUM(metric) FROM table WHERE [same filters]), 3) AS pct
 FROM table
 WHERE [mandatory filters]
@@ -540,33 +602,141 @@ CRITICAL REMINDERS:
 - Default to GROUP BY when multiple values mentioned (unless "total" language)
 - Only ask follow-up for genuine ambiguity, not for semantic matches
 - Filter resolution uses EXTRACTED FILTERS as source of truth
+"""
 
-Current Timestamp before SQL writer: 2026-01-14 09:03:04
-📊 Input tokens: 8210 | Output tokens: 369 | Response time: 9.18s
-sql llm response <reasoning_summary>
-filter_validation: ledger(EXISTS-MANDATORY)
-term_mappings: revenue->Revenues(Y), Specialty->product_category(Y), July 2025->month=7,year=2025(Y)
-filter_resolution: product_category=Specialty(Y), month=7(Y), year=2025(Y)
-intent: aggregate
-mandatory_filters: ledger=GAAP(Y applied)
-history_pattern: NONE
-ambiguities: NONE
-decision: SQL_GENERATION
-</reasoning_summary>
+        for attempt in range(self.max_retries):
+            try:
+                print('sql llm prompt', assessment_prompt)
+                print("Current Timestamp before SQL writer:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-<sql>
-SELECT
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END), 0) AS revenue
-FROM prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-WHERE UPPER(ledger) = UPPER('GAAP')
-    AND UPPER(product_category) = UPPER('Specialty')
-    AND month = 7
-    AND year = 2025
-    AND UPPER(metric_type) = UPPER('Revenues')
-</sql>
-
-<sql_story>
-This query retrieves revenue data from the ledger actual vs forecast table for Specialty products in July 2025. It filters for GAAP ledger entries and specifically looks at the Revenues metric type. The result shows the total revenue amount for Specialty category during that time period.
-</sql_story>
-
-<history_sql_used>false</history_sql_used>
+                llm_response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": assessment_prompt}],
+                    max_tokens=3000,
+                    temperature=0.0,  # Deterministic for SQL generation
+                    top_p=0.1,
+                    system_prompt="You are a Databricks SQL code generator. Your role is to generate syntactically correct SQL queries based on database metadata and user questions. When users request metrics like 'revenue per script' or 'cost per member', they are asking you to generate SQL that calculates these values - not asking you to perform the calculations yourself. You output SQL code wrapped in XML tags for downstream execution systems."
+                )
+            
+                print('sql llm response', llm_response)
+                print("Current Timestamp after SQL write call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                
+                # Log LLM output - actual response truncated to 500 chars
+                self._log('info', "LLM response received from SQL generator", state,
+                         llm_response=llm_response,
+                         attempt=attempt + 1)
+                
+                # Extract assessment reasoning stream before XML tags
+                assessment_reasoning = ""
+                # Find first XML tag (could be <sql>, <multiple_sql>, or <followup>)
+                xml_patterns = ['<sql>', '<multiple_sql>', '<followup>']
+                first_xml_pos = len(llm_response)
+                for pattern in xml_patterns:
+                    pos = llm_response.find(pattern)
+                    if pos != -1 and pos < first_xml_pos:
+                        first_xml_pos = pos
+                
+                if first_xml_pos > 0 and first_xml_pos < len(llm_response):
+                    assessment_reasoning = llm_response[:first_xml_pos].strip()
+                    print(f"📝 Captured SQL assessment reasoning stream ({len(assessment_reasoning)} chars)")
+                
+                # Store assessment reasoning in state
+                state['sql_assessment_reasoning_stream'] = assessment_reasoning
+                
+                # NEW: Extract history_sql_used flag
+                history_sql_used = False
+                history_used_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE | re.DOTALL)
+                if history_used_match:
+                    history_sql_used = history_used_match.group(1).strip().lower() == 'true'
+                
+                # NEW: Extract sql_story tag
+                sql_story = ""
+                story_match = re.search(r'<sql_story>(.*?)</sql_story>', llm_response, re.DOTALL)
+                if story_match:
+                    sql_story = story_match.group(1).strip()
+                    print(f"📖 Captured SQL generation story ({len(sql_story)} chars)")
+                
+                # Extract SQL or follow-up questions
+                # Check for multiple SQL queries first
+                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+                if multiple_sql_match:
+                    multiple_content = multiple_sql_match.group(1).strip()
+                    
+                    # Extract individual queries with titles
+                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+                    if query_matches:
+                        sql_queries = []
+                        query_titles = []
+                        for i, (query_num, title, query) in enumerate(query_matches):
+                            cleaned_query = query.strip().replace('`', '')
+                            cleaned_title = title.strip()
+                            if cleaned_query and cleaned_title:
+                                sql_queries.append(cleaned_query)
+                                query_titles.append(cleaned_title)
+                        
+                        if sql_queries:
+                            return {
+                                'success': True,
+                                'multiple_sql': True,
+                                'sql_queries': sql_queries,
+                                'query_titles': query_titles,
+                                'query_count': len(sql_queries),
+                                'used_history_asset': has_history,
+                                'history_sql_used': history_sql_used,  # NEW: LLM's flag
+                                'sql_story': sql_story  # NEW: Business-friendly explanation
+                            }
+                    
+                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
+                
+                # Check for single SQL query
+                sql_match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+                if sql_match:
+                    sql_query = sql_match.group(1).strip()
+                    sql_query = sql_query.replace('`', '')  # Remove backticks
+                    
+                    if not sql_query:
+                        raise ValueError("Empty SQL query in XML response")
+                    
+                    return {
+                        'success': True,
+                        'multiple_sql': False,
+                        'sql_query': sql_query,
+                        'used_history_asset': has_history,
+                        'history_sql_used': history_sql_used,  # NEW: LLM's flag
+                        'sql_story': sql_story  # NEW: Business-friendly explanation
+                    }
+                
+                # Check for follow-up questions
+                followup_match = re.search(r'<followup>(.*?)</followup>', llm_response, re.DOTALL)
+                if followup_match:
+                    followup_text = followup_match.group(1).strip()
+                    
+                    if not followup_text:
+                        raise ValueError("Empty follow-up questions in XML response")
+                    
+                    # Set is_sql_followup to True when asking follow-up questions
+                    state['is_sql_followup'] = True
+                    
+                    return {
+                        'success': True,
+                        'needs_followup': True,
+                        'sql_followup_questions': followup_text,
+                        'used_history_asset': False,
+                        'history_sql_used': False  # NEW: Not applicable for follow-up
+                    }
+                
+                # Neither SQL nor follow-up found
+                raise ValueError("No SQL or follow-up questions found in response")
+            
+            except Exception as e:
+                print(f"❌ SQL assessment attempt {attempt + 1} failed: {str(e)}")
+                
+                if attempt < self.max_retries - 1:
+                    print(f"🔄 Retrying SQL assessment... (Attempt {attempt + 1}/{self.max_retries})")
+                    await asyncio.sleep(2 ** attempt)
+        
+        return {
+            'success': False,
+            'error': f"SQL assessment failed after {self.max_retries} attempts due to Model errors",
+            'used_history_asset': False,
+            'history_sql_used': False  # NEW FIELD
+        }

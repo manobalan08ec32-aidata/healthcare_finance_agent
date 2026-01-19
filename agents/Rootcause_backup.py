@@ -1,213 +1,3 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import lower, col, collect_list, concat_ws, array_distinct, flatten, array_sort, collect_set
-import logging
-
-def extract_distinct_column_values(spark, schema_name, final_table_name):
-    """
-    Extract distinct values for each column across tables with optimized storage.
-    Groups values by their table combinations to minimize row count.
-    Unity Catalog compatible - uses DataFrame operations only (no RDD).
-    
-    Args:
-        spark: SparkSession
-        schema_name: Schema name (e.g., 'prd_optumrx_orxfdmprdsa.rag')
-        final_table_name: Final table to store results (e.g., 'prd_optumrx_orxfdmprdsa.rag.column_distinct_values')
-    """
-    
-    # Column mapping: standardized_name -> {table_name: actual_column_name}
-    column_mapping = {
-        'carrier_id': {
-            'claim_billing': 'carrier_id',
-            'pbm_claims': 'carrier_id'
-        },
-        'account_id': {
-            'claim_billing': 'account_id',
-            'pbm_claims': 'account_id'
-        },
-        'group_id': {
-            'claim_billing': 'group_id',
-            'pbm_claims': 'group_id'
-        },
-        'client_id': {
-            'claim_billing': 'client_id',
-            'pbm_claims': 'client_id',
-            'ledger_actual_vs_forecast': 'ora_client_id'
-        },
-        'client_description': {
-            'claim_billing': 'client_description',
-            'pbm_claims': 'client_name'
-           
-        },
-        'oracle_prod_code': {
-            'claim_billing': 'oracle_prod_code'
-        },
-        'orcl_prod_desc': {
-            'claim_billing': 'orcl_prod_desc'
-        },
-        'actvty_category_cd': {
-            'claim_billing': 'actvty_category_cd'
-        },
-        'actvty_cat_desc': {
-            'claim_billing': 'actvty_cat_desc'
-        },
-        'blng_entty_cd': {
-            'claim_billing': 'blng_entty_cd'
-        },
-        'blng_entty_name': {
-            'claim_billing': 'blng_entty_name'
-        },
-        'line_of_business': {
-            'claim_billing': 'line_of_business_name',
-            'pbm_claims': 'line_of_business',
-            'ledger_actual_vs_forecast': 'line_of_business'
-        },
-        'product_sub_category_lvl_1': {
-            'ledger_actual_vs_forecast': 'product_sub_category_lvl_1'
-        },
-        'product_sub_category_lvl_2': {
-            'ledger_actual_vs_forecast': 'product_sub_category_lvl_2'
-        },
-        'pharmacy_name': {
-            'pbm_claims': 'pharmacy_name'
-        },
-        'drug_name': {
-            'claim_billing': 'drug_name',
-            'pbm_claims': 'drug_name'
-        },
-        'therapy_class_name': {
-            'claim_billing': 'therapy_class_name',
-            'pbm_claims': 'therapy_class_name'
-        },
-        'drg_lbl_nm': {
-            'claim_billing': 'drg_lbl_nm',
-            'pbm_claims': 'drg_lbl_nm'
-        },
-        'client_type': {
-            'pbm_claims': 'client_type'
-        }
-    }
-    
-    # Create final table with table_names (plural) column
-    create_table_query = f"""
-    CREATE TABLE IF NOT EXISTS {final_table_name} (
-        column_name STRING,
-        table_names STRING,
-        distinct_values STRING
-    )
-    """
-    spark.sql(create_table_query)
-    logging.info(f"Final table {final_table_name} ready")
-    
-    results = []
-    
-    # Process each standardized column
-    for std_column_name, table_columns in column_mapping.items():
-        logging.info(f"Processing column: {std_column_name}")
-        
-        # Build UNION query for all tables containing this column
-        # Each row will have: value, table_name
-        union_queries = []
-        for table_name, actual_col_name in table_columns.items():
-            query = f"""
-                SELECT 
-                    LOWER(CAST({actual_col_name} AS STRING)) as value,
-                    '{table_name}' as table_name
-                FROM {schema_name}.{table_name} 
-                WHERE {actual_col_name} IS NOT NULL 
-                  AND TRIM(CAST({actual_col_name} AS STRING)) != ''
-            """
-            union_queries.append(query)
-        
-        # Combine all queries with UNION
-        full_query = " UNION ".join(union_queries)
-        
-        try:
-            # Execute query to get all value-table pairs
-            df = spark.sql(full_query)
-            
-            # Group by value to collect all tables containing that value
-            # This gives us: value -> [table1, table2, ...]
-            value_to_tables = df.groupBy("value").agg(
-                collect_set("table_name").alias("tables")
-            )
-            
-            # Collect to get dictionary: {value: [tables]}
-            value_table_dict = {}
-            for row in value_to_tables.collect():
-                value = row.value
-                tables = sorted(row.tables)  # Sort tables alphabetically
-                table_key = ",".join(tables)  # Create comma-separated key
-                
-                if table_key not in value_table_dict:
-                    value_table_dict[table_key] = []
-                
-                value_table_dict[table_key].append(value)
-            
-            # Now create rows: (column_name, table_names, distinct_values)
-            for table_combination, values in value_table_dict.items():
-                # Sort values alphabetically
-                sorted_values = sorted(values)
-                distinct_values_str = ','.join(sorted_values)
-                
-                results.append((std_column_name, table_combination, distinct_values_str))
-                
-                logging.info(f"  ✓ {std_column_name} ({table_combination}): {len(sorted_values)} distinct values")
-            
-            # Log total for this column
-            total_values = sum(len(v) for v in value_table_dict.values())
-            logging.info(f"  ✓ {std_column_name} TOTAL: {total_values} distinct values across {len(value_table_dict)} table combinations")
-            
-        except Exception as e:
-            logging.error(f"  ✗ Error processing {std_column_name}: {str(e)}")
-            results.append((std_column_name, "ERROR", f"ERROR: {str(e)}"))
-    
-    # Insert results into final table
-    if results:
-        # Create DataFrame from results
-        results_df = spark.createDataFrame(results, ["column_name", "table_names", "distinct_values"])
-        
-        # Truncate and insert
-        spark.sql(f"TRUNCATE TABLE {final_table_name}")
-        results_df.write.mode("append").saveAsTable(final_table_name)
-        
-        logging.info(f"✓ Successfully inserted {len(results)} rows into {final_table_name}")
-        logging.info(f"✓ Row count optimization achieved! Check logs for details per column.")
-    
-    return results
-
-
-# Execute extraction
-spark = SparkSession.builder.getOrCreate()
-results = extract_distinct_column_values(
-    spark=spark,
-    schema_name='prd_optumrx_orxfdmprdsa.rag',
-    final_table_name='prd_optumrx_orxfdmprdsa.rag.column_distinct_values'
-)
-=============================================================================
-
--- SQL cell for index table creation
-%sql
-DROP TABLE IF EXISTS prd_optumrx_orxfdmprdsa.rag.column_values_index;
-
--- Create pre-exploded index table with table_names (plural, comma-separated)
-CREATE TABLE prd_optumrx_orxfdmprdsa.rag.column_values_index AS
-SELECT 
-    column_name,
-    table_names,
-    LOWER(TRIM(value)) as value_lower
-FROM prd_optumrx_orxfdmprdsa.rag.column_distinct_values
-LATERAL VIEW EXPLODE(SPLIT(distinct_values, ',')) AS value
-WHERE TRIM(value) IS NOT NULL 
-  AND TRIM(value) != '';
-
--- Optimize for search performance
-OPTIMIZE prd_optumrx_orxfdmprdsa.rag.column_values_index ZORDER BY (column_name, value_lower);
-
-
-=============================================================================
-
-
-# Optimized search function - simpler grouping since tables are pre-grouped
 async def search_column_values(
         self,
         search_terms: List[str],
@@ -216,9 +6,9 @@ async def search_column_values(
     ) -> List[str]:
         """
         Search column values with regex word boundary matching.
-        Table names are already grouped at storage time, so no additional grouping needed.
+        Groups results by column_name and value, showing which tables contain each value.
         
-        Single word: Simple LIKE
+        Single word: Exact match OR prefix only (no contains)
         Multi-word: 
             - Tier 1: Exact match
             - Tier 2: Prefix match
@@ -283,12 +73,12 @@ async def search_column_values(
             phrase_escaped = escape_sql(phrase)
             
             if is_multi_word:
-                # Exact, prefix, contains
+                # Multi-word: exact, prefix, contains, and word boundary tiers
                 all_conditions.append(f"value_lower = '{phrase_escaped}'")
                 all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
                 all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
                 
-                # Tier 4: All words
+                # Tier 4: All words with boundary
                 all_conditions.append(f"({build_rlike_condition(words)})")
                 
                 # Tier 5: First N-1 words (for 3+ words)
@@ -301,10 +91,9 @@ async def search_column_values(
                     first_3 = words[:3]
                     all_conditions.append(f"({build_rlike_condition(first_3)})")
             else:
-                # Single word: exact, prefix, contains
+                # Single word: exact and prefix ONLY (no contains %word%)
                 all_conditions.append(f"value_lower = '{phrase_escaped}'")
                 all_conditions.append(f"value_lower LIKE '{phrase_escaped}%'")
-                all_conditions.append(f"value_lower LIKE '%{phrase_escaped}%'")
         
         where_clause = " OR ".join(all_conditions)
         
@@ -318,16 +107,16 @@ async def search_column_values(
             word_count = item["word_count"]
             phrase_escaped = escape_sql(phrase)
             
-            # Tier 1: Exact
+            # Tier 1: Exact (both single and multi-word)
             tier_cases.append(f"WHEN value_lower = '{phrase_escaped}' THEN 1")
             
-            # Tier 2: Prefix
+            # Tier 2: Prefix (both single and multi-word)
             tier_cases.append(f"WHEN value_lower LIKE '{phrase_escaped}%' THEN 2")
             
-            # Tier 3: Contains full phrase
-            tier_cases.append(f"WHEN value_lower LIKE '%{phrase_escaped}%' THEN 3")
-            
             if is_multi_word:
+                # Tier 3: Contains full phrase (multi-word only)
+                tier_cases.append(f"WHEN value_lower LIKE '%{phrase_escaped}%' THEN 3")
+                
                 # Tier 4: All words with boundary
                 tier_cases.append(f"WHEN {build_rlike_condition(words)} THEN 4")
                 
@@ -340,14 +129,15 @@ async def search_column_values(
                 if word_count >= 5:
                     first_3 = words[:3]
                     tier_cases.append(f"WHEN {build_rlike_condition(first_3)} THEN 6")
+            # Single word: No Tier 3-6, will fall to ELSE 7 if not exact/prefix
         
         tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 7 END"
         
-        # Build query - table_names already comma-separated
+        # Build query - now includes table_name
         query = f"""
         SELECT 
             column_name,
-            table_names,
+            table_name,
             value_lower,
             {tier_case_statement} as tier
         FROM prd_optumrx_orxfdmprdsa.rag.column_values_index
@@ -397,30 +187,55 @@ async def search_column_values(
             
             print(f"✅ Found {len(rows)} matches after tier filtering")
             
-            # Group by column_name (simpler now since tables are pre-grouped)
-            column_data = {}
+            # Group by (column_name, value_lower) to collect tables
+            value_data = {}
             
             for row in rows:
                 col = row["column_name"]
                 val = row["value_lower"]
-                tables = row["table_names"]  # Already comma-separated
+                table = row["table_name"]
                 tier = row["tier"]
                 
-                if col not in column_data:
-                    column_data[col] = {"best_tier": tier, "values": []}
+                key = (col, val)
                 
-                # Update best tier
-                if tier < column_data[col]["best_tier"]:
-                    column_data[col]["best_tier"] = tier
+                if key not in value_data:
+                    value_data[key] = {
+                        "tier": tier,
+                        "tables": []
+                    }
                 
-                # Add value if not duplicate
-                existing_values = [v[0] for v in column_data[col]["values"]]
-                if val not in existing_values:
-                    column_data[col]["values"].append((val, tables, tier))
+                # Update tier if better
+                if tier < value_data[key]["tier"]:
+                    value_data[key]["tier"] = tier
+                
+                # Add table if not already present
+                if table not in value_data[key]["tables"]:
+                    value_data[key]["tables"].append(table)
+            
+            # Group by column for output
+            column_groups = {}
+            
+            for (col, val), info in value_data.items():
+                if col not in column_groups:
+                    column_groups[col] = {
+                        "best_tier": info["tier"],
+                        "values": []
+                    }
+                
+                # Update best tier for column
+                if info["tier"] < column_groups[col]["best_tier"]:
+                    column_groups[col]["best_tier"] = info["tier"]
+                
+                # Add value with its tables and tier
+                column_groups[col]["values"].append({
+                    "value": val,
+                    "tables": sorted(info["tables"]),
+                    "tier": info["tier"]
+                })
             
             # Sort columns by best tier, then column name
             sorted_columns = sorted(
-                column_data.items(),
+                column_groups.items(),
                 key=lambda x: (x[1]["best_tier"], x[0])
             )
             
@@ -428,13 +243,20 @@ async def search_column_values(
             results = []
             for col_name, col_info in sorted_columns[:max_columns]:
                 # Sort values by tier, then alphabetically
-                sorted_values = sorted(col_info["values"], key=lambda x: (x[2], x[0]))
+                sorted_values = sorted(
+                    col_info["values"], 
+                    key=lambda x: (x["tier"], x["value"])
+                )
                 
                 # Take top N values
                 top_values = sorted_values[:max_values_per_column]
                 
-                # Format: value (table1, table2), value2 (table3)
-                value_strs = [f"{v[0]} ({v[1]})" for v in top_values]
+                # Format: value1, value2 (table1, table2)
+                value_strs = []
+                for v_info in top_values:
+                    tables_str = ", ".join(v_info["tables"])
+                    value_strs.append(f"{v_info['value']} ({tables_str})")
+                
                 values_combined = ", ".join(value_strs)
                 
                 results.append(f"{col_name} - {values_combined}")
@@ -448,70 +270,3 @@ async def search_column_values(
             import traceback
             traceback.print_exc()
             return []
-    
-    
-    def _apply_tier_group_filter(self, rows: List[dict]) -> List[dict]:
-        """
-        Apply exclusive tier group filtering.
-        
-        Groups:
-            - Primary (Tier 1-4): Always return if any match exists
-            - Fallback 1 (Tier 5): Only if Tier 1-4 are ALL empty
-            - Fallback 2 (Tier 6): Only if Tier 1-5 are ALL empty
-        """
-        
-        # Separate rows by tier group
-        primary_rows = [r for r in rows if r["tier"] <= 4]
-        fallback_1_rows = [r for r in rows if r["tier"] == 5]
-        fallback_2_rows = [r for r in rows if r["tier"] == 6]
-        
-        print(f"   📊 Tier groups: Primary(1-4)={len(primary_rows)}, Fallback1(5)={len(fallback_1_rows)}, Fallback2(6)={len(fallback_2_rows)}")
-        
-        # Return based on priority
-        if primary_rows:
-            print(f"   ✅ Returning Primary tier (1-4) results")
-            return primary_rows
-        
-        if fallback_1_rows:
-            print(f"   ✅ Returning Fallback 1 tier (5) results")
-            return fallback_1_rows
-        
-        if fallback_2_rows:
-            print(f"   ✅ Returning Fallback 2 tier (6) results")
-            return fallback_2_rows
-        
-        return []
-```
-
-## Key Changes in Optimized Version:
-
-### 1. **`extract_distinct_column_values` Function:**
-- **UNION with table_name**: Each row now has `(value, table_name)` pair
-- **`collect_set("table_name")`**: Groups by value to get all tables containing it
-- **Creates table combinations**: `"claim_billing,pbm_claims"` as a single key
-- **Groups values by table combination**: All values with same table set stored together
-
-### 2. **Storage Schema:**
-```
-column_name | table_names                    | distinct_values
-------------|--------------------------------|------------------
-drug_name   | claim_billing,pbm_claims       | mounjaro,pantoprazole
-drug_name   | claim_billing                  | advil
-drug_name   | pbm_claims                     | tylenol
-client_id   | claim_billing,ledger,pbm_claims| 12345,67890,... (4000 values)
-```
-
-### 3. **Index Table:**
-- `table_names` is comma-separated string
-- ZORDER optimized for `(column_name, value_lower)`
-
-### 4. **Search Function:**
-- **Much simpler** - no grouping logic needed
-- Tables already pre-grouped in storage
-- Direct format: `value (table1,table2)`
-
-## Example Output:
-```
-drug_name - mounjaro (claim_billing,pbm_claims), pantoprazole (claim_billing,pbm_claims), advil (claim_billing)
-therapy_class_name - cardiovascular (claim_billing,pbm_claims), diabetes (claim_billing,pbm_claims)
-client_id - 12345 (claim_billing,ledger_actual_vs_forecast,pbm_claims), 67890 (claim_billing,pbm_claims)

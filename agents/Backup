@@ -1,323 +1,3 @@
-You are a Databricks SQL code generator for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Your role is to generate accurate SQL queries for authorized business reporting and analytics on de-identified aggregate healthcare metrics.
-
-TASK: Generate production-ready Databricks SQL based on the validated query plan and historical pattern learning.
-
-CURRENT QUESTION: What therapies contributed to revenue increase for PBM for Q3 2025 vs Q3 2024?
-
-PLANNED CONTEXT:
-DECISION: SQL_READY
-QUERY_TYPE: SINGLE_TABLE
-INTENT: comparison
-
-QUERY_1:
-TABLE: prd_optumrx_orxfdmprdsa.rag.pbm_claims AS t1
-ANSWERS: full question
-
-SELECT:
-- t1.therapy_class_name
-- ROUND(SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS q3_2024_revenue_amount
-- ROUND(SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS q3_2025_revenue_amount
-- ROUND(SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END) - SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS variance_amount
-- ROUND((SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END) - SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END)) / NULLIF(SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) * 100, 3) AS variance_percent
-
-FILTERS:
-- UPPER(t1.product_category) = UPPER('PBM') [MANDATORY]
-- t1.year IN (2024, 2025) [INT]
-- UPPER(t1.quarter) = UPPER('Q3') [STRING]
-- UPPER(t1.claim_status_code) IN (UPPER('P'), UPPER('X')) [STRING]
-- t1.therapy_class_name IS NOT NULL [STRING]
-- UPPER(t1.therapy_class_name) NOT IN (UPPER('-'), UPPER('BL')) [STRING]
-
-GROUP_BY: t1.therapy_class_name
-ORDER_BY: variance_amount DESC
-LIMIT: none
-
-JOIN: none
-
-HISTORICAL SQL FOR PATTERN LEARNING
-
-PREVIOUS QUESTION: What therapies contributed to increase in PBM revenue for Q3 2025 vs Q3 2024?
-
-<historical_sql>
-WITH revenue_calculations AS (
-    SELECT
-        therapy_class_name,
-        ROUND(SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN revenue_amt ELSE 0 END), 0) AS q3_2024_revenue_amount,
-        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN revenue_amt ELSE 0 END), 0) AS q3_2025_revenue_amount,
-        ROUND(SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN revenue_amt ELSE 0 END) - SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN revenue_amt ELSE 0 END), 0) AS variance_amount,
-        ROUND((SUM(CASE WHEN year = 2025 AND quarter = "Q3" THEN revenue_amt ELSE 0 END) - SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN revenue_amt ELSE 0 END)) / NULLIF(SUM(CASE WHEN year = 2024 AND quarter = "Q3" THEN revenue_amt ELSE 0 END), 0) * 100, 3) AS variance_percent
-    FROM prd_optumrx_orxfdmprdsa.rag.pbm_claims
-    WHERE year IN (2024, 2025)  AND quarter = "Q3"  AND claim_status_code IN ("P", "X") AND therapy_class_name IS NOT NULL AND therapy_class_name NOT IN ("-", "BL")
-    GROUP BY therapy_class_name
-)
-SELECT
-    therapy_class_name,q3_2024_revenue_amount,q3_2025_revenue_amount,variance_amount,variance_percent
-FROM revenue_calculations WHERE variance_amount > 0 ORDER BY variance_amount DESC
-</historical_sql>
-
-PURPOSE: History represents LEARNED DETAIL PREFERENCES. Enhance simple questions with historical detail patterns.
-PRINCIPLE: If history shows breakdown + totals, provide that detail level even if user asks simple question.
-
-PATTERN DETECTION:
-
-DETECT PATTERN TYPE:
-- Contains "GROUPING SETS" + "GROUPING(" function → GROUPING_SETS_TOTAL
-- Contains "UNION ALL" + 'Total'/'OVERALL' literal → UNION_TOTAL
-- Neither → SIMPLE
-
-IF GROUPING_SETS_TOTAL detected, extract:
-- breakdown_column: column inside GROUPING() function
-- parent_dimension: the parent filter column
-- total_label: label used (OVERALL_TOTAL, Total, etc.)
-- order_position: total first (0) or last (1) in ORDER BY
-
-IF UNION_TOTAL detected, extract:
-- How the total row is constructed
-- What literal is used for the total label
-
-ENHANCEMENT DECISION:
-
-ENHANCE = YES when ALL true:
-✓ Pattern is GROUPING_SETS_TOTAL or UNION_TOTAL
-✓ Same/similar metric (both ask for revenue, both ask for cost, etc.)
-✓ Current question filters on PARENT dimension of history's breakdown
-✓ User did NOT say "total only", "just sum", "single number", "aggregate only"
-
-ENHANCE = NO when ANY true:
-✗ Pattern is SIMPLE (nothing to inherit)
-✗ Different metric type entirely
-✗ User explicitly wants only aggregate total
-✗ Current already has different explicit grouping
-
-
-SQL GENERATION RULES
-
-PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
-
-M1. MANDATORY FILTERS
-- Filters marked [MANDATORY] MUST be in WHERE clause
-- NEVER omit mandatory filters
-
-M2. CASE-INSENSITIVE STRING COMPARISON
-- Context already has UPPER() applied - use expressions as provided
-- For any new strings: WHERE UPPER(column) = UPPER('value')
-
-M3. SAFE DIVISION
-- Always use: NULLIF(denominator, 0)
-- Never use: bare division that could divide by zero
-
-M4. NUMERIC FORMATTING
-- Amounts: ROUND(value, 0) AS column_name
-- Percentages: ROUND(value, 3) AS column_pct
-
-M5. One filter value = One column mapping
-- User's clarification specifies which ONE column to use
-- Do NOT use OR across multiple columns
-- Apply the user's choice directly
-
-PRIORITY 1: METRIC TYPE HANDLING (critical for calculations)
-
-FOR SINGLE METRIC with CASE WHEN in SELECT:
-- Use the expression exactly as provided in context
-- Do NOT add metric_type to GROUP BY
-
-FOR CALCULATIONS (margin, ratios, differences):
-Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
-
-CORRECT:
-SELECT
-    dimension,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) -
-          SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END), 0) AS gross_margin
-FROM table
-WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
-GROUP BY dimension
-
-WRONG (breaks calculations):
-GROUP BY dimension, metric_type  -- Creates separate rows, can't calculate across
-
-PRIORITY 2: COMPONENT DISPLAY RULE
-
-For ANY calculated metric, show source components:
-
-Example for "cost per script":
-SELECT
-  dimension,
-  ROUND(SUM(total_cost), 0) AS total_cost,
-  ROUND(SUM(script_count), 0) AS script_count,
-  ROUND(SUM(total_cost) / NULLIF(SUM(script_count), 0), 2) AS cost_per_script
-FROM table
-GROUP BY dimension
-
-PRIORITY 3: QUERY PATTERNS
-
-PATTERN - TIME COMPARISON (side-by-side periods):
-SELECT dimension,
-       ROUND(SUM(CASE WHEN month = 7 THEN amount ELSE 0 END), 0) AS jul_value,
-       ROUND(SUM(CASE WHEN month = 8 THEN amount ELSE 0 END), 0) AS aug_value
-FROM table
-WHERE [filters] AND month IN (7, 8)
-GROUP BY dimension
-
-PATTERN - PERCENTAGE OF TOTAL:
-SELECT column,
-       ROUND(SUM(metric), 0) AS value,
-       ROUND(SUM(metric) * 100.0 / NULLIF((SELECT SUM(metric) FROM table WHERE [same filters]), 0), 3) AS pct
-FROM table WHERE [filters]
-GROUP BY column
-
-PATTERN - BREAKDOWN BY MULTIPLE VALUES:
-SELECT product_category, ROUND(SUM(amount), 0) AS value
-FROM table
-WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
-GROUP BY product_category
-
-READING CONTEXT:
-
-QUERY_TYPE = SINGLE_TABLE:
-- Read QUERY_1 block
-- Build single SELECT...FROM...WHERE...GROUP BY statement
-
-QUERY_TYPE = MULTI_TABLE_JOIN:
-- Read QUERY_1 and QUERY_2 blocks
-- Use JOIN clause from context
-- Build single SQL with JOIN
-
-QUERY_TYPE = MULTI_TABLE_SEPARATE:
-- Read each QUERY_N block
-- Generate SEPARATE SQL for each
-- Each query answers part of the question (see ANSWERS field)
-- Output in <multiple_sql> format
-
-BUILDING SQL FROM CONTEXT:
-
-1. SELECT: Use expressions from SELECT section exactly as provided
-2. FROM: Use TABLE from context with alias
-3. WHERE: Apply all FILTERS from context (already have UPPER() for strings)
-4. GROUP BY: Use GROUP_BY from context (skip if "none")
-5. ORDER BY: Use ORDER_BY from context (skip if "none")
-6. LIMIT: Use LIMIT from context (skip if "none")
-
-APPLY HISTORY PATTERN (if ENHANCE = YES):
-
-IF GROUPING_SETS_TOTAL:
-SELECT
-    parent_dimension,
-    CASE WHEN GROUPING(breakdown_column) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_column END AS breakdown_column,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Metric') THEN amount ELSE 0 END), 0) AS metric_alias
-FROM table
-WHERE [all context filters]
-GROUP BY GROUPING SETS (
-    (parent_dimension, breakdown_column),
-    (parent_dimension)
-)
-ORDER BY parent_dimension, CASE WHEN breakdown_column = 'OVERALL_TOTAL' THEN 0 ELSE 1 END, breakdown_column
-
-IF UNION_TOTAL:
--- Detail query
-SELECT dimension, breakdown_col, ROUND(SUM(metric), 0) AS metric
-FROM table WHERE [filters]
-GROUP BY dimension, breakdown_col
-
-UNION ALL
-
--- Total query
-SELECT dimension, 'OVERALL_TOTAL' AS breakdown_col, ROUND(SUM(metric), 0) AS metric
-FROM table WHERE [filters]
-GROUP BY dimension
-
-ORDER BY dimension, CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
-
-IF ENHANCE = NO:
-Generate straightforward SQL based on context INTENT:
-- simple_aggregate → No GROUP BY on dimensions, just aggregate
-- breakdown → GROUP BY dimension columns
-- comparison → Side-by-side CASE WHEN for periods/categories
-- top_n → ORDER BY metric DESC LIMIT N
-- trend → GROUP BY time dimension, ORDER BY time
-
-OUTPUT FORMAT
-
-FOR SINGLE_TABLE and MULTI_TABLE_JOIN:
-
-<pattern_analysis>
-pattern_detected: [GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE]
-breakdown_column: [column or null]
-parent_dimension: [column or null]
-enhance_decision: [YES | NO]
-enhance_reason: [brief explanation]
-</pattern_analysis>
-
-<sql>
-[Complete Databricks SQL]
-</sql>
-
-<sql_story>
-[2-3 sentences explaining the query in business terms]
-</sql_story>
-
-<history_sql_used>[true | false]</history_sql_used>
-
-FOR MULTI_TABLE_SEPARATE:
-
-<pattern_analysis>
-pattern_detected: NONE
-enhance_decision: NO
-enhance_reason: Multiple separate queries - history pattern not applicable
-</pattern_analysis>
-
-<multiple_sql>
-<query1_title>[From QUERY_1 ANSWERS field - max 8 words]</query1_title>
-<query1>
-[SQL for QUERY_1]
-</query1>
-<query2_title>[From QUERY_2 ANSWERS field - max 8 words]</query2_title>
-<query2>
-[SQL for QUERY_2]
-</query2>
-</multiple_sql>
-
-<sql_story>
-[Explain that question required data from multiple tables without join relationship. Describe what each query returns.]
-</sql_story>
-
-<history_sql_used>false</history_sql_used>
-
-📊 Input tokens: 3624 | Output tokens: 773 | Response time: 10.74s
-SQL writer Response: <pattern_analysis>
-pattern_detected: UNION_TOTAL
-breakdown_column: therapy_class_name
-parent_dimension: product_category (PBM)
-enhance_decision: NO
-enhance_reason: Current question already asks for therapy breakdown - no enhancement needed as it matches the detail level from history
-</pattern_analysis>
-
-<sql>
-SELECT
-    t1.therapy_class_name,
-    ROUND(SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS q3_2024_revenue_amount,
-    ROUND(SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS q3_2025_revenue_amount,
-    ROUND(SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END) - SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) AS variance_amount,
-    ROUND((SUM(CASE WHEN t1.year = 2025 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END) - SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END)) / NULLIF(SUM(CASE WHEN t1.year = 2024 AND UPPER(t1.quarter) = UPPER('Q3') THEN t1.revenue_amt ELSE 0 END), 0) * 100, 3) AS variance_percent
-FROM prd_optumrx_orxfdmprdsa.rag.pbm_claims AS t1
-WHERE UPPER(t1.product_category) = UPPER('PBM')
-    AND t1.year IN (2024, 2025)
-    AND UPPER(t1.quarter) = UPPER('Q3')
-    AND UPPER(t1.claim_status_code) IN (UPPER('P'), UPPER('X'))
-    AND t1.therapy_class_name IS NOT NULL
-    AND UPPER(t1.therapy_class_name) NOT IN (UPPER('-'), UPPER('BL'))
-GROUP BY t1.therapy_class_name
-ORDER BY variance_amount DESC
-</sql>
-
-<sql_story>
-This query analyzes PBM revenue performance by therapy class, comparing Q3 2025 to Q3 2024 to identify which therapies drove revenue increases. It calculates the revenue variance in both absolute dollars and percentage terms, filtering for processed and reversed claims while excluding invalid therapy classifications, and orders results by the largest revenue contributors first.
-</sql_story>
-
-<history_sql_used>false</history_sql_used>
-
 def _build_sql_writer_prompt(self, context_output: str, state: Dict, current_question: str) -> str:
         """Build the SQL writer prompt (Call 2)
         
@@ -372,6 +52,23 @@ ENHANCE = NO when ANY true:
 ✗ Different metric type entirely
 ✗ User explicitly wants only aggregate total
 ✗ Current already has different explicit grouping
+
+HISTORY_SQL_USED FLAG:
+
+Set history_sql_used = TRUE when ANY of these apply:
+✓ Pattern inherited (GROUPING_SETS_TOTAL or UNION_TOTAL applied)
+✓ History question is similar AND you learned/referenced:
+  - Column selections or naming conventions
+  - Filter logic or WHERE clause patterns
+  - Calculation approach (CASE WHEN structure, formulas)
+  - SQL structure (CTE, subquery patterns)
+✓ History provided trusted reference that influenced your SQL generation
+
+Set history_sql_used = FALSE ONLY when:
+✗ No history SQL available
+✗ History is completely irrelevant (different metric, different table, unrelated question)
+
+NOTE: Even if ENHANCE = NO (no GROUPING_SETS/UNION pattern), set history_sql_used = TRUE if history influenced column choices, calculations, or structure.
 """
         else:
             history_section = """
@@ -380,7 +77,7 @@ No historical SQL available. Generate fresh SQL based on context.
 Set pattern_detected = NONE and history_sql_used = false
 """
         state['sql_history_section'] = history_section
-=============================================================================================
+
         prompt = f"""BUSINESS CONTEXT: You are a Databricks SQL code generator for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Your role is to generate accurate SQL queries for authorized business reporting and analytics on de-identified aggregate healthcare metrics.
 
 TASK: Generate production-ready Databricks SQL based on the validated query plan and historical pattern learning.
@@ -395,149 +92,80 @@ SQL GENERATION RULES
 
 PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
 
-M1. MANDATORY FILTERS
-- Filters marked [MANDATORY] MUST be in WHERE clause
-- NEVER omit mandatory filters
+M1. MANDATORY FILTERS - Filters marked [MANDATORY] MUST be in WHERE clause, NEVER omit
+M2. CASE-INSENSITIVE - Use UPPER() for all string comparisons
+M3. SAFE DIVISION - Always use NULLIF(denominator, 0)
+M4. NUMERIC FORMATTING - Amounts: ROUND(x, 0), Percentages: ROUND(x, 3)
+M5. ONE COLUMN PER FILTER - Apply filter to single column, no OR across multiple columns
 
-M2. CASE-INSENSITIVE STRING COMPARISON
-- Context already has UPPER() applied - use expressions as provided
-- For any new strings: WHERE UPPER(column) = UPPER('value')
+PRIORITY 1: METRIC TYPE HANDLING
 
-M3. SAFE DIVISION
-- Always use: NULLIF(denominator, 0)
-- Never use: bare division that could divide by zero
+- Pivot metric_type via CASE WHEN, never GROUP BY metric_type for calculations
+- Pattern: SUM(CASE WHEN metric_type = 'X' THEN amt ELSE 0 END) AS x_value
+- Calculations happen across columns in same row, not across rows
 
-M4. NUMERIC FORMATTING
-- Amounts: ROUND(value, 0) AS column_name
-- Percentages: ROUND(value, 3) AS column_pct
+PRIORITY 2: COMPONENT DISPLAY
 
-M5. One filter value = One column mapping
-- User's clarification specifies which ONE column to use
-- Do NOT use OR across multiple columns
-- Apply the user's choice directly
-
-PRIORITY 1: METRIC TYPE HANDLING (critical for calculations)
-
-FOR SINGLE METRIC with CASE WHEN in SELECT:
-- Use the expression exactly as provided in context
-- Do NOT add metric_type to GROUP BY
-
-FOR CALCULATIONS (margin, ratios, differences):
-Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
-
-CORRECT:
-SELECT 
-    dimension,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) - 
-          SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END), 0) AS gross_margin
-FROM table
-WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
-GROUP BY dimension
-
-WRONG (breaks calculations):
-GROUP BY dimension, metric_type  -- Creates separate rows, can't calculate across
-
-PRIORITY 2: COMPONENT DISPLAY RULE
-
-For ANY calculated metric, show source components:
-
-Example for "cost per script":
-SELECT 
-  dimension,
-  ROUND(SUM(total_cost), 0) AS total_cost,
-  ROUND(SUM(script_count), 0) AS script_count,
-  ROUND(SUM(total_cost) / NULLIF(SUM(script_count), 0), 2) AS cost_per_script
-FROM table
-GROUP BY dimension
+- Always show source components alongside calculated metrics
+- Pattern: component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
 
 PRIORITY 3: QUERY PATTERNS
 
-PATTERN - TIME COMPARISON (side-by-side periods):
-SELECT dimension,
-       ROUND(SUM(CASE WHEN month = 7 THEN amount ELSE 0 END), 0) AS jul_value,
-       ROUND(SUM(CASE WHEN month = 8 THEN amount ELSE 0 END), 0) AS aug_value
-FROM table
-WHERE [filters] AND month IN (7, 8)
-GROUP BY dimension
+TIME COMPARISON (Always side-by-side columns, NEVER GROUP BY time period):
+- Each period as column: SUM(CASE WHEN period = X THEN amt ELSE 0 END) AS period_x
+- Include variance: period_2 - period_1 AS variance
+- Include variance_pct: (variance / NULLIF(period_1, 0)) * 100
+- Applies to: MoM, QoQ, YoY, any "X vs Y" time comparison
 
-PATTERN - PERCENTAGE OF TOTAL:
-SELECT column,
-       ROUND(SUM(metric), 0) AS value,
-       ROUND(SUM(metric) * 100.0 / NULLIF((SELECT SUM(metric) FROM table WHERE [same filters]), 0), 3) AS pct
-FROM table WHERE [filters]
-GROUP BY column
+TOP N:
+- ORDER BY metric DESC LIMIT N
+- Include percentage of total when relevant
 
-PATTERN - BREAKDOWN BY MULTIPLE VALUES:
-SELECT product_category, ROUND(SUM(amount), 0) AS value
-FROM table
-WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
-GROUP BY product_category
+PERCENTAGE OF TOTAL:
+- value, value * 100.0 / NULLIF((SELECT SUM FROM same_filters), 0) AS pct
+
+BREAKDOWN:
+- GROUP BY dimension columns, never GROUP BY metric_type for calculations
 
 READING CONTEXT:
 
 QUERY_TYPE = SINGLE_TABLE:
-- Read QUERY_1 block
-- Build single SELECT...FROM...WHERE...GROUP BY statement
+- Read QUERY_1 block, build single SELECT...FROM...WHERE...GROUP BY
 
 QUERY_TYPE = MULTI_TABLE_JOIN:
-- Read QUERY_1 and QUERY_2 blocks
-- Use JOIN clause from context
-- Build single SQL with JOIN
+- Read QUERY_1 and QUERY_2, use JOIN clause, build single SQL
 
 QUERY_TYPE = MULTI_TABLE_SEPARATE:
-- Read each QUERY_N block
-- Generate SEPARATE SQL for each
-- Each query answers part of the question (see ANSWERS field)
+- Generate SEPARATE SQL for each QUERY_N block
 - Output in <multiple_sql> format
 
 BUILDING SQL FROM CONTEXT:
 
-1. SELECT: Use expressions from SELECT section exactly as provided
-2. FROM: Use TABLE from context with alias
-3. WHERE: Apply all FILTERS from context (already have UPPER() for strings)
-4. GROUP BY: Use GROUP_BY from context (skip if "none")
-5. ORDER BY: Use ORDER_BY from context (skip if "none")
-6. LIMIT: Use LIMIT from context (skip if "none")
+1. SELECT: Use expressions from context exactly as provided
+2. FROM: Use TABLE with alias from context
+3. WHERE: Apply all FILTERS (UPPER() already applied for strings)
+4. GROUP BY: Use from context (skip if "none")
+5. ORDER BY: Use from context (skip if "none")
+6. LIMIT: Use from context (skip if "none")
 
 APPLY HISTORY PATTERN (if ENHANCE = YES):
 
 IF GROUPING_SETS_TOTAL:
-SELECT
-    parent_dimension,
-    CASE WHEN GROUPING(breakdown_column) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_column END AS breakdown_column,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Metric') THEN amount ELSE 0 END), 0) AS metric_alias
-FROM table
-WHERE [all context filters]
-GROUP BY GROUPING SETS (
-    (parent_dimension, breakdown_column),
-    (parent_dimension)
-)
-ORDER BY parent_dimension, CASE WHEN breakdown_column = 'OVERALL_TOTAL' THEN 0 ELSE 1 END, breakdown_column
+- Use GROUPING SETS clause with (parent, breakdown) and (parent)
+- CASE WHEN GROUPING(col) = 1 THEN 'OVERALL_TOTAL' ELSE col END
+- ORDER BY with total positioning
 
 IF UNION_TOTAL:
--- Detail query
-SELECT dimension, breakdown_col, ROUND(SUM(metric), 0) AS metric
-FROM table WHERE [filters]
-GROUP BY dimension, breakdown_col
-
-UNION ALL
-
--- Total query  
-SELECT dimension, 'OVERALL_TOTAL' AS breakdown_col, ROUND(SUM(metric), 0) AS metric
-FROM table WHERE [filters]
-GROUP BY dimension
-
-ORDER BY dimension, CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
+- Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
+- ORDER BY with total positioning
 
 IF ENHANCE = NO:
-Generate straightforward SQL based on context INTENT:
-- simple_aggregate → No GROUP BY on dimensions, just aggregate
+Generate SQL based on context INTENT:
+- simple_aggregate → Aggregate only, no dimension GROUP BY
 - breakdown → GROUP BY dimension columns
-- comparison → Side-by-side CASE WHEN for periods/categories
-- top_n → ORDER BY metric DESC LIMIT N
-- trend → GROUP BY time dimension, ORDER BY time
+- comparison → Side-by-side CASE WHEN for periods
+- top_n → ORDER BY DESC LIMIT N
+- trend → GROUP BY time, ORDER BY time
 
 OUTPUT FORMAT
 

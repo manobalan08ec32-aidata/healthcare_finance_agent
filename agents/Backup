@@ -1,54 +1,3 @@
-            history_section = f"""
-HISTORICAL SQL FOR PATTERN LEARNING
-
-PREVIOUS QUESTION: {history_question_match}
-
-<historical_sql>
-{matched_sql}
-</historical_sql>
-
-PURPOSE: History represents LEARNED DETAIL PREFERENCES. Enhance simple questions with historical detail patterns.
-PRINCIPLE: If history shows breakdown + totals, provide that detail level even if user asks simple question.
-
-PATTERN DETECTION:
-
-DETECT PATTERN TYPE:
-- Contains "GROUPING SETS" + "GROUPING(" function → GROUPING_SETS_TOTAL
-- Contains "UNION ALL" + 'Total'/'OVERALL' literal → UNION_TOTAL
-- Neither → SIMPLE
-
-IF GROUPING_SETS_TOTAL detected, extract:
-- breakdown_column: column inside GROUPING() function
-- parent_dimension: the parent filter column
-- total_label: label used (OVERALL_TOTAL, Total, etc.)
-- order_position: total first (0) or last (1) in ORDER BY
-
-IF UNION_TOTAL detected, extract:
-- How the total row is constructed
-- What literal is used for the total label
-
-ENHANCEMENT DECISION:
-
-ENHANCE = YES when ALL true:
-✓ Pattern is GROUPING_SETS_TOTAL or UNION_TOTAL
-✓ Same/similar metric (both ask for revenue, both ask for cost, etc.)
-✓ Current question filters on PARENT dimension of history's breakdown
-✓ User did NOT say "total only", "just sum", "single number", "aggregate only"
-
-ENHANCE = NO when ANY true:
-✗ Pattern is SIMPLE (nothing to inherit)
-✗ Different metric type entirely
-✗ User explicitly wants only aggregate total
-✗ Current already has different explicit grouping
-"""
-        else:
-            history_section = """
-HISTORICAL SQL:
-No historical SQL available. Generate fresh SQL based on context.
-Set pattern_detected = NONE and history_sql_used = false
-"""
-        state['sql_history_section'] = history_section
-
 async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
         """Generate SQL using original question + follow-up Q&A with relevance validation in single call"""
         
@@ -56,7 +5,10 @@ async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_qu
         dataset_metadata = context.get('dataset_metadata', '')
         join_clause = state.get('join_clause', '')
         selected_filter_context = context.get('selected_filter_context')
-        filter_metadata_results = state.get('filter_metadata_results', [])
+        if state.get('requires_dataset_clarification', False):
+            followup_reasoning = state.get('followup_reasoning', '')
+        else:
+            followup_reasoning = state.get('selection_reasoning','')
         
         # 🆕 RETRIEVE history_section from state
         history_section = state.get('sql_history_section', '')
@@ -69,78 +21,6 @@ async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_qu
 Not available
 
 """
-        if history_section:
-            stage_3_hist_learn="""
-
-STAGE 3: HISTORICAL SQL PATTERN MATCHING
-
-This stage determines HOW to use historical SQL (if available).
-Historical SQL is an INTERNAL optimization - never mention it to user.
-
-IF NO HISTORICAL SQL AVAILABLE:
-- Skip this stage
-- Generate SQL fresh in Stage 5
-- Set history_sql_used = false
-
-IF HISTORICAL SQL IS AVAILABLE:
-
-STEP 4.1: SEMANTIC COMPARISON
-Compare current question vs historical question:
-
-A. SAME METRIC REQUESTED?
-   Current asks for: [identify metric]
-   Historical had: [identify metric]
-   Match: YES / NO
-
-B. SAME GROUPING DIMENSIONS?
-   Current groups by: [identify dimensions]
-   Historical grouped by: [identify dimensions]
-   Match: YES / NO
-
-C. SAME ANALYSIS TYPE?
-   Types: breakdown | top-N | comparison | trend | calculation
-   Current: [type]
-   Historical: [type]
-   Match: YES / NO
-
-STEP 4.2: PATTERN DECISION MATRIX
-
-IF Metric=YES AND Grouping=YES AND Type=YES:
-  -> FULL PATTERN REUSE
-  -> Copy entire SQL structure
-  -> Replace ONLY filter values (dates, entities) with current values
-  -> Set history_sql_used = true
-
-IF Metric=YES AND (Grouping=NO OR Type=NO):
-  -> PARTIAL PATTERN REUSE
-  -> Keep: Metric calculations, CASE WHEN patterns, aggregation methods
-  -> Rebuild: GROUP BY from current question
-  -> Set history_sql_used = partial
-
-IF Metric=NO:
-  -> STRUCTURAL LEARNING ONLY
-  -> Learn: UNION patterns, CTE structure, NULLIF safety, ROUND formatting
-  -> Build: Fresh SQL for current question using these techniques
-  -> Set history_sql_used = false
-
-WHAT TO ALWAYS LEARN (regardless of match level):
-- CASE WHEN for side-by-side columns (month comparisons)
-- UNION/UNION ALL patterns (detail rows + total row)
-- Division safety: NULLIF(denominator, 0)
-- Rounding: ROUND(amount, 0), ROUND(percentage, 3)
-- Case-insensitive: UPPER(column) = UPPER('value')
-
-WHAT TO NEVER COPY (always from current question):
-- Filter values (dates, carrier_id, entity names)
-- Specific time periods
-- Any <parameter> placeholders - use actual values
-
-CRITICAL VALIDATION:
-- Every column in final SQL must exist in CURRENT metadata
-- Historical SQL may reference columns not in current dataset - verify before using"""      
-
-        else:
-            stage_3_hist_learn="No history sql available"
         
         # Check if we have multiple tables
         selected_datasets = state.get('selected_dataset', [])
@@ -176,276 +56,235 @@ CRITICAL VALIDATION:
         
         has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
 
-        followup_sql_prompt = f"""You are a Databricks SQL generator for DANA (Data Analytics & Navigation Assistant).
+        followup_sql_prompt = f"""
+⚠️ IMPORTANT CONTEXT - READ THIS FIRST ⚠️
 
-CONTEXT: This is PHASE 2 of a two-phase process. In Phase 1, you asked a clarifying question. The user has now responded. Your task is to generate SQL using the original question + user's clarification.
+You are a Databricks SQL code generator processing follow-up clarifications. Your task is to generate SQL queries that incorporate both the original question and the user's clarification.
 
-CORE PRINCIPLES:
-1. USER'S RESPONSE IS THE ANSWER - Treat follow-up answer as HIGH CONFIDENCE override, apply directly
-2. NO MORE FOLLOW-UPS - Either generate SQL or return drift flag. Do NOT ask another question.
-3. USE ONLY PROVIDED DATA - Only use columns from METADATA, values from EXTRACTED FILTERS
-4. GENERATE SQL OR FLAG DRIFT - Only two valid outcomes from this prompt
+When users request calculations like "revenue per script" or "cost breakdown" - they are asking you to generate SQL code that performs these calculations. You generate the SQL that will be executed by the database.
 
-INPUTS
+You are a Healthcare Finance SQL specialist working on PHASE 2 of a two-phase process.
 
 ORIGINAL USER QUESTION: {current_question}
-
-AVAILABLE METADATA:
-{dataset_metadata}
-
-MANDATORY FILTER COLUMNS:
-{mandatory_columns_text}
-
-EXTRACTED column contain FILTER VALUES:
-{filter_metadata_results}
-
-JOIN INFORMATION:
-{join_clause}
+**AVAILABLE METADATA**: {dataset_metadata}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause if join_clause else "No join clause provided"}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 
 {history_section}
 
-FOLLOW-UP CONTEXT
+FILTER VALUES EXTRACTED:
+{filter_context_text}
+
+====================================
+STEP 1: VALIDATE FOLLOW-UP RESPONSE
+====================================
 
 YOUR PREVIOUS QUESTION: {sql_followup_question}
-
 USER'S RESPONSE: {sql_followup_answer}
 
-STAGE 1: VALIDATE FOLLOW-UP RESPONSE
+**FIRST, analyze if the user's response is relevant:**
 
-Analyze if the user's response is relevant to your question:
+1. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
+2. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
+3. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
 
-RELEVANT (proceed to SQL generation):
-- User directly answered your question
-- User provided the clarification you asked for
-- User gave additional context that resolves the ambiguity
--> PROCEED to Stage 2
+**If NOT RELEVANT (categories 2 or 3), immediately return the appropriate XML response below and STOP.**
+**If RELEVANT (category 1), proceed to STEP 2 for SQL generation.**
 
-NEW_QUESTION (return flag and stop):
-- User asked a completely different question instead of answering
-- User changed the topic entirely
--> Return <new_question> flag and STOP
+=========================================
+STEP 2: SQL GENERATION (Only if RELEVANT)
+=========================================
 
-TOPIC_DRIFT (return flag and stop):
-- User's response is completely unrelated/off-topic
-- User provided gibberish or irrelevant information
--> Return <topic_drift> flag and STOP
+Generate a high-quality Databricks SQL query using:
+1. The ORIGINAL user question as the primary requirement
+2. The USER'S CLARIFICATION to resolve any ambiguities
+3. Available metadata for column mapping
+4. Multi-table strategy assessment (single vs multiple queries)
+5. Historical SQL Patterns(if available)-Follow structured approach from history_section - inherit if aligned, learn patterns if not.
+6. All SQL generation best practices
+
+**MULTI-QUERY DECISION LOGIC**:
+- **SINGLE QUERY WITH JOIN**: Simple analysis requiring related data from multiple tables
+- **MULTIPLE QUERIES - MULTI-TABLE**: Complementary analysis from different tables OR no join exists
+- **MULTIPLE QUERIES - COMPLEX SINGLE-TABLE**: Multiple analytical dimensions (trends + rankings)
+- **SINGLE QUERY**: Simple, focused questions with one analytical dimension
+
+========================================
+CRITICAL DATABRICKS SQL GENERATION RULES
+=========================================
 
 
-STAGE 2: APPLY USER'S CLARIFICATION (Only if RELEVANT)
+**PRIORITY 0: MANDATORY REQUIREMENTS** (Violation = Query Failure)
 
-The user's response resolves the ambiguity from Phase 1.
-Apply it as HIGH CONFIDENCE override - no further validation needed.
+M1. **Mandatory Filters** ⚠️⚠️⚠️ CRITICAL
+MUST include EVERY mandatory filter in WHERE clause:
+```sql
+-- Example: If ledger is MANDATORY:
+WHERE ledger = 'GAAP'
+  AND [other conditions]
+```
 
-CRITICAL RULE: One filter value = One column mapping
-- User's clarification specifies which ONE column to use
-- Do NOT use OR across multiple columns
-- Apply the user's choice directly
+M2. **Validated Filter Values**
+Use ONLY filters marked ✓Valid in CHECK 3:
+```sql
+WHERE UPPER(carrier_id) = UPPER('MPDOVA')  -- Only if validated
+```
 
-INTEGRATION RULES:
-- If user specified a column: Use that exact column
-- If user specified a filter value: Apply to the column they indicated
-- If user clarified a calculation: Implement their exact formula
-- If user defined a time period: Use their exact dates/ranges
-- If user chose between options: Apply their choice directly
-
-Do NOT re-validate or question the user's choice. They have answered - now generate SQL.
-
-{stage_3_hist_learn}
-
-STAGE 4: SQL GENERATION
-
-Generate SQL using:
-- Original question as primary requirement
-- User's clarification as resolved input
-- Historical patterns from Stage 3 (if applicable)
-
-PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
-
-M1. MANDATORY FILTERS - Must be in WHERE clause
-Check MANDATORY FILTER COLUMNS input
-- If ledger is MANDATORY -> WHERE ledger = 'GAAP' AND ...
-- If product_category='PBM' is MANDATORY -> WHERE product_category = 'PBM' AND ...
-
-M2. CASE-INSENSITIVE STRING COMPARISON
-- Always use: WHERE UPPER(column) = UPPER('value')
-- Never use: WHERE column = 'value'
-
-M3. SAFE DIVISION
-- Always use: NULLIF(denominator, 0)
-- Never use: bare division that could divide by zero
-
-M4. NUMERIC FORMATTING
-- Amounts: ROUND(value, 0) AS column_name
-- Percentages: ROUND(value, 3) AS column_pct
-
-PRIORITY 1: METRIC TYPE HANDLING (critical for calculations)
-
-When table has metric_type column (Revenue, COGS, Expenses, etc.):
-
-FOR CALCULATIONS (margin, ratios, differences):
-Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
-
-CORRECT:
+M3. **CALCULATED FORMULAS HANDLING (CRITICAL)-Metric Type Grouping Rule for Calculations**
+When calculating derived metrics (Gross Margin, Cost %, Margin %), DO NOT group by metric_type:
+```sql
+-- ✓ CORRECT (for calculations):
 SELECT 
-    ledger, year, month,
+    ledger, year, month,  -- Business dimensions only
     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
     SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) - 
     SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS gross_margin
 FROM table
 WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
-GROUP BY ledger, year, month
+GROUP BY ledger, year, month  -- NOT metric_type
 
-WRONG (breaks calculations):
-GROUP BY ledger, metric_type  -- Creates separate rows, can't calculate across
+-- ✗ WRONG (breaks calculations):
+GROUP BY ledger, metric_type  -- Creates separate rows per metric_type
+```
+**Only group by metric_type when user explicitly asks to see individual metric types as separate rows.**
 
-FOR LISTING INDIVIDUAL METRICS:
-Only GROUP BY metric_type when user explicitly asks to see each metric as separate rows.
+**PRIORITY 1: STRUCTURAL PATTERNS**
 
-PRIORITY 2: COMPONENT DISPLAY RULE
+S1. **Historical SQL Patterns** (if available)
+Follow structured approach from history_section - inherit if aligned, learn patterns if not.
 
-For ANY calculated metric, show source components:
+S2. **Aggregation Requirements**
+Always aggregate metrics unless "line items" explicitly requested.
 
-Example for "cost per script by carrier":
+S3. **Component Display Rule**
+ALWAYS show source components for ANY calculation:
+```sql
+-- For "cost per member by state":
 SELECT 
-  carrier_id,
-  SUM(total_cost) AS total_cost,
-  COUNT(script_id) AS script_count,
-  ROUND(SUM(total_cost) / NULLIF(COUNT(script_id), 0), 2) AS cost_per_script
+  state_name,
+  SUM(total_cost) as total_cost,      -- Component 1
+  COUNT(member_id) as member_count,   -- Component 2  
+  ROUND(SUM(total_cost) / NULLIF(COUNT(member_id), 0), 2) as cost_per_member  -- Result
 FROM table
+GROUP BY state_name
+```
+
+**PRIORITY 2: QUERY PATTERNS**
+
+P1. **Top N Pattern**
+```sql
+-- "Top 5 carriers"
+SELECT carrier_id, 
+       SUM(amount) as amount,
+       (SELECT SUM(amount) FROM table) as total,
+       ROUND(SUM(amount)/(SELECT SUM(amount) FROM table)*100, 3) as pct
+FROM table
+WHERE [mandatory filters]
 GROUP BY carrier_id
+ORDER BY amount DESC LIMIT 5
+```
 
-PRIORITY 3: QUERY PATTERNS
-
-PATTERN - TOP N:
-SELECT column, SUM(metric) AS metric
+P2. **Time Comparison Pattern**
+```sql
+-- "Compare Q3 months"
+SELECT product,
+       SUM(CASE WHEN month = 7 THEN revenue END) as jul_revenue,
+       SUM(CASE WHEN month = 8 THEN revenue END) as aug_revenue,
+       SUM(CASE WHEN month = 9 THEN revenue END) as sep_revenue
 FROM table
-WHERE [mandatory filters]
-GROUP BY column
-ORDER BY metric DESC
-LIMIT N
+WHERE quarter = 3 AND [mandatory filters]
+GROUP BY product
+```
 
-PATTERN - TIME COMPARISON (side-by-side periods):
-SELECT dimension,
-       SUM(CASE WHEN month = 7 THEN metric END) AS jul_value,
-       SUM(CASE WHEN month = 8 THEN metric END) AS aug_value
-FROM table
-WHERE [mandatory filters] AND month IN (7, 8)
-GROUP BY dimension
-
-PATTERN - PERCENTAGE OF TOTAL:
-SELECT column,
-       SUM(metric) AS value,
-       ROUND(SUM(metric) * 100.0 / 
-             (SELECT SUM(metric) FROM table WHERE [same filters]), 3) AS pct
-FROM table
-WHERE [mandatory filters]
-GROUP BY column
-
-PATTERN - BREAKDOWN BY MULTIPLE VALUES:
-SELECT product_category, SUM(revenue) AS revenue
-FROM table
-WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
-GROUP BY product_category
-
-PATTERN - MULTI-TABLE (when JOIN provided):
-SELECT t1.dimension, SUM(t1.metric) AS m1, SUM(t2.metric) AS m2
+P3. **Multi-Table Pattern**
+```sql
+-- When JOIN needed
+SELECT t1.dim, SUM(t1.metric) as m1, SUM(t2.metric) as m2
 FROM table1 t1
-[JOIN clause from input]
-WHERE UPPER(t1.mandatory_filter) = UPPER('value')
-GROUP BY t1.dimension
+{join_clause}  -- Use provided join
+WHERE t1.mandatory_col = value
+GROUP BY t1.dim
+```
 
-OUTPUT FORMAT
+**PRIORITY 3: FORMATTING STANDARDS**
 
-Always output <reasoning_summary> first, then ONE of the following: <new_question>, <topic_drift>, <sql>, or <multiple_sql>.
+F1. **String Comparison** - Always case-insensitive:
+```sql
+WHERE UPPER(column) = UPPER('value')
+```
 
-REASONING SUMMARY (always output):
-<reasoning_summary>
-followup_validation: RELEVANT | NEW_QUESTION | TOPIC_DRIFT
-clarification_applied: [what the user clarified and how it was applied]
-term_mappings: [term]->[column](Y) based on user clarification
-filter_resolution: [column]=[value](Y) based on user clarification
-intent: breakdown | aggregate | comparison | top-N | calculation
-mandatory_filters: [filter1](Y applied), [filter2](Y applied)
-history_pattern: TRUE | FALSE 
-decision: SQL_GENERATION | NEW_QUESTION_DETECTED | TOPIC_DRIFT_DETECTED
-</reasoning_summary>
+F2. **Numeric Formatting**:
+- Amounts: ROUND(x, 0) AS name_amount
+- Percentages: ROUND(x, 3) AS name_percent
+- Division safety: NULLIF(denominator, 0)
 
-IF NEW QUESTION DETECTED:
+PHASE 3: OUTPUT GENERATION & VALIDATION
+
+**PRE-OUTPUT CHECKLIST:** ⚠️ MUST VERIFY
+□ All mandatory filters present in WHERE clause?
+□ All validated filters applied with UPPER()?
+□ Source components shown for calculations?
+
+==============================
+INTEGRATION INSTRUCTIONS
+==============================
+
+- Integrate the user's clarification naturally into the SQL logic
+- If clarification provided specific formulas, implement them precisely
+- If clarification resolved time periods, use exact dates/ranges specified  
+- If clarification defined metrics, use the exact business definitions provided
+- Maintain all original SQL quality standards while incorporating clarifications
+
+==============================
+OUTPUT FORMATS
+==============================
+IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
+return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+
+**OPTION 1: If user's response is a NEW QUESTION**
 <new_question>
 <detected>true</detected>
-<reasoning>[Brief 1-sentence why this is a new question, not an answer to your clarification]</reasoning>
+<reasoning>[Brief 1-sentence why this is a new question]</reasoning>
 </new_question>
 
-[STOP HERE - Do not output SQL]
-
-IF TOPIC DRIFT DETECTED:
+**OPTION 2: If user's response is TOPIC DRIFT (unrelated)**
 <topic_drift>
 <detected>true</detected>
-<reasoning>[Brief 1-sentence why this is off-topic/unrelated]</reasoning>
+<reasoning>[Brief 1-sentence why this is off-topic]</reasoning>
 </topic_drift>
 
-[STOP HERE - Do not output SQL]
-
-IF SQL GENERATION (user response was RELEVANT):
-
-For SINGLE query:
+**OPTION 3: If RELEVANT - Single SQL Query**
 <sql>
-[Complete Databricks SQL incorporating original question + user's clarification]
+[Your complete SQL query incorporating both original question and clarifications]
 </sql>
-
 <sql_story>
-[2-3 sentences in business-friendly language explaining:
- - What table/data is being queried
- - What filters are applied
- - What metric/calculation is returned
- - How user's clarification was incorporated]
+[2-3 lines explaining in business-friendly language: what table(s) you're using, what filters are applied, and what metric/calculation you're providing to answer the question. Make it simple for non-technical business users to understand.]
 </sql_story>
+<history_sql_used>[true/false - Did you use the historical SQL pattern/structure? true if you inherited dimensions, JOINs, or structural patterns from history_section; false if you generated SQL from scratch]</history_sql_used>
 
-<history_sql_used>true | false</history_sql_used>
-
-For MULTIPLE queries:
+**OPTION 4: If RELEVANT - Multiple SQL Queries**
 <multiple_sql>
-<query1_title>[Short title - max 8 words]</query1_title>
-<query1>[SQL]</query1>
-<query2_title>[Short title]</query2_title>
-<query2>[SQL]</query2>
+<query1_title>[Brief descriptive title - max 8 words]</query1_title>
+<query1>[First SQL query]</query1>
+<query2_title>[Brief descriptive title - max 8 words]</query2_title>
+<query2>[Second SQL query]</query2>
 </multiple_sql>
-
 <sql_story>
-[2-3 sentences explaining the queries and how user's clarification was applied]
+[2-3 lines explaining in business-friendly language: what tables you're using, what filters are applied, and what metrics/calculations you're providing to answer the question. Make it simple for non-technical business users to understand.]
 </sql_story>
+<history_sql_used>[true/false - Did you use the historical SQL pattern/structure? true if you inherited dimensions, JOINs, or structural patterns from history_section; false if you generated SQL from scratch]</history_sql_used>
 
-<history_sql_used>true | false</history_sql_used>
+**SQL_STORY REQUIREMENTS:**
+- Write 2-3 concise lines in plain business English
+- Explain: (1) Which table(s) are being queried, (2) What filters/constraints are applied, (3) What metric or calculation is being retrieved
+- Avoid technical jargon - use business-friendly terms
+- Example: "I'm querying the Claims Transaction table to find revenue by therapy class. I've filtered the data to show only PBM claims for August 2025. The results will show total revenue grouped by each therapy class."
 
-HISTORY_SQL_USED VALUES:
-- true = Used historical SQL structure with filter replacement
-- false = Generated fresh (no history or history not applicable)
+Reminder: Must preserve the mandatory filter value in the SQL generation
 
-
-EXECUTION INSTRUCTION
-
-Execute stages in order:
-
-1. STAGE 1: Validate follow-up response -> RELEVANT / NEW_QUESTION / TOPIC_DRIFT
-2. If NEW_QUESTION or TOPIC_DRIFT -> Output flag and STOP
-3. STAGE 2: Apply user's clarification as HIGH CONFIDENCE override
-4. STAGE 3: Determine history pattern reuse level (if history available)
-5. STAGE 4: Generate SQL with mandatory requirements
-6. Output reasoning_summary + SQL
-
-OUTPUT REQUIREMENTS:
-- Always output <reasoning_summary> first
-- Then output ONE of: <new_question>, <topic_drift>, <sql>, or <multiple_sql>
-- NEVER ask another follow-up question - this is the final generation step
-
-CRITICAL REMINDERS:
-- User's response resolves the ambiguity - apply it directly
-- Every mandatory filter MUST be in WHERE clause
-- Use UPPER() for all string comparisons
-- Show calculation components (don't just show the result)
-- Do NOT ask another follow-up question under any circumstances
-"""
+    """
 
         for attempt in range(self.max_retries):
             try:

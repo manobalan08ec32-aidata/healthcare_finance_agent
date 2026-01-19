@@ -1,11 +1,11 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lower, col, collect_list, concat_ws, array_distinct, flatten, array_sort
+from pyspark.sql.functions import lower, col, collect_list, concat_ws, array_distinct, flatten, array_sort, collect_set
 import logging
 
 def extract_distinct_column_values(spark, schema_name, final_table_name):
     """
-    Extract distinct values for each column PER TABLE and store in final table.
-    Handles different actual column names across tables, converts to lowercase, and deduplicates.
+    Extract distinct values for each column across tables with optimized storage.
+    Groups values by their table combinations to minimize row count.
     Unity Catalog compatible - uses DataFrame operations only (no RDD).
     
     Args:
@@ -87,11 +87,11 @@ def extract_distinct_column_values(spark, schema_name, final_table_name):
         }
     }
     
-    # Create final table with table_name column
+    # Create final table with table_names (plural) column
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {final_table_name} (
         column_name STRING,
-        table_name STRING,
+        table_names STRING,
         distinct_values STRING
     )
     """
@@ -100,48 +100,78 @@ def extract_distinct_column_values(spark, schema_name, final_table_name):
     
     results = []
     
-    # Process each standardized column and each table separately
+    # Process each standardized column
     for std_column_name, table_columns in column_mapping.items():
         logging.info(f"Processing column: {std_column_name}")
         
-        # Process each table separately to keep values per table
+        # Build UNION query for all tables containing this column
+        # Each row will have: value, table_name
+        union_queries = []
         for table_name, actual_col_name in table_columns.items():
             query = f"""
-                SELECT DISTINCT LOWER(CAST({actual_col_name} AS STRING)) as value 
+                SELECT 
+                    LOWER(CAST({actual_col_name} AS STRING)) as value,
+                    '{table_name}' as table_name
                 FROM {schema_name}.{table_name} 
                 WHERE {actual_col_name} IS NOT NULL 
                   AND TRIM(CAST({actual_col_name} AS STRING)) != ''
             """
+            union_queries.append(query)
+        
+        # Combine all queries with UNION
+        full_query = " UNION ".join(union_queries)
+        
+        try:
+            # Execute query to get all value-table pairs
+            df = spark.sql(full_query)
             
-            try:
-                # Execute query and get distinct values as DataFrame
-                df = spark.sql(query)
+            # Group by value to collect all tables containing that value
+            # This gives us: value -> [table1, table2, ...]
+            value_to_tables = df.groupBy("value").agg(
+                collect_set("table_name").alias("tables")
+            )
+            
+            # Collect to get dictionary: {value: [tables]}
+            value_table_dict = {}
+            for row in value_to_tables.collect():
+                value = row.value
+                tables = sorted(row.tables)  # Sort tables alphabetically
+                table_key = ",".join(tables)  # Create comma-separated key
                 
-                # Collect values using DataFrame operations (no RDD)
-                df_sorted = df.orderBy("value")
-                distinct_values_list = [row.value for row in df_sorted.collect()]
+                if table_key not in value_table_dict:
+                    value_table_dict[table_key] = []
                 
-                # Join with comma
-                distinct_values_str = ','.join(distinct_values_list)
+                value_table_dict[table_key].append(value)
+            
+            # Now create rows: (column_name, table_names, distinct_values)
+            for table_combination, values in value_table_dict.items():
+                # Sort values alphabetically
+                sorted_values = sorted(values)
+                distinct_values_str = ','.join(sorted_values)
                 
-                results.append((std_column_name, table_name, distinct_values_str))
+                results.append((std_column_name, table_combination, distinct_values_str))
                 
-                logging.info(f"  ✓ {std_column_name} ({table_name}): {len(distinct_values_list)} distinct values")
-                
-            except Exception as e:
-                logging.error(f"  ✗ Error processing {std_column_name} ({table_name}): {str(e)}")
-                results.append((std_column_name, table_name, f"ERROR: {str(e)}"))
+                logging.info(f"  ✓ {std_column_name} ({table_combination}): {len(sorted_values)} distinct values")
+            
+            # Log total for this column
+            total_values = sum(len(v) for v in value_table_dict.values())
+            logging.info(f"  ✓ {std_column_name} TOTAL: {total_values} distinct values across {len(value_table_dict)} table combinations")
+            
+        except Exception as e:
+            logging.error(f"  ✗ Error processing {std_column_name}: {str(e)}")
+            results.append((std_column_name, "ERROR", f"ERROR: {str(e)}"))
     
     # Insert results into final table
     if results:
         # Create DataFrame from results
-        results_df = spark.createDataFrame(results, ["column_name", "table_name", "distinct_values"])
+        results_df = spark.createDataFrame(results, ["column_name", "table_names", "distinct_values"])
         
         # Truncate and insert
         spark.sql(f"TRUNCATE TABLE {final_table_name}")
         results_df.write.mode("append").saveAsTable(final_table_name)
         
         logging.info(f"✓ Successfully inserted {len(results)} rows into {final_table_name}")
+        logging.info(f"✓ Row count optimization achieved! Check logs for details per column.")
     
     return results
 
@@ -153,30 +183,31 @@ results = extract_distinct_column_values(
     schema_name='prd_optumrx_orxfdmprdsa.rag',
     final_table_name='prd_optumrx_orxfdmprdsa.rag.column_distinct_values'
 )
-
-=========================================
+=============================================================================
 
 -- SQL cell for index table creation
 %sql
 DROP TABLE IF EXISTS prd_optumrx_orxfdmprdsa.rag.column_values_index;
 
--- Create pre-exploded index table with table_name
+-- Create pre-exploded index table with table_names (plural, comma-separated)
 CREATE TABLE prd_optumrx_orxfdmprdsa.rag.column_values_index AS
 SELECT 
     column_name,
-    table_name,
+    table_names,
     LOWER(TRIM(value)) as value_lower
 FROM prd_optumrx_orxfdmprdsa.rag.column_distinct_values
 LATERAL VIEW EXPLODE(SPLIT(distinct_values, ',')) AS value
 WHERE TRIM(value) IS NOT NULL 
   AND TRIM(value) != '';
 
--- Optimize for search performance with table_name
-OPTIMIZE prd_optumrx_orxfdmprdsa.rag.column_values_index ZORDER BY (column_name, table_name, value_lower);
+-- Optimize for search performance
+OPTIMIZE prd_optumrx_orxfdmprdsa.rag.column_values_index ZORDER BY (column_name, value_lower);
 
-========================================
 
-# Enhanced search function with Option 1 grouping
+=============================================================================
+
+
+# Optimized search function - simpler grouping since tables are pre-grouped
 async def search_column_values(
         self,
         search_terms: List[str],
@@ -185,7 +216,7 @@ async def search_column_values(
     ) -> List[str]:
         """
         Search column values with regex word boundary matching.
-        Groups results by column_name and value, showing which tables contain each value.
+        Table names are already grouped at storage time, so no additional grouping needed.
         
         Single word: Simple LIKE
         Multi-word: 
@@ -312,11 +343,11 @@ async def search_column_values(
         
         tier_case_statement = "CASE " + " ".join(tier_cases) + " ELSE 7 END"
         
-        # Build query - now includes table_name
+        # Build query - table_names already comma-separated
         query = f"""
         SELECT 
             column_name,
-            table_name,
+            table_names,
             value_lower,
             {tier_case_statement} as tier
         FROM prd_optumrx_orxfdmprdsa.rag.column_values_index
@@ -366,76 +397,44 @@ async def search_column_values(
             
             print(f"✅ Found {len(rows)} matches after tier filtering")
             
-            # Group by (column_name, value_lower) to collect tables
-            value_data = {}
+            # Group by column_name (simpler now since tables are pre-grouped)
+            column_data = {}
             
             for row in rows:
                 col = row["column_name"]
                 val = row["value_lower"]
-                table = row["table_name"]
+                tables = row["table_names"]  # Already comma-separated
                 tier = row["tier"]
                 
-                key = (col, val)
+                if col not in column_data:
+                    column_data[col] = {"best_tier": tier, "values": []}
                 
-                if key not in value_data:
-                    value_data[key] = {
-                        "tier": tier,
-                        "tables": []
-                    }
+                # Update best tier
+                if tier < column_data[col]["best_tier"]:
+                    column_data[col]["best_tier"] = tier
                 
-                # Update tier if better
-                if tier < value_data[key]["tier"]:
-                    value_data[key]["tier"] = tier
-                
-                # Add table if not already present
-                if table not in value_data[key]["tables"]:
-                    value_data[key]["tables"].append(table)
-            
-            # Group by column for output
-            column_groups = {}
-            
-            for (col, val), info in value_data.items():
-                if col not in column_groups:
-                    column_groups[col] = {
-                        "best_tier": info["tier"],
-                        "values": []
-                    }
-                
-                # Update best tier for column
-                if info["tier"] < column_groups[col]["best_tier"]:
-                    column_groups[col]["best_tier"] = info["tier"]
-                
-                # Add value with its tables and tier
-                column_groups[col]["values"].append({
-                    "value": val,
-                    "tables": sorted(info["tables"]),  # Sort tables alphabetically
-                    "tier": info["tier"]
-                })
+                # Add value if not duplicate
+                existing_values = [v[0] for v in column_data[col]["values"]]
+                if val not in existing_values:
+                    column_data[col]["values"].append((val, tables, tier))
             
             # Sort columns by best tier, then column name
             sorted_columns = sorted(
-                column_groups.items(),
+                column_data.items(),
                 key=lambda x: (x[1]["best_tier"], x[0])
             )
             
-            # Format output - Option 1 style
+            # Format output
             results = []
             for col_name, col_info in sorted_columns[:max_columns]:
                 # Sort values by tier, then alphabetically
-                sorted_values = sorted(
-                    col_info["values"], 
-                    key=lambda x: (x["tier"], x["value"])
-                )
+                sorted_values = sorted(col_info["values"], key=lambda x: (x[2], x[0]))
                 
                 # Take top N values
                 top_values = sorted_values[:max_values_per_column]
                 
-                # Format: value1, value2 (table1, table2)
-                value_strs = []
-                for v_info in top_values:
-                    tables_str = ", ".join(v_info["tables"])
-                    value_strs.append(f"{v_info['value']} ({tables_str})")
-                
+                # Format: value (table1, table2), value2 (table3)
+                value_strs = [f"{v[0]} ({v[1]})" for v in top_values]
                 values_combined = ", ".join(value_strs)
                 
                 results.append(f"{col_name} - {values_combined}")
@@ -484,24 +483,35 @@ async def search_column_values(
         return []
 ```
 
-## Key Changes:
+## Key Changes in Optimized Version:
 
-1. **`extract_distinct_column_values`**: 
-   - Now processes each table separately instead of UNION
-   - Stores `(column_name, table_name, distinct_values)` tuples
-   - Results in more rows but with table context
+### 1. **`extract_distinct_column_values` Function:**
+- **UNION with table_name**: Each row now has `(value, table_name)` pair
+- **`collect_set("table_name")`**: Groups by value to get all tables containing it
+- **Creates table combinations**: `"claim_billing,pbm_claims"` as a single key
+- **Groups values by table combination**: All values with same table set stored together
 
-2. **SQL Index Table**:
-   - Added `table_name` column
-   - Updated ZORDER to include table_name
+### 2. **Storage Schema:**
+```
+column_name | table_names                    | distinct_values
+------------|--------------------------------|------------------
+drug_name   | claim_billing,pbm_claims       | mounjaro,pantoprazole
+drug_name   | claim_billing                  | advil
+drug_name   | pbm_claims                     | tylenol
+client_id   | claim_billing,ledger,pbm_claims| 12345,67890,... (4000 values)
+```
 
-3. **`search_column_values`**:
-   - Query now selects `table_name`
-   - Groups by `(column_name, value_lower)` to collect all tables containing each value
-   - Formats output as: `drug_name - mounjaro (claim_billing, pbm_claims), advil (pbm_claims)`
-   - **Preserves all existing tier logic unchanged**
+### 3. **Index Table:**
+- `table_names` is comma-separated string
+- ZORDER optimized for `(column_name, value_lower)`
+
+### 4. **Search Function:**
+- **Much simpler** - no grouping logic needed
+- Tables already pre-grouped in storage
+- Direct format: `value (table1,table2)`
 
 ## Example Output:
 ```
-drug_name - mounjaro (claim_billing, pbm_claims), pantoprazole (claim_billing, pbm_claims), advil (pbm_claims)
-client_id - 12345 (claim_billing, ledger_actual_vs_forecast, pbm_claims), 67890 (claim_billing, pbm_claims)
+drug_name - mounjaro (claim_billing,pbm_claims), pantoprazole (claim_billing,pbm_claims), advil (claim_billing)
+therapy_class_name - cardiovascular (claim_billing,pbm_claims), diabetes (claim_billing,pbm_claims)
+client_id - 12345 (claim_billing,ledger_actual_vs_forecast,pbm_claims), 67890 (claim_billing,pbm_claims)

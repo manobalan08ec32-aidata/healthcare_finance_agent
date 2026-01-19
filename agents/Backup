@@ -1,13 +1,31 @@
-def _build_reasoning_prompt(self, context: Dict, state: Dict) -> str:
-        """Build the reasoning and validation prompt (Call 1)
+"""
+DANA SQL Generator - Two-Stage Approach (Final Version)
+Stage 1: SQL Planner - Validates, maps, and outputs unified context
+Stage 2: SQL Writer - Takes context directly and generates SQL
+
+Key Design:
+- Single unified output format from Planner
+- Raw output passes directly to Writer
+- No intermediate parsing or format checking needed
+"""
+
+import re
+import asyncio
+from datetime import datetime
+from typing import Dict, Any
+
+
+class DANASQLGenerator:
+    """SQL Generator with two-stage reasoning approach"""
+    
+    def __init__(self, db_client, max_retries: int = 3):
+        self.db_client = db_client
+        self.max_retries = max_retries
+
+    def _build_sql_planner_prompt(self, context: Dict, state: Dict) -> str:
+        """Build the SQL planner prompt (Call 1)
         
-        This prompt handles:
-        - Filter validation against metadata
-        - Semantic mapping with confidence levels
-        - Ambiguity detection
-        - User hints/corrections
-        - Intent detection for multiple values
-        - Filter resolution with priority hierarchy
+        Outputs unified structured context for SQL writer.
         """
         
         current_question = context.get('current_question', '')
@@ -16,325 +34,213 @@ def _build_reasoning_prompt(self, context: Dict, state: Dict) -> str:
         mandatory_columns_text = state.get('mandatory_columns_text', '')
         history_question_match = state.get('history_question_match', '')
         matched_sql = state.get('matched_sql', '')
-        selected_datasets = state.get('selected_dataset', [])
-        
-        # Get table name for output
-        table_name = selected_datasets[0] if selected_datasets else "unknown_table"
-        
-        # Light history reference for filter resolution hints only
+
+        # History hint for filter resolution
         history_hint = ""
         if matched_sql and history_question_match:
             history_hint = f"""
-HISTORY REFERENCE (for filter column resolution hints only - NOT for time filters):
+HISTORY REFERENCE (for filter column resolution - NOT for time filters):
 Previous question: {history_question_match}
 <historical_sql>
 {matched_sql}
 </historical_sql>
-If current question has a filter value that appears in multiple columns, check which column history used for similar filter.
-⚠️ EXCEPTION: Do NOT use history for year/month/quarter/date - always use current question's time.
+Use history to validate filter column choices. Never use history for time values.
 """
 
-        prompt = f"""You are a SQL planning assistant for DANA (Data Analytics & Navigation Assistant).
-Your job is to VALIDATE and MAP - not to GUESS or ASSUME.
+        prompt = f"""You are DANA's SQL planner. VALIDATE and MAP - never GUESS or ASSUME.
 
-CORE PRINCIPLES:
+CORE RULES
 
 1. ONE FOLLOW-UP OPPORTUNITY
-You have exactly ONE chance to ask a clarifying question.
-- ANY ambiguity → ASK NOW (don't assume)
-- ANY unknown value → ASK NOW (don't hallucinate)
-- ANY uncertain mapping → ASK NOW (don't guess)
-BETTER TO ASK than to ASSUME WRONG.
+   You have exactly ONE chance to ask clarification:
+   - Unknown value that can't be mapped → ASK
+   - Multiple columns match same value → ASK  
+   - Vague time reference ("recently", "lately") → ASK
+   - Unclear metric or grouping intent → ASK
+   BETTER TO ASK than to ASSUME WRONG.
 
-2. TERM vs VALUE MAPPING
-- TERMS (revenue, cost, count) → Semantic matching OK
-- VALUES (MDOVA, comcard, Specialty) → EXACT match ONLY from EXTRACTED FILTERS or METADATA samples
+2. MAPPING PRINCIPLES
+   - TERMS (revenue, cost, count, margin) → Match semantically to columns
+   - VALUES (MPDOVA, Specialty, HDP) → EXACT match only from EXTRACTED FILTERS or METADATA
 
-3. ZERO ASSUMPTIONS
-❌ NEVER assume value maps to column based on similarity ("comcard" ≠ "Community Pharmacies")
-❌ NEVER invent filters not in question (no time mentioned ≠ add current month)
-❌ NEVER guess when uncertain
-✅ ALWAYS validate against EXTRACTED FILTERS and METADATA
+3. ZERO INVENTION
+   - Never add filters not mentioned in question
+   - Never assume time period if not specified
+   - Never guess column when multiple options exist
 
-4. VALIDATION BEFORE OUTPUT
-Every column must exist in METADATA.
-Every value must come from EXTRACTED FILTERS or METADATA samples or be parseable date/number.
+INPUTS
 
-INPUTS:
-
-CURRENT QUESTION: {current_question}
-
-AVAILABLE METADATA:
-{dataset_metadata}
-
-MANDATORY FILTERS:
-{mandatory_columns_text}
-
-EXTRACTED FILTER VALUES:
-{filter_metadata_results}
+QUESTION: {current_question}
+METADATA: {dataset_metadata}
+MANDATORY FILTERS: {mandatory_columns_text}
+EXTRACTED FILTER VALUES: {filter_metadata_results}
 {history_hint}
 
-STAGE 1: EXTRACT FROM QUESTION
+VALIDATION STEPS
 
-STEP 1.1: USER HINTS (check FIRST)
-Explicit guidance = HIGH CONFIDENCE override:
-- "use carrier_id" → Use that column
-- "I mean X not Y" → Use specified
-- "ignore therapy class" → Exclude
+【STEP 1: PARSE QUESTION】
 
-STEP 1.2: EXTRACT TERMS
-Concepts mapping to columns: revenue, cost, margin, count, membership, scripts, carrier, product, category, client
-SKIP: show, get, give, what, is, the, for, data
+Extract from question:
+- TERMS: Business concepts (revenue, cost, scripts, margin, carrier, client, product)
+- VALUES: Specific data points (MPDOVA, Specialty, HDP, July 2025, Q3)
+- INTENT: simple_aggregate | breakdown | comparison | top_n | trend
+- USER HINTS: Explicit guidance like "use carrier_id" → Apply as override
 
-STEP 1.3: EXTRACT VALUES  
-Specific data points: MDOVA, comcard, Specialty, HDP, July 2025, Q3, 2024
-⚠️ CRITICAL: Check METADATA for synonym mappings (e.g., "Mail->Home Delivery", "SP->Specialty", "HDP->Home Delivery")
+【STEP 2: MAP TERMS TO COLUMNS】
 
-STEP 1.4: DETECT INTENT
-- simple_aggregate: "what is total revenue"
-- breakdown: "revenue by category" or "revenue for HDP, SP"
-- comparison: "compare X vs Y"
-- top_n: "top 5", "highest"
-- trend: "over time", "monthly"
+For each TERM, find matching column in METADATA:
+- Single match found → Use it
+- Multiple matches → Follow-up required
+- No match → Follow-up required
 
-Multiple values default: GROUP BY (show each). Exception: "combined" or "total together" → aggregate.
+【STEP 2B: BUILD METRIC EXPRESSIONS】
 
-STAGE 2: MAPPING VALIDATION
+Construct full SQL expression based on METADATA structure:
 
-PRIORITY 0: HISTORY-BASED FILTER RESOLUTION (if history available)
-If filter value appears in MULTIPLE columns in EXTRACTED FILTERS:
-- Check which column HISTORY SQL used for similar filter
-- Verify that column exists in AVAILABLE METADATA
-- If both met → Use history's column (HIGH CONFIDENCE)
-- If not → Continue to STEP 2A-2F
+Pattern A - Direct Column:
+  Table has revenue_amount column
+  → SUM(t1.revenue_amount) AS total_revenue
 
-⚠️ TIME FILTER EXCEPTION: Do NOT use history for year/month/quarter. Always use current question's time.
+Pattern B - Metric Type Filter:
+  Table has amount + metric_type column
+  → SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) AS total_revenue
 
-STEP 2A: TERM → METADATA COLUMN (Semantic OK)
-- HIGH CONFIDENCE: ONE column semantically matches
-- AMBIGUOUS: Multiple columns match → follow-up
-- NO MATCH: No related column → follow-up
+Pattern C - Calculated Metric:
+  margin = revenue - cost
+  → SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) - SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('COST') THEN t1.amount ELSE 0 END) AS margin
 
-STEP 2B: VALUE → SYNONYM MAPPING (CHECK FIRST - HIGH PRIORITY)
-⚠️ BEFORE checking extracted filters or metadata samples, check AVAILABLE METADATA for synonym mappings:
-- Look for patterns like "Mail->Home Delivery", "SP->Specialty", "HDP->Home Delivery", "PBM Retail->PBM"
-- These mappings appear in column descriptions (e.g., "**product_category**: ... Mail->Home Delivery ...")
-- IF synonym mapping found → Replace value with mapped value → Use mapped column (HIGH CONFIDENCE)
-- IF no synonym mapping → Continue to STEP 2C
+【STEP 3: MAP VALUES TO COLUMNS】
 
-Example: Question has "Mail" → Metadata shows "Mail->Home Delivery" → Use product_category='Home Delivery'
+For each VALUE, resolve using this priority:
 
-STEP 2C: VALUE → EXTRACTED FILTERS (EXACT only)
-- FOUND SINGLE COLUMN: Use it ✓
-- FOUND MULTIPLE COLUMNS: Check PRIORITY 0 first, else follow-up
-- NOT FOUND: Continue to 2D
+A. SYNONYM CHECK - Look for patterns in METADATA like "Mail→Home Delivery", "SP→Specialty"
+   If found → Use mapped column with mapped value
 
-STEP 2D: VALUE → METADATA SAMPLES (EXACT only)
-- FOUND: Use that column ✓
-- NOT FOUND: Continue to 2E (if date) or mark UNKNOWN
+B. EXTRACTED FILTERS CHECK - Search for exact value match:
+   - Value in ONE column → Use it
+   - Value in MULTIPLE columns → Check HISTORY, if no history → follow-up
+   - Value NOT found → Continue to METADATA check
 
-STEP 2E: DATE/TIME PARSING
-Valid formats:
-- "July 2025" → month=7, year=2025
-- "Q3 2024" → quarter='Q3', year=2024
-- "Q3" alone → quarter='Q3'
-- "2025" → year=2025
-- "Jan to March 2025" → month IN (1,2,3), year=2025
+C. HISTORY SQL REFERENCE (if available)
+   - Value in MULTIPLE columns + History used one → Use history's column
+   - Value in SINGLE column + Same in history → Confirms mapping
+   ⚠️ Never use history for TIME filters
 
-Months: Jan=1, Feb=2, Mar=3, Apr=4, May=5, Jun=6, Jul=7, Aug=8, Sep=9, Oct=10, Nov=11, Dec=12
-Quarters: Q1=(1,2,3), Q2=(4,5,6), Q3=(7,8,9), Q4=(10,11,12)
+D. METADATA SAMPLES CHECK - Search sample values in column descriptions
+   Found → Use that column
 
-Invalid → follow-up: "recently", "lately", "a while ago"
+E. VALUE NOT MAPPED - If fails all checks and not a number → Follow-up required
+
+【STEP 4: MAP TIME FILTERS】
+
+If question contains time references:
+1. PARSE naturally (July 2025, Q3 2024, 2025, Jan to March 2025, YTD)
+   Vague like "recently", "lately" → Follow-up required
+2. MAP to date columns in METADATA (year, month, quarter, or date columns)
+3. CONSTRUCT filter with correct data type
+
 No time mentioned → Do NOT add time filters
 
-STEP 2F: ATTRIBUTE → COLUMN
-- "by carrier" → carrier columns
-- "by client" → ora_client_id, ora_client_description  
-- "by product" → product_category, product_sub_category
-- "by LOB" → line_of_business
-Unclear → follow-up
+【STEP 5: MANDATORY FILTER CHECK】
 
-STEP 2G: UNKNOWN VALUE CHECK
-Each value must pass ONE: Synonym mapped (2B) | Found in EXTRACTED (2C) | Found in METADATA (2D) | Parsed as date (2E) | Is number
-ANY value fails all → UNKNOWN → FOLLOWUP_REQUIRED
+Every MANDATORY filter must appear in output.
+Missing mandatory → Cannot generate SQL
 
-STAGE 3: MULTI-TABLE HANDLING
+【STEP 6: MULTI-TABLE HANDLING】
 
-IF single table selected:
-- query_type = "SINGLE_TABLE"
+Single table → Include one QUERY block
+Multiple tables with JOIN INFO → Include JOIN details
+Multiple tables, no join → Include separate QUERY blocks
 
-IF multiple tables selected:
+【STEP 7: FINAL DECISION】
 
-CHECK 1: Is JOIN INFORMATION provided?
-- YES → query_type = "MULTI_TABLE_JOIN", use join_info
+FOLLOWUP_REQUIRED if ANY: Unknown value | Ambiguous column | Vague time | Unclear intent
+SQL_READY if ALL: Every term mapped | Every value mapped | Time mapped (or none needed)
 
-CHECK 2: Can question be answered by single table?
-- YES → query_type = "SINGLE_TABLE", use that table only
+OUTPUT FORMAT
 
-CHECK 3: Do tables have complementary data (no join possible)?
-- YES → query_type = "MULTI_TABLE_SEPARATE"
-  - Split question into parts
-  - Assign each part to appropriate table
-  - Each table answers partial question
-  - Add "answers_part" to each table indicating what it answers
+Output ONLY <context> block, optionally followed by <followup>:
 
-CHECK 4: None of above?
-- Ask follow-up about which table to use
+<context>
+DECISION: [SQL_READY | FOLLOWUP_REQUIRED]
+QUERY_TYPE: [SINGLE_TABLE | MULTI_TABLE_JOIN | MULTI_TABLE_SEPARATE]
+INTENT: [simple_aggregate | breakdown | comparison | top_n | trend]
 
-STAGE 4: DECISION
+QUERY_1:
+TABLE: [full.table.name] AS [alias]
+ANSWERS: [what this query answers - use "full question" for single query]
 
-FOLLOWUP_REQUIRED if ANY: Unknown value | Ambiguous column | Ambiguous metric | Unclear attribute | Vague time
-SQL_READY only if ALL: All mappings HIGH CONFIDENCE | All values found | No ambiguity
+SELECT:
+- [t1.column1]
+- [SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) AS revenue]
 
-OUTPUT FORMAT:
+FILTERS:
+- [UPPER(t1.carrier_id) = UPPER('MPDOVA')] [STRING]
+- [t1.year = 2025] [INT]
+- [t1.month = 7] [INT]
+- [UPPER(t1.ledger) = UPPER('GAAP')] [MANDATORY]
 
-Output EXACTLY:
-1. <reasoning> block
-2. Either <followup> OR <context>JSON</context>
+GROUP_BY: [t1.column1, t1.column2] or [none]
+ORDER_BY: [revenue DESC] or [none]
+LIMIT: [10] or [none]
 
-<reasoning>
-STEP 1 - EXTRACTED:
-- Terms: [list]
-- Values: [list]  
-- Intent: [type]
-- User hints: [list or none]
+JOIN: [t1.key = t2.key LEFT JOIN] or [none]
 
-STEP 2 - TERM MAPPINGS:
-- "[term]" → [column] (HIGH CONFIDENCE | AMBIGUOUS | NO MATCH)
+QUERY_2 (only if MULTI_TABLE_SEPARATE or MULTI_TABLE_JOIN):
+TABLE: [full.table.name] AS [alias]
+ANSWERS: [what this query answers]
 
-STEP 3 - VALUE MAPPINGS:
-- "[value]" → SYNONYM: [FOUND mapping→actual_value | NOT FOUND] → EXTRACTED: [FOUND in X | NOT FOUND] → METADATA: [FOUND in X | NOT FOUND] → Date: [PARSED | N/A] → RESULT: [column=value | UNKNOWN]
+SELECT:
+- [columns and expressions]
 
-STEP 4 - MULTI-TABLE CHECK:
-- Tables selected: [count]
-- Join available: [YES/NO]
-- Query type decision: [SINGLE_TABLE | MULTI_TABLE_JOIN | MULTI_TABLE_SEPARATE]
-- Reason: [why this decision]
+FILTERS:
+- [filters with type tags]
 
-STEP 5 - DECISION: [SQL_READY | FOLLOWUP_REQUIRED]
-- Reason: [why]
-</reasoning>
+GROUP_BY: [columns] or [none]
+ORDER_BY: [direction] or [none]
+LIMIT: [number] or [none]
+</context>
 
-IF FOLLOWUP_REQUIRED:
+IF FOLLOWUP_REQUIRED, add after </context>:
 
 <followup>
 I need one clarification to generate accurate SQL:
 
-[AMBIGUITY_TYPE]: [Direct question]
+[Brief question about the specific ambiguity]
 
-Available options:
-1. [column_name] - [description with sample values]
-2. [column_name] - [description with sample values]
+Options:
+1. [column_name] - [brief description with sample values]
+2. [column_name] - [brief description with sample values]
 
-Please specify which one.
+Which one did you mean?
 </followup>
 
-Ambiguity types: Unknown filter value | Ambiguous column | Ambiguous metric | Unclear attribute | Vague time reference
-
-IF SQL_READY:
-
-Output valid JSON wrapped in <context> tags. The JSON must follow this exact structure:
-
-<context>
-{{
-  "decision": "SQL_READY",
-  "query_type": "[SINGLE_TABLE | MULTI_TABLE_JOIN | MULTI_TABLE_SEPARATE]",
-  
-  "tables": [
-    {{
-      "name": "[full.table.name]",
-      "alias": "[alias]",
-      "role": "[PRIMARY | SECONDARY]",
-      "answers_part": "[what this table answers - only for MULTI_TABLE_SEPARATE, else null]",
-      "filters": [
-        {{"column": "[col]", "operator": "[=|IN|>|<]", "value": "[val]", "source": "[MANDATORY|QUESTION|EXTRACTED]"}}
-      ],
-      "columns_needed": ["[col1]", "[col2]"]
-    }}
-  ],
-  
-  "join_info": {{
-    "type": "[LEFT JOIN | INNER JOIN | null if not applicable]",
-    "condition": "[t1.col = t2.col | null]",
-    "source": "[PROVIDED | null]"
-  }},
-  
-  "separate_queries_reason": "[reason for MULTI_TABLE_SEPARATE | null if not applicable]",
-  
-  "metric": {{
-    "is_split": [true if MULTI_TABLE_SEPARATE | false],
-    "requested_term": "[user term - for single metric]",
-    "column": "[column_name - for single metric]",
-    "metric_type_filter": "[value or null - for single metric]",
-    "additional_metric_types": [],
-    "aggregation": "[SUM|COUNT|AVG - for single metric]",
-    "parts": [
-      {{
-        "table": "[alias]",
-        "term": "[term]",
-        "column": "[col]",
-        "metric_type_filter": "[val or null]",
-        "aggregation": "[SUM|COUNT]"
-      }}
-    ]
-  }},
-  
-  "grouping": {{
-    "columns": [{{"table": "[alias]", "column": "[col]"}}],
-    "intent": "[simple_aggregate|breakdown|comparison|top_n|trend]"
-  }},
-  
-  "time_filters": {{
-    "has_time_filter": [true|false],
-    "year": [value or null],
-    "month": [value or null],
-    "quarter": "[value or null]"
-  }},
-  
-  "user_hints_applied": []
-}}
-</context>
-
-JSON FIELD RULES:
-- query_type: Always required
-- tables: Array with 1 entry for SINGLE_TABLE, 2+ for multi-table
-- tables[].answers_part: Only populate for MULTI_TABLE_SEPARATE, else null
-- join_info: Populate for MULTI_TABLE_JOIN, null for others
-- separate_queries_reason: Only populate for MULTI_TABLE_SEPARATE, else null
-- metric.is_split: true only for MULTI_TABLE_SEPARATE
-- metric.parts: Only populate for MULTI_TABLE_SEPARATE, else empty array []
-- metric.requested_term/column/metric_type_filter/aggregation: Populate for SINGLE_TABLE and MULTI_TABLE_JOIN
-
-CRITICAL: Your response must contain ONLY the <reasoning> block followed by EITHER <followup> OR <context> with valid JSON inside. Do not include any other text.
-
+RULES FOR OUTPUT
+- Always include DECISION, QUERY_TYPE, INTENT at top
+- Always use QUERY_1 block (even for single table)
+- QUERY_2 only when multiple tables needed
+- FILTERS must include data type: [STRING], [INT], [DATE]
+- FILTERS must mark [MANDATORY] for mandatory filters
+- String filters must use UPPER(): UPPER(col) = UPPER('value')
+- SELECT expressions must be complete and ready to use
+- Use table alias (t1, t2) for all column references
 """
         return prompt
-    
-    def _build_sql_writer_prompt(self, context_json: Dict, state: Dict, current_question: str) -> str:
-        """Build the SQL generation prompt with history pattern learning (Call 2)
+
+
+    def _build_sql_writer_prompt(self, context_output: str, state: Dict, current_question: str) -> str:
+        """Build the SQL writer prompt (Call 2)
         
-        This prompt handles:
-        - History pattern detection (GROUPING SETS, UNION, SIMPLE)
-        - Enhancement decision (inherit breakdown from history)
-        - metric_type handling (CASE WHEN pivot vs GROUP BY)
-        - Component display rule
-        - Query patterns (TOP N, TIME COMPARISON, etc.)
-        - All SQL formatting rules
-        
-        Args:
-            context_json: Validated context from Call 1
-            state: Agent state with history and metadata
-            current_question: The current user question from context
+        Takes raw context from planner and generates SQL with pattern learning.
         """
         
         history_question_match = state.get('history_question_match', '')
         matched_sql = state.get('matched_sql', '')
         has_history = bool(matched_sql and history_question_match)
         
-        # Build history section for pattern learning
+        # Build history section
         if has_history:
             history_section = f"""
-
 HISTORICAL SQL FOR PATTERN LEARNING
 
 PREVIOUS QUESTION: {history_question_match}
@@ -343,13 +249,10 @@ PREVIOUS QUESTION: {history_question_match}
 {matched_sql}
 </historical_sql>
 
-PURPOSE: History represents LEARNED DETAIL PREFERENCES. Your goal is to ENHANCE simple questions with historical detail patterns - not just copy SQL.
-PRINCIPLE: If history shows breakdown + totals, provide that detail level even if user asks a simple question.
+PURPOSE: History represents LEARNED DETAIL PREFERENCES. Enhance simple questions with historical detail patterns.
+PRINCIPLE: If history shows breakdown + totals, provide that detail level even if user asks simple question.
 
-
-STAGE 1: PATTERN ANALYSIS (do this FIRST before any SQL)
-
-Analyze HISTORICAL SQL structure:
+PATTERN DETECTION:
 
 DETECT PATTERN TYPE:
 - Contains "GROUPING SETS" + "GROUPING(" function → GROUPING_SETS_TOTAL
@@ -358,8 +261,7 @@ DETECT PATTERN TYPE:
 
 IF GROUPING_SETS_TOTAL detected, extract:
 - breakdown_column: column inside GROUPING() function
-- parent_dimension: the parent filter column (e.g., product_category)
-- grouping_sets_structure: the exact GROUPING SETS clause
+- parent_dimension: the parent filter column
 - total_label: label used (OVERALL_TOTAL, Total, etc.)
 - order_position: total first (0) or last (1) in ORDER BY
 
@@ -367,13 +269,12 @@ IF UNION_TOTAL detected, extract:
 - How the total row is constructed
 - What literal is used for the total label
 
-STAGE 2: ENHANCEMENT DECISION
+ENHANCEMENT DECISION:
 
-ENHANCE with history pattern = YES when ALL true:
+ENHANCE = YES when ALL true:
 ✓ Pattern is GROUPING_SETS_TOTAL or UNION_TOTAL
 ✓ Same/similar metric (both ask for revenue, both ask for cost, etc.)
 ✓ Current question filters on PARENT dimension of history's breakdown
-  (e.g., history breaks down product_sub_category_lvl_2, current filters product_category)
 ✓ User did NOT say "total only", "just sum", "single number", "aggregate only"
 
 ENHANCE = NO when ANY true:
@@ -381,14 +282,6 @@ ENHANCE = NO when ANY true:
 ✗ Different metric type entirely
 ✗ User explicitly wants only aggregate total
 ✗ Current already has different explicit grouping
-
-WHEN TO APPLY PATTERN (if ENHANCE = YES):
-- User explicitly asks for breakdown → Apply
-- History has breakdown on sub-dimension + current filters parent + same metric → Apply
-- User asks comparison across time periods → Apply
-
-ONLY SKIP PATTERN WHEN:
-- User explicitly says "total only", "just the sum", "single number"
 """
         else:
             history_section = """
@@ -397,57 +290,25 @@ No historical SQL available. Generate fresh SQL based on context.
 Set pattern_detected = NONE and history_sql_used = false
 """
 
-
-        prompt = f"""You are a Databricks SQL generator for DANA. Generate SQL using validated context and learn patterns from historical SQL.
+        prompt = f"""You are a Databricks SQL generator for DANA. Generate SQL using planned context and learn patterns from historical SQL.
 
 CURRENT QUESTION: {current_question}
 
-VALIDATED CONTEXT:
-{context_json}
-
+PLANNED CONTEXT:
+{context_output}
 {history_section}
 
-STAGE 1: PATTERN ANALYSIS (if history available)
-
-Analyze HISTORICAL SQL structure:
-
-DETECT PATTERN:
-- "GROUPING SETS" + "GROUPING(" → GROUPING_SETS_TOTAL
-- "UNION ALL" + 'Total'/'OVERALL' → UNION_TOTAL
-- Neither → SIMPLE
-
-IF GROUPING_SETS_TOTAL detected, extract:
-- breakdown_column: column inside GROUPING()
-- parent_dimension: parent filter column
-- total_label: label used (OVERALL_TOTAL, etc.)
-- order_position: total first (0) or last (1)
-
-STAGE 2: ENHANCEMENT DECISION
-
-ENHANCE with history pattern = YES when ALL true:
-✓ Pattern is GROUPING_SETS_TOTAL or UNION_TOTAL
-✓ Same/similar metric as history
-✓ Current filters on PARENT dimension of history's breakdown
-✓ User did NOT say "total only" / "just sum"
-
-ENHANCE = NO when ANY true:
-✗ Pattern is SIMPLE
-✗ Different metric type
-✗ User explicitly wants only aggregate
-
-STAGE 3: SQL GENERATION RULES
+SQL GENERATION RULES
 
 PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
 
-M1. MANDATORY FILTERS - Must be in WHERE clause
-- Check context.tables[].filters where source = "MANDATORY"
-- If ledger is MANDATORY → WHERE UPPER(ledger) = UPPER('GAAP')
-- If product_category='PBM' is MANDATORY → WHERE UPPER(product_category) = UPPER('PBM')
+M1. MANDATORY FILTERS
+- Filters marked [MANDATORY] MUST be in WHERE clause
 - NEVER omit mandatory filters
 
 M2. CASE-INSENSITIVE STRING COMPARISON
-- Always use: WHERE UPPER(column) = UPPER('value')
-- Never use: WHERE column = 'value'
+- Context already has UPPER() applied - use expressions as provided
+- For any new strings: WHERE UPPER(column) = UPPER('value')
 
 M3. SAFE DIVISION
 - Always use: NULLIF(denominator, 0)
@@ -459,24 +320,22 @@ M4. NUMERIC FORMATTING
 
 PRIORITY 1: METRIC TYPE HANDLING (critical for calculations)
 
-When metric.metric_type_filter is provided:
+FOR SINGLE METRIC with CASE WHEN in SELECT:
+- Use the expression exactly as provided in context
+- Do NOT add metric_type to GROUP BY
 
-FOR SINGLE METRIC:
-- Filter: WHERE UPPER(metric_type) = UPPER('[value]')
-- Aggregate: SUM(amount_or_count) or as specified
-
-FOR CALCULATIONS (margin, ratios, differences) with additional_metric_types:
+FOR CALCULATIONS (margin, ratios, differences):
 Pivot metric_type into CASE WHEN columns, do NOT group by metric_type:
 
 CORRECT:
 SELECT 
     dimension,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) AS revenues,
-    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END) AS cogs,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount_or_count ELSE 0 END) - 
-          SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS Post Reclass') THEN amount_or_count ELSE 0 END), 0) AS gross_margin
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) AS revenues,
+    SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END) AS cogs,
+    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Revenues') THEN amount ELSE 0 END) - 
+          SUM(CASE WHEN UPPER(metric_type) = UPPER('COGS') THEN amount ELSE 0 END), 0) AS gross_margin
 FROM table
-WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS Post Reclass'))
+WHERE UPPER(metric_type) IN (UPPER('Revenues'), UPPER('COGS'))
 GROUP BY dimension
 
 WRONG (breaks calculations):
@@ -489,8 +348,8 @@ For ANY calculated metric, show source components:
 Example for "cost per script":
 SELECT 
   dimension,
-  SUM(total_cost) AS total_cost,
-  SUM(script_count) AS script_count,
+  ROUND(SUM(total_cost), 0) AS total_cost,
+  ROUND(SUM(script_count), 0) AS script_count,
   ROUND(SUM(total_cost) / NULLIF(SUM(script_count), 0), 2) AS cost_per_script
 FROM table
 GROUP BY dimension
@@ -498,7 +357,7 @@ GROUP BY dimension
 PRIORITY 3: QUERY PATTERNS
 
 PATTERN - TOP N:
-SELECT column, SUM(metric) AS metric
+SELECT column, ROUND(SUM(metric), 0) AS metric
 FROM table WHERE [filters]
 GROUP BY column
 ORDER BY metric DESC
@@ -506,90 +365,98 @@ LIMIT N
 
 PATTERN - TIME COMPARISON (side-by-side periods):
 SELECT dimension,
-       SUM(CASE WHEN month = 7 THEN amount_or_count ELSE 0 END) AS jul_value,
-       SUM(CASE WHEN month = 8 THEN amount_or_count ELSE 0 END) AS aug_value
+       ROUND(SUM(CASE WHEN month = 7 THEN amount ELSE 0 END), 0) AS jul_value,
+       ROUND(SUM(CASE WHEN month = 8 THEN amount ELSE 0 END), 0) AS aug_value
 FROM table
 WHERE [filters] AND month IN (7, 8)
 GROUP BY dimension
 
 PATTERN - PERCENTAGE OF TOTAL:
 SELECT column,
-       SUM(metric) AS value,
-       ROUND(SUM(metric) * 100.0 / (SELECT SUM(metric) FROM table WHERE [same filters]), 3) AS pct
+       ROUND(SUM(metric), 0) AS value,
+       ROUND(SUM(metric) * 100.0 / NULLIF((SELECT SUM(metric) FROM table WHERE [same filters]), 0), 3) AS pct
 FROM table WHERE [filters]
 GROUP BY column
 
 PATTERN - BREAKDOWN BY MULTIPLE VALUES:
-SELECT product_category, SUM(amount_or_count) AS value
+SELECT product_category, ROUND(SUM(amount), 0) AS value
 FROM table
 WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
 GROUP BY product_category
 
-READING CONTEXT BY QUERY TYPE:
+READING CONTEXT:
 
-IF query_type = "SINGLE_TABLE":
-- Table: context.tables[0].name
-- Alias: context.tables[0].alias
-- Filters: context.tables[0].filters
-- Columns: context.tables[0].columns_needed
-- Generate single SQL
+QUERY_TYPE = SINGLE_TABLE:
+- Read QUERY_1 block
+- Build single SELECT...FROM...WHERE...GROUP BY statement
 
-IF query_type = "MULTI_TABLE_JOIN":
-- PRIMARY table: tables[] where role = "PRIMARY"
-- SECONDARY table(s): tables[] where role = "SECONDARY"
-- Join: context.join_info.type + context.join_info.condition
-- Apply each table's filters with table alias
-- Generate single SQL with JOIN
+QUERY_TYPE = MULTI_TABLE_JOIN:
+- Read QUERY_1 and QUERY_2 blocks
+- Use JOIN clause from context
+- Build single SQL with JOIN
 
-IF query_type = "MULTI_TABLE_SEPARATE":
-- Generate SEPARATE SQL for each table
-- Each table has "answers_part" indicating what it answers
-- Use metric.parts[] to get metric details per table
-- Apply each table's filters independently
-- Output as <multiple_sql> format
-- Each query answers part of the user's question
+QUERY_TYPE = MULTI_TABLE_SEPARATE:
+- Read each QUERY_N block
+- Generate SEPARATE SQL for each
+- Each query answers part of the question (see ANSWERS field)
+- Output in <multiple_sql> format
 
-TIME FILTERS:
-- If context.time_filters.has_time_filter = true:
-  - Add year = [value] if year is not null
-  - Add month = [value] if month is not null
-  - Add quarter = '[value]' if quarter is not null
+BUILDING SQL FROM CONTEXT:
 
-GROUPING:
-- Use context.grouping.columns for GROUP BY
-- Each entry has {{table, column}} - use table alias in multi-table queries
-- Intent guides structure: breakdown → GROUP BY, simple_aggregate → no grouping on dimensions
+1. SELECT: Use expressions from SELECT section exactly as provided
+2. FROM: Use TABLE from context with alias
+3. WHERE: Apply all FILTERS from context (already have UPPER() for strings)
+4. GROUP BY: Use GROUP_BY from context (skip if "none")
+5. ORDER BY: Use ORDER_BY from context (skip if "none")
+6. LIMIT: Use LIMIT from context (skip if "none")
 
-STAGE 4: APPLY HISTORY PATTERN (if ENHANCE = YES)
+APPLY HISTORY PATTERN (if ENHANCE = YES):
 
 IF GROUPING_SETS_TOTAL:
 SELECT
     parent_dimension,
     CASE WHEN GROUPING(breakdown_column) = 1 THEN 'OVERALL_TOTAL' ELSE breakdown_column END AS breakdown_column,
-    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Metric') THEN amount_or_count ELSE 0 END), 0) AS metric_alias
+    ROUND(SUM(CASE WHEN UPPER(metric_type) = UPPER('Metric') THEN amount ELSE 0 END), 0) AS metric_alias
 FROM table
 WHERE [all context filters]
 GROUP BY GROUPING SETS (
     (parent_dimension, breakdown_column),
     (parent_dimension)
 )
-ORDER BY CASE WHEN breakdown_column = 'OVERALL_TOTAL' THEN 0 ELSE 1 END, breakdown_column
+ORDER BY parent_dimension, CASE WHEN breakdown_column = 'OVERALL_TOTAL' THEN 0 ELSE 1 END, breakdown_column
 
 IF UNION_TOTAL:
-Detail query UNION ALL total query with 'OVERALL_TOTAL' literal
+-- Detail query
+SELECT dimension, breakdown_col, ROUND(SUM(metric), 0) AS metric
+FROM table WHERE [filters]
+GROUP BY dimension, breakdown_col
+
+UNION ALL
+
+-- Total query  
+SELECT dimension, 'OVERALL_TOTAL' AS breakdown_col, ROUND(SUM(metric), 0) AS metric
+FROM table WHERE [filters]
+GROUP BY dimension
+
+ORDER BY dimension, CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
 
 IF ENHANCE = NO:
-Generate straightforward SQL based on context.grouping.intent
+Generate straightforward SQL based on context INTENT:
+- simple_aggregate → No GROUP BY on dimensions, just aggregate
+- breakdown → GROUP BY dimension columns
+- comparison → Side-by-side CASE WHEN for periods/categories
+- top_n → ORDER BY metric DESC LIMIT N
+- trend → GROUP BY time dimension, ORDER BY time
 
-OUTPUT FORMAT:
+OUTPUT FORMAT
 
 FOR SINGLE_TABLE and MULTI_TABLE_JOIN:
 
 <pattern_analysis>
-pattern_detected: GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE
+pattern_detected: [GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE]
 breakdown_column: [column or null]
 parent_dimension: [column or null]
-enhance_decision: YES | NO
+enhance_decision: [YES | NO]
 enhance_reason: [brief explanation]
 </pattern_analysis>
 
@@ -601,7 +468,7 @@ enhance_reason: [brief explanation]
 [2-3 sentences explaining the query in business terms]
 </sql_story>
 
-<history_sql_used>true | false</history_sql_used>
+<history_sql_used>[true | false]</history_sql_used>
 
 FOR MULTI_TABLE_SEPARATE:
 
@@ -612,48 +479,61 @@ enhance_reason: Multiple separate queries - history pattern not applicable
 </pattern_analysis>
 
 <multiple_sql>
-<query1_title>[What this query answers - max 8 words]</query1_title>
+<query1_title>[From QUERY_1 ANSWERS field - max 8 words]</query1_title>
 <query1>
-[SQL for table 1]
+[SQL for QUERY_1]
 </query1>
-<query2_title>[What this query answers - max 8 words]</query2_title>
+<query2_title>[From QUERY_2 ANSWERS field - max 8 words]</query2_title>
 <query2>
-[SQL for table 2]
+[SQL for QUERY_2]
 </query2>
 </multiple_sql>
 
 <sql_story>
-[Explain that question required data from multiple tables without join relationship, so separate queries were generated. Describe what each query returns.]
+[Explain that question required data from multiple tables without join relationship. Describe what each query returns.]
 </sql_story>
 
 <history_sql_used>false</history_sql_used>
 """
         return prompt
 
+
+    def _extract_context_and_followup(self, response: str) -> tuple[str, bool, str]:
+        """Extract context block and check for followup
+        
+        Returns:
+            tuple: (context_content, needs_followup, followup_text)
+        """
+        
+        # Extract context block
+        context_match = re.search(r'<context>(.*?)</context>', response, re.DOTALL)
+        if not context_match:
+            raise ValueError("No <context> block found in response")
+        
+        context_content = context_match.group(1).strip()
+        
+        # Check for followup - either in tag or in DECISION
+        followup_match = re.search(r'<followup>(.*?)</followup>', response, re.DOTALL)
+        needs_followup = bool(followup_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
+        followup_text = followup_match.group(1).strip() if followup_match else ""
+        
+        return context_content, needs_followup, followup_text
+
+
     async def _assess_and_generate_sql_async(self, context: Dict, state: Dict) -> Dict[str, Any]:
-        """SQL generation with two-stage approach: Reasoning + SQL Writing
+        """SQL generation with two-stage approach
         
-        Stage 1 (Call 1): Reasoning & Context Builder
-        - Validates filters against metadata
-        - Resolves ambiguities
-        - Builds structured context
-        - Returns follow-up if needed
-        
-        Stage 2 (Call 2): SQL Generation with Pattern Learning
-        - Analyzes history SQL for patterns
-        - Decides enhancement strategy
-        - Generates SQL with mandatory rules
+        Stage 1 (SQL Planner): Validates and builds context
+        Stage 2 (SQL Writer): Generates SQL from context
         """
         
         current_question = context.get('current_question', '')
-        dataset_metadata = context.get('dataset_metadata', '')
         selected_datasets = state.get('selected_dataset', [])
-        filter_metadata_results = state.get('filter_metadata_results', [])
         
-        
+        # ============================================================
         # STEP 1: Search for historical SQL feedback
-        
-        print(f"🔍 Searching feedback SQL embeddings for selected dataset(s): {selected_datasets}")
+        # ============================================================
+        print(f"🔍 Searching feedback SQL for: {selected_datasets}")
         feedback_results = await self.db_client.sp_vector_search_feedback_sql(
             current_question, table_names=selected_datasets
         )
@@ -663,43 +543,30 @@ enhance_reason: Multiple separate queries - history pattern not applicable
         matched_table_name = ''
         
         if feedback_results:
-            print(f"🤖 Analyzing {len(feedback_results)} feedback SQL candidates from selected dataset(s)...")
+            print(f"🤖 Analyzing {len(feedback_results)} feedback candidates...")
             feedback_selection_result = await self.db_client._llm_feedback_selection(feedback_results, state)
             
             if feedback_selection_result.get('status') == 'match_found':
                 matched_seq_id = feedback_selection_result.get('seq_id')
                 
-                # Find matching record
-                matched_record = None
                 for result in feedback_results:
                     if result.get('seq_id') == matched_seq_id:
-                        matched_record = result
+                        history_question_match = result.get('user_question', '')
+                        matched_sql = result.get('sql_query', '')
+                        matched_table_name = result.get('table_name', '')
+                        
+                        state['history_question_match'] = history_question_match
+                        state['matched_sql'] = matched_sql
+                        state['matched_table_name'] = matched_table_name
+                        
+                        print(f"✅ History match: {matched_table_name}")
                         break
-                
-                if matched_record:
-                    history_question_match = matched_record.get('user_question', '')
-                    matched_sql = matched_record.get('sql_query', '')
-                    matched_table_name = matched_record.get('table_name', '')
-                    
-                    # Store in state
-                    state['history_question_match'] = history_question_match
-                    state['matched_sql'] = matched_sql
-                    state['matched_table_name'] = matched_table_name
-                    
-                    print(f"✅ Feedback match found from {matched_table_name}")
-                    print(f"   Matched question: {history_question_match[:100]}...")
-                else:
-                    print(f"⚠️ Matched seq_id {matched_seq_id} not found in results")
-            else:
-                print(f"ℹ️ No suitable feedback SQL match found (status: {feedback_selection_result.get('status')})")
-        else:
-            print(f"ℹ️ No feedback SQL embeddings found for selected dataset(s)")
         
-        has_history = bool(matched_sql and history_question_match and matched_table_name)
+        has_history = bool(matched_sql and history_question_match)
         
-        
-        # STEP 2: Build mandatory columns text
-        
+        # ============================================================
+        # STEP 2: Build mandatory columns
+        # ============================================================
         mandatory_column_mapping = {
             "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": ["Ledger"],
             "prd_optumrx_orxfdmprdsa.rag.pbm_claims": ["product_category='PBM'"]
@@ -709,51 +576,43 @@ enhance_reason: Multiple separate queries - history pattern not applicable
         if isinstance(selected_datasets, list):
             for dataset in selected_datasets:
                 if dataset in mandatory_column_mapping:
-                    mandatory_columns = mandatory_column_mapping[dataset]
-                    for col in mandatory_columns:
+                    for col in mandatory_column_mapping[dataset]:
                         mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
-                else:
-                    mandatory_columns_info.append(f"Table {dataset}: Not Applicable")
         
-        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "No mandatory columns required"
-        state['mandatory_columns_text'] = mandatory_columns_text
+        state['mandatory_columns_text'] = "\n".join(mandatory_columns_info) if mandatory_columns_info else "None"
         
+        # ============================================================
+        # CALL 1: SQL Planner
+        # ============================================================
+        print("=" * 60)
+        print("📋 CALL 1: SQL Planner")
+        print("=" * 60)
         
-        # CALL 1: Reasoning & Context Builder
+        planner_prompt = self._build_sql_planner_prompt(context, state)
+        print(f"📊 Prompt: {len(planner_prompt)} chars | {datetime.now().strftime('%H:%M:%S')}")
         
-        print("=" * 70)
-        print("📋 CALL 1: Running reasoning and validation...")
-        print("=" * 70)
-        print("Current Timestamp before Call 1:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        
-        reasoning_prompt = self._build_reasoning_prompt(context, state)
-        print(f"📊 Call 1 Prompt Length: {len(reasoning_prompt)} chars")
-        
-        context_json = None
+        context_output = None
         
         for attempt in range(self.max_retries):
             try:
-                reasoning_response = await self.db_client.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": reasoning_prompt}],
+                planner_response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": planner_prompt}],
                     max_tokens=1500,
                     temperature=0.0,
                     top_p=0.1,
-                    system_prompt="You are a SQL planning assistant. Analyze questions, validate mappings against metadata, and output structured JSON context. Output ONLY valid JSON, no explanations, no markdown code blocks."
+                    system_prompt="You are a SQL planner. Output ONLY <context> block, optionally followed by <followup>. No other text."
                 )
                 
-                print("Call 1 Raw Response:", reasoning_response)
-                print("Current Timestamp after Call 1:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print(f"Response: {len(planner_response)} chars")
+                print(f"Preview: {planner_response[:600]}...")
                 
-                # Parse response - check for <followup> or <context> tags
-                clean_response = reasoning_response.strip()
+                # Extract context and check followup
+                context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response)
                 
-                # Check if this is a followup response first
-                followup_match = re.search(r'<followup>(.*?)</followup>', clean_response, re.DOTALL)
-                if followup_match:
-                    followup_text = followup_match.group(1).strip()
-                    print(f"❓ Follow-up required: {followup_text[:200]}...")
-                    
+                if needs_followup:
+                    print(f"❓ Followup needed: {followup_text[:150]}...")
                     state['is_sql_followup'] = True
+                    state['reasoning_context'] = context_output
                     
                     return {
                         'success': True,
@@ -761,126 +620,71 @@ enhance_reason: Multiple separate queries - history pattern not applicable
                         'sql_followup_questions': followup_text,
                         'used_history_asset': False,
                         'history_sql_used': False,
-                        'reasoning_context': None
+                        'reasoning_context': context_output
                     }
                 
-                # Try to extract JSON from <context> tags
-                context_match = re.search(r'<context>(.*?)</context>', clean_response, re.DOTALL)
-                if context_match:
-                    clean_response = context_match.group(1).strip()
-                    print("📦 Extracted JSON from <context> tags")
-                else:
-                    # Remove markdown code blocks if present
-                    if clean_response.startswith("```json"):
-                        clean_response = clean_response[7:]
-                    elif clean_response.startswith("```"):
-                        clean_response = clean_response[3:]
-                    if clean_response.endswith("```"):
-                        clean_response = clean_response[:-3]
-                    clean_response = clean_response.strip()
-                
-                context_json = json.loads(clean_response)
-                
-                print(f"✅ Call 1 Parsed Successfully: decision={context_json.get('decision')}")
-                
-                # Legacy check for decision field (in case LLM returns JSON with decision=FOLLOWUP_REQUIRED)
-                if context_json.get('decision') == 'FOLLOWUP_REQUIRED':
-                    followup_question = context_json.get('followup_question', 'Could you please clarify your question?')
-                    state['is_sql_followup'] = True
-                    state['reasoning_context'] = context_json
-                    
-                    print(f"❓ Follow-up required (from JSON): {followup_question}")
-                    
-                    return {
-                        'success': True,
-                        'needs_followup': True,
-                        'sql_followup_questions': followup_question,
-                        'used_history_asset': False,
-                        'history_sql_used': False,
-                        'reasoning_context': context_json
-                    }
-                
-                # Store context for debugging
-                state['reasoning_context'] = context_json
+                print("✅ Planner complete - SQL_READY")
+                state['reasoning_context'] = context_output
                 break
                 
-            except json.JSONDecodeError as e:
-                print(f"❌ Call 1 JSON parse error (attempt {attempt + 1}): {str(e)}")
-                print(f"   Raw response: {reasoning_response[:500]}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    return {
-                        'success': False,
-                        'error': f"Reasoning stage failed: Invalid JSON response - {str(e)}",
-                        'used_history_asset': False,
-                        'history_sql_used': False
-                    }
             except Exception as e:
-                print(f"❌ Call 1 error (attempt {attempt + 1}): {str(e)}")
+                print(f"❌ Attempt {attempt + 1} failed: {e}")
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                 else:
                     return {
                         'success': False,
-                        'error': f"Reasoning stage failed: {str(e)}",
+                        'error': f"SQL Planner failed: {e}",
                         'used_history_asset': False,
                         'history_sql_used': False
                     }
         
+        # ============================================================
+        # CALL 2: SQL Writer
+        # ============================================================
+        print("=" * 60)
+        print("🔨 CALL 2: SQL Writer")
+        print("=" * 60)
         
-        # CALL 2: SQL Generation with History Pattern Learning
-        
-        print("=" * 70)
-        print("🔨 CALL 2: Running SQL generation with pattern learning...")
-        print("=" * 70)
-        print("Current Timestamp before Call 2:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        
-        # Get current_question from context
-        current_question = context.get('current_question', '')
-        
-        sql_writer_prompt = self._build_sql_writer_prompt(context_json, state, current_question)
-        print(f"📊 Call 2 Prompt Length: {len(sql_writer_prompt)} chars")
+        writer_prompt = self._build_sql_writer_prompt(context_output, state, current_question)
+        print(f"📊 Prompt: {len(writer_prompt)} chars | {datetime.now().strftime('%H:%M:%S')}")
         
         for attempt in range(self.max_retries):
             try:
-                sql_response = await self.db_client.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": sql_writer_prompt}],
+                writer_response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": writer_prompt}],
                     max_tokens=2500,
                     temperature=0.0,
                     top_p=0.1,
-                    system_prompt="You are a Databricks SQL generator. Analyze historical SQL patterns and generate SQL code. First analyze the pattern, then decide on enhancement, then generate SQL. Output in the specified XML format with pattern_analysis, sql, sql_story, and history_sql_used tags."
+                    system_prompt="You are a Databricks SQL generator. Generate SQL from the provided context. Output in the specified XML format."
                 )
                 
-                print("Call 2 Raw Response:", sql_response[:1500], "..." if len(sql_response) > 1500 else "")
-                print("Current Timestamp after Call 2:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print(f"Response: {len(writer_response)} chars")
+                print(f"Preview: {writer_response[:800]}...")
                 
                 # Extract pattern analysis
                 pattern_analysis = ""
-                pattern_match = re.search(r'<pattern_analysis>(.*?)</pattern_analysis>', sql_response, re.DOTALL)
+                pattern_match = re.search(r'<pattern_analysis>(.*?)</pattern_analysis>', writer_response, re.DOTALL)
                 if pattern_match:
                     pattern_analysis = pattern_match.group(1).strip()
                     state['pattern_analysis'] = pattern_analysis
-                    print(f"📊 Pattern Analysis:\n{pattern_analysis}")
                 
-                # Extract history_sql_used flag
+                # Extract history_sql_used
                 history_sql_used = False
-                history_used_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', sql_response, re.IGNORECASE)
-                if history_used_match:
-                    history_sql_used = history_used_match.group(1).strip().lower() == 'true'
-                print(f"📊 History SQL Used: {history_sql_used}")
+                history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', writer_response, re.IGNORECASE)
+                if history_match:
+                    history_sql_used = history_match.group(1).strip().lower() == 'true'
                 
                 # Extract sql_story
                 sql_story = ""
-                story_match = re.search(r'<sql_story>(.*?)</sql_story>', sql_response, re.DOTALL)
+                story_match = re.search(r'<sql_story>(.*?)</sql_story>', writer_response, re.DOTALL)
                 if story_match:
                     sql_story = story_match.group(1).strip()
-                    print(f"📖 SQL Story: {sql_story[:200]}...")
                 
-                # Extract SQL - check for multiple SQL first
-                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', sql_response, re.DOTALL)
-                if multiple_sql_match:
-                    multiple_content = multiple_sql_match.group(1).strip()
+                # Check for multiple SQL
+                multiple_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', writer_response, re.DOTALL)
+                if multiple_match:
+                    multiple_content = multiple_match.group(1).strip()
                     query_matches = re.findall(
                         r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>',
                         multiple_content, re.DOTALL
@@ -889,15 +693,15 @@ enhance_reason: Multiple separate queries - history pattern not applicable
                     if query_matches:
                         sql_queries = []
                         query_titles = []
-                        for query_num, title, query in query_matches:
+                        for _, title, query in query_matches:
                             cleaned_query = query.strip().replace('`', '')
                             cleaned_title = title.strip()
-                            if cleaned_query and cleaned_title:
+                            if cleaned_query:
                                 sql_queries.append(cleaned_query)
                                 query_titles.append(cleaned_title)
                         
                         if sql_queries:
-                            print(f"✅ Generated {len(sql_queries)} SQL queries")
+                            print(f"✅ Generated {len(sql_queries)} queries")
                             return {
                                 'success': True,
                                 'multiple_sql': True,
@@ -908,25 +712,20 @@ enhance_reason: Multiple separate queries - history pattern not applicable
                                 'history_sql_used': history_sql_used,
                                 'sql_story': sql_story,
                                 'pattern_analysis': pattern_analysis,
-                                'reasoning_context': context_json
+                                'reasoning_context': context_output
                             }
                 
                 # Extract single SQL
-                sql_match = re.search(r'<sql>(.*?)</sql>', sql_response, re.DOTALL)
+                sql_match = re.search(r'<sql>(.*?)</sql>', writer_response, re.DOTALL)
                 if sql_match:
-                    sql_query = sql_match.group(1).strip()
-                    # Remove backticks and clean up
-                    sql_query = sql_query.replace('`', '')
-                    # Remove ```sql and ``` if present
+                    sql_query = sql_match.group(1).strip().replace('`', '')
                     if sql_query.startswith('sql'):
                         sql_query = sql_query[3:].strip()
                     
                     if not sql_query:
-                        raise ValueError("Empty SQL query in response")
+                        raise ValueError("Empty SQL")
                     
-                    print(f"✅ Generated SQL ({len(sql_query)} chars)")
-                    print(f"SQL Preview:\n{sql_query[:500]}...")
-                    
+                    print(f"✅ Generated SQL: {len(sql_query)} chars")
                     return {
                         'success': True,
                         'multiple_sql': False,
@@ -935,28 +734,27 @@ enhance_reason: Multiple separate queries - history pattern not applicable
                         'history_sql_used': history_sql_used,
                         'sql_story': sql_story,
                         'pattern_analysis': pattern_analysis,
-                        'reasoning_context': context_json
+                        'reasoning_context': context_output
                     }
                 
-                raise ValueError("No SQL found in response")
+                raise ValueError("No SQL in response")
                 
             except Exception as e:
-                print(f"❌ Call 2 error (attempt {attempt + 1}): {str(e)}")
+                print(f"❌ Attempt {attempt + 1} failed: {e}")
                 if attempt < self.max_retries - 1:
-                    print(f"🔄 Retrying... (attempt {attempt + 2}/{self.max_retries})")
                     await asyncio.sleep(2 ** attempt)
                 else:
                     return {
                         'success': False,
-                        'error': f"SQL generation failed after {self.max_retries} attempts: {str(e)}",
+                        'error': f"SQL Writer failed: {e}",
                         'used_history_asset': has_history,
                         'history_sql_used': False,
-                        'reasoning_context': context_json
+                        'reasoning_context': context_output
                     }
         
         return {
             'success': False,
-            'error': "SQL generation failed after all retries",
+            'error': "SQL generation failed",
             'used_history_asset': False,
             'history_sql_used': False
         }

@@ -1,3 +1,54 @@
+            history_section = f"""
+HISTORICAL SQL FOR PATTERN LEARNING
+
+PREVIOUS QUESTION: {history_question_match}
+
+<historical_sql>
+{matched_sql}
+</historical_sql>
+
+PURPOSE: History represents LEARNED DETAIL PREFERENCES. Enhance simple questions with historical detail patterns.
+PRINCIPLE: If history shows breakdown + totals, provide that detail level even if user asks simple question.
+
+PATTERN DETECTION:
+
+DETECT PATTERN TYPE:
+- Contains "GROUPING SETS" + "GROUPING(" function → GROUPING_SETS_TOTAL
+- Contains "UNION ALL" + 'Total'/'OVERALL' literal → UNION_TOTAL
+- Neither → SIMPLE
+
+IF GROUPING_SETS_TOTAL detected, extract:
+- breakdown_column: column inside GROUPING() function
+- parent_dimension: the parent filter column
+- total_label: label used (OVERALL_TOTAL, Total, etc.)
+- order_position: total first (0) or last (1) in ORDER BY
+
+IF UNION_TOTAL detected, extract:
+- How the total row is constructed
+- What literal is used for the total label
+
+ENHANCEMENT DECISION:
+
+ENHANCE = YES when ALL true:
+✓ Pattern is GROUPING_SETS_TOTAL or UNION_TOTAL
+✓ Same/similar metric (both ask for revenue, both ask for cost, etc.)
+✓ Current question filters on PARENT dimension of history's breakdown
+✓ User did NOT say "total only", "just sum", "single number", "aggregate only"
+
+ENHANCE = NO when ANY true:
+✗ Pattern is SIMPLE (nothing to inherit)
+✗ Different metric type entirely
+✗ User explicitly wants only aggregate total
+✗ Current already has different explicit grouping
+"""
+        else:
+            history_section = """
+HISTORICAL SQL:
+No historical SQL available. Generate fresh SQL based on context.
+Set pattern_detected = NONE and history_sql_used = false
+"""
+        state['sql_history_section'] = history_section
+
 async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
         """Generate SQL using original question + follow-up Q&A with relevance validation in single call"""
         

@@ -250,3 +250,216 @@ Options:
 
 Which client identifier format should I use for the query?
 </followup>
+
+=====================================================================================
+
+def _build_sql_planner_prompt(self, context: Dict, state: Dict) -> str:
+        """Build the SQL planner prompt (Call 1)
+        
+        Outputs unified structured context for SQL writer.
+        """
+        
+        current_question = context.get('current_question', '')
+        dataset_metadata = context.get('dataset_metadata', '')
+        filter_metadata_results = state.get('filter_metadata_results', [])
+        mandatory_columns_text = state.get('mandatory_columns_text', '')
+        history_question_match = state.get('history_question_match', '')
+        matched_sql = state.get('matched_sql', '')
+
+        # History hint for filter resolution
+        history_hint = ""
+        if matched_sql and history_question_match:
+            history_hint = f"""
+HISTORY REFERENCE (for filter column resolution - NOT for time filters):
+Previous question: {history_question_match}
+<historical_sql>
+{matched_sql}
+</historical_sql>
+Use history to validate filter column choices. Never use history for time values.
+"""
+
+        prompt = f"""BUSINESS CONTEXT: You are a SQL query planning assistant for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Your role is to help analysts generate accurate database queries for authorized business reporting and analytics on de-identified aggregate healthcare metrics such as revenue, cost, utilization, and operational performance.
+
+TASK: Analyze the user's business question and validate that all required data elements can be mapped to available database columns. Output a structured plan for SQL generation.
+
+CORE RULES
+
+1. ONE FOLLOW-UP OPPORTUNITY
+   You have exactly ONE chance to ask clarification:
+   - Unknown value that can't be mapped → ASK
+   - Multiple columns match same value → ASK  
+   - Vague time reference ("recently", "lately") → ASK
+   - Unclear metric or grouping intent → ASK
+   BETTER TO ASK than to ASSUME WRONG.
+
+2. MAPPING PRINCIPLES
+   - TERMS (revenue, cost, count, margin) → Match semantically to columns
+   - VALUES (MPDOVA, Specialty, HDP) → EXACT match only from EXTRACTED FILTERS or METADATA
+
+3. ZERO INVENTION
+   - Never add filters not mentioned in question
+   - Never assume time period if not specified
+   - Never guess column when multiple options exist
+
+INPUTS
+
+QUESTION: {current_question}
+
+EXTRACTED FILTER VALUES: {filter_metadata_results}
+
+{history_hint}
+
+METADATA: {dataset_metadata}
+MANDATORY FILTERS: {mandatory_columns_text}
+
+
+VALIDATION STEPS
+
+【STEP 1: PARSE QUESTION】
+
+Extract from question:
+- TERMS: Business concepts (revenue, cost, scripts, margin, carrier, client, product)
+- VALUES: Specific data points (MPDOVA, Specialty, HDP, July 2025, Q3)
+- INTENT: simple_aggregate | breakdown | comparison | top_n | trend
+- USER HINTS: Explicit guidance like "use carrier_id" → Apply as override
+
+【STEP 2: MAP TERMS TO COLUMNS】
+
+For each TERM, find matching column in METADATA:
+- Single match found → Use it
+- Multiple matches → Follow-up required
+- No match → Follow-up required
+
+【STEP 2B: BUILD METRIC EXPRESSIONS】
+
+Construct full SQL expression based on METADATA structure:
+
+Pattern A - Direct Column:
+  Table has revenue_amount column
+  → SUM(t1.revenue_amount) AS total_revenue
+
+Pattern B - Metric Type Filter:
+  Table has amount + metric_type column
+  → SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) AS total_revenue
+
+Pattern C - Calculated Metric:
+  margin = revenue - cost
+  → SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) - SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('COST') THEN t1.amount ELSE 0 END) AS margin
+
+【STEP 3: MAP VALUES TO COLUMNS】
+
+For each VALUE, resolve using this priority:
+
+A. SYNONYM CHECK - Look for patterns in METADATA like "Mail→Home Delivery", "SP→Specialty"
+   If found → Use mapped column with mapped value
+
+B. EXTRACTED FILTER VALUES CHECK - Search for exact value match:
+   - Value in ONE column → Use it
+   - Value in MULTIPLE columns → Check HISTORY, if no history → follow-up
+   - Value NOT found → Continue to METADATA check
+
+C. HISTORY SQL REFERENCE (if available)
+   - Value in MULTIPLE columns + History used one → Use history's column
+   - Value in SINGLE column + Same in history → Confirms mapping
+   ⚠️ Never use history for TIME filters
+
+D. METADATA SAMPLES CHECK - Search sample values in column descriptions
+   Found → Use that column
+
+E. VALUE NOT MAPPED - If fails all checks and not a number → Follow-up required
+
+【STEP 4: MAP TIME FILTERS】
+
+If question contains time references:
+1. PARSE naturally (July 2025, Q3 2024, 2025, Jan to March 2025, YTD)
+   Vague like "recently", "lately" → Follow-up required
+2. MAP to date columns in METADATA (year, month, quarter, or date columns)
+3. CONSTRUCT filter with correct data type
+
+No time mentioned → Do NOT add time filters
+
+【STEP 5: MANDATORY FILTER CHECK】
+
+Every MANDATORY filter must appear in output.
+Missing mandatory → Cannot generate SQL
+
+【STEP 6: MULTI-TABLE HANDLING】
+
+Single table → Include one QUERY block
+Multiple tables with JOIN INFO → Include JOIN details
+Multiple tables, no join → Include separate QUERY blocks
+
+【STEP 7: FINAL DECISION】
+
+FOLLOWUP_REQUIRED if ANY: Unknown value | Ambiguous column | Vague time | Unclear intent
+SQL_READY if ALL: Every term mapped | Every value mapped | Time mapped (or none needed)
+
+OUTPUT FORMAT
+
+Output ONLY <context> block, optionally followed by <followup>:
+
+<context>
+DECISION: [SQL_READY | FOLLOWUP_REQUIRED]
+QUERY_TYPE: [SINGLE_TABLE | MULTI_TABLE_JOIN | MULTI_TABLE_SEPARATE]
+INTENT: [simple_aggregate | breakdown | comparison | top_n | trend]
+
+QUERY_1:
+TABLE: [full.table.name] AS [alias]
+ANSWERS: [what this query answers - use "full question" for single query]
+
+SELECT:
+- [t1.column1]
+- [SUM(CASE WHEN UPPER(t1.metric_type) = UPPER('REVENUE') THEN t1.amount ELSE 0 END) AS revenue]
+
+FILTERS:
+- [UPPER(t1.carrier_id) = UPPER('MPDOVA')] [STRING]
+- [t1.year = 2025] [INT]
+- [t1.month = 7] [INT]
+- [UPPER(t1.ledger) = UPPER('GAAP')] [MANDATORY]
+
+GROUP_BY: [t1.column1, t1.column2] or [none]
+ORDER_BY: [revenue DESC] or [none]
+LIMIT: [10] or [none]
+
+JOIN: [t1.key = t2.key LEFT JOIN] or [none]
+
+QUERY_2 (only if MULTI_TABLE_SEPARATE or MULTI_TABLE_JOIN):
+TABLE: [full.table.name] AS [alias]
+ANSWERS: [what this query answers]
+
+SELECT:
+- [columns and expressions]
+
+FILTERS:
+- [filters with type tags]
+
+GROUP_BY: [columns] or [none]
+ORDER_BY: [direction] or [none]
+LIMIT: [number] or [none]
+</context>
+
+IF FOLLOWUP_REQUIRED, add after </context>:
+
+<followup>
+I need one clarification to generate accurate SQL:
+
+[Brief question about the specific ambiguity]
+
+Options:
+1. [column_name] - [brief description with sample values]
+2. [column_name] - [brief description with sample values]
+
+Which one did you mean?
+</followup>
+
+RULES FOR OUTPUT
+- Always include DECISION, QUERY_TYPE, INTENT at top
+- Always use QUERY_1 block (even for single table)
+- QUERY_2 only when multiple tables needed
+- FILTERS must include data type: [STRING], [INT], [DATE]
+- FILTERS must mark [MANDATORY] for mandatory filters
+- String filters must use UPPER(): UPPER(col) = UPPER('value')
+- SELECT expressions must be complete and ready to use
+- Use table alias (t1, t2) for all column references
+"""
+        return prompt

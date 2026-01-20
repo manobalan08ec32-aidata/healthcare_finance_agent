@@ -8,6 +8,7 @@ import pandas as pd
 import atexit
 import traceback
 import html
+import threading
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -179,11 +180,9 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     # Get domain selection from session state
     raw_domain_selection = st.session_state.get('domain_selection', None)
     if isinstance(raw_domain_selection, list):
-        print(f"⚠️ domain_selection came as list {raw_domain_selection}; normalizing to first item")
         domain_selection = raw_domain_selection[0] if raw_domain_selection else None
     else:
         domain_selection = raw_domain_selection
-    print(f"🔍 Using domain selection (string) in chat workflow: {domain_selection} (type={type(domain_selection).__name__})")
     
     if not domain_selection or domain_selection.strip() == '':
         st.error("⚠️ Please select a domain from the main page before asking questions.")
@@ -200,6 +199,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         'domain_selection': domain_selection,
         'user_selected_datasets': st.session_state.get('user_selected_datasets', []),  # List of selected datasets (empty = all)
         'selected_dataset_filter': st.session_state.get('selected_dataset_filter', []),  # Legacy support
+        'column_index': st.session_state.get('column_index'),  # Column index for filter value search
         'errors': [],
         'session_context': {
             'app_instance_id': session_id,
@@ -294,7 +294,6 @@ async def run_streaming_workflow_async(workflow, user_query: str):
             return  # Already showing this node's status
         
         current_status_node = node_name
-        print(f"🎨 STATUS UPDATE: Showing status for {node_name}")
         
         if node_name == 'entry_router':
             status_display.info("⏳ Routing your question...")
@@ -317,12 +316,10 @@ async def run_streaming_workflow_async(workflow, user_query: str):
             await asyncio.sleep(15)
             if current_status_node == 'router_agent':  # Still on router
                 status_display.info("⏳ Generating SQL query based on metadata...")
-                print(f"🔄 Router status update: Generating SQL (T+4s)")
 
             await asyncio.sleep(15)
             if current_status_node == 'router_agent':  # Still on router
                 status_display.info("⏳ Executing SQL query...")
-                print(f"🔄 Router status update: Executing SQL (T+6s)")
         except Exception as e:
             print(f"⚠️ Progressive status update error: {e}")
     
@@ -559,16 +556,12 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                     st.session_state.current_followup_questions = fq
                     followup_placeholder.empty()
                     add_assistant_message("💡 **Would you like to explore further? Here are some suggested follow-up questions:**", message_type="followup_questions")
-                    print(f"✅ Generated {len(fq)} follow-up questions")
                     # Exit clarification mode - workflow is complete and follow-up questions are ready
                     st.session_state.in_clarification_mode = False
-                    print("🔓 EXITED clarification mode - follow-up questions generated, workflow complete")
                 else:
                     followup_placeholder.empty()
-                    print("ℹ️ No follow-up questions generated")
                     # Exit clarification mode even if no follow-up questions
                     st.session_state.in_clarification_mode = False
-                    print("🔓 EXITED clarification mode - workflow complete (no follow-up questions)")
             except Exception as fe:
                 followup_placeholder.error(f"Follow-up generation failed: {fe}")
                 print(f"❌ Follow-up generation error: {fe}")
@@ -589,6 +582,19 @@ def run_streaming_workflow(workflow, user_query: str):
 ## Removed legacy background follow-up + polling functions (replaced by direct streaming approach)
 
 # ============ SESSION MANAGEMENT (keep your existing functions) ============
+
+def ensure_db_client():
+    """
+    Ensure db_client exists in session state, recreate if missing.
+    This handles cases where session state is cleared after inactivity.
+    """
+    if 'db_client' not in st.session_state or st.session_state.db_client is None:
+        print("🔧 db_client not found in session - recreating...")
+        try:
+            st.session_state.db_client = DatabricksClient()
+        except Exception as e:
+            return None
+    return st.session_state.db_client
 
 def get_session_workflow():
     """
@@ -613,7 +619,6 @@ def cleanup_session():
     """Cleanup function to properly close aiohttp sessions and background threads"""
     try:
         session_id = getattr(st.session_state, 'session_id', 'unknown')
-        print(f"🧹 Cleaning up session: {session_id}")
         
         # Clean up background thread if it exists
         if hasattr(st.session_state, 'background_thread') and st.session_state.background_thread:
@@ -682,49 +687,6 @@ def load_session_snapshot_sync(user_id: str, session_date: str) -> Optional[Dict
     except Exception as e:
         print(f"⚠️ Failed to load snapshot: {e}")
         return None
-
-
-def save_session_snapshot_sync(user_id: str, session_date: str, state_dict: Dict[str, Any]) -> bool:
-    """Synchronous wrapper to save session snapshot to Cosmos"""
-    if not is_cosmos_enabled():
-        return False
-    
-    try:
-        from core.cosmos_state_manager import get_cosmos_manager
-        manager = get_cosmos_manager()
-        return asyncio.run(manager.save_session_snapshot(user_id, session_date, state_dict))
-    except Exception as e:
-        print(f"⚠️ Failed to save snapshot: {e}")
-        return False
-
-
-def save_state_snapshot():
-    """
-    Save entire session state to Cosmos DB after workflow completes.
-    Excludes Streamlit internal variables and temporary flags.
-    """
-    if not is_cosmos_enabled():
-        return
-    
-    user_email = get_authenticated_user()
-    if user_email == 'unknown_user':
-        return
-    
-    date = datetime.now().strftime("%Y-%m-%d")
-    
-    # Collect all state variables (exclude internals)
-    state_to_save = {
-        k: v for k, v in st.session_state.items()
-        if not k.startswith('_') and k not in [
-            'session_id',
-            'original_session_id',
-            'cosmos_loaded',
-            'FormSubmitter'  # Streamlit internal
-        ]
-    }
-    
-    save_session_snapshot_sync(user_email, date, state_to_save)
-    print(f"💾 Saved {len(state_to_save)} state variables to Cosmos")
 
 
 def get_available_datasets():
@@ -816,7 +778,6 @@ def initialize_session_state():
     # Initialize domain_selection - inherit from main page selection or set to None
     if 'domain_selection' not in st.session_state:
         st.session_state.domain_selection = None
-        print(f"🔧 Domain selection initialized to None in chat.py")
     
     # Initialize question type tracking
     if 'question_type_selection' not in st.session_state:
@@ -878,33 +839,7 @@ def initialize_session_state():
     # Warning if we're using fallback values (indicates main.py didn't pass user info)
     if authenticated_user == 'unknown_user':
         log_event('warning', "Using fallback user - main.py may not have passed user info")
-    
-    # ============ COSMOS DB STATE LOADING ============
-    # Load ENTIRE state snapshot from Cosmos DB on first initialization
-    # This handles instance switches, browser refreshes, and day continuity
-    if not st.session_state.cosmos_loaded and is_cosmos_enabled():
-        if authenticated_user != 'unknown_user':
-            date = datetime.now().strftime("%Y-%m-%d")
-            print(f"🔄 Loading session snapshot from Cosmos for {authenticated_user} on {date}")
-            
-            snapshot = load_session_snapshot_sync(authenticated_user, date)
-            
-            if snapshot:
-                # Restore ALL state variables from snapshot
-                # This overwrites the default values set above
-                for key, value in snapshot.items():
-                    if not key.startswith('_'):  # Skip Streamlit internals
-                        st.session_state[key] = value
-                
-                print(f"✅ Restored {len(snapshot)} state variables from Cosmos")
-                print(f"   - messages: {len(st.session_state.get('messages', []))}")
-                print(f"   - domain: {st.session_state.get('domain_selection')}")
-                print(f"   - datasets: {st.session_state.get('user_selected_datasets')}")
-            else:
-                print(f"ℹ️ No saved session snapshot for {date} - starting fresh")
-        
-        st.session_state.cosmos_loaded = True
-    # Removed obsolete follow-up polling/background keys
+
 
 # ============ CHAT HISTORY MANAGEMENT ============
 
@@ -1094,7 +1029,10 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
         
         with col1:
             if st.button("👍 Yes, helpful", key=f"{feedback_key}_thumbs_up"):
-                # Insert positive feedback - use user_question if available, otherwise fallback
+                # Mark as submitted immediately (optimistic UI)
+                st.session_state[f"{feedback_key}_submitted"] = True
+                
+                # Get feedback data
                 rewritten_question = user_question or st.session_state.get('current_query', title)
                 
                 sql_result_dict = {
@@ -1102,22 +1040,35 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                     'sql_query': sql_query,
                     'query_results': data,
                     'narrative': narrative,
-                    'user_question': user_question  # Include user_question in sql_result
+                    'user_question': user_question
                 }
                 
-                # Run feedback insertion with table_name
-                success = asyncio.run(_insert_feedback_row(
-                    rewritten_question, sql_query, True, table_name
-                ))
+                # Fire and forget - run feedback insertion in background thread
+                def submit_feedback_background():
+                    try:
+                        success = asyncio.run(_insert_feedback_row(
+                            rewritten_question, sql_query, True, table_name
+                        ))
+                        if success:
+                            log_event('info', "Positive feedback submitted (background)", feedback_type="positive")
+                        else:
+                            print(f"⚠️ Background feedback submission returned False")
+                    except Exception as e:
+                        print(f"❌ Background feedback error: {e}")
+                        log_event('error', f"Background feedback failed: {str(e)}", error_type=type(e).__name__)
                 
-                if success:
-                    st.session_state[f"{feedback_key}_submitted"] = True
-                    log_event('info', "Positive feedback submitted", feedback_type="positive")
-                    st.success("Thank you for your feedback! 👍")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Failed to save feedback")
+                # Start background thread (daemon=True means don't block app shutdown)
+                feedback_thread = threading.Thread(
+                    target=submit_feedback_background,
+                    daemon=True,
+                    name=f"PositiveFeedback-{st.session_state.session_id[:8]}"
+                )
+                feedback_thread.start()
+                
+                # Show success message immediately (no waiting)
+                st.success("Thank you for your feedback! 👍")
+                time.sleep(0.5)
+                st.rerun()
         
         with col2:
             if st.button("👎 Needs improvement", key=f"{feedback_key}_thumbs_down"):
@@ -1136,7 +1087,11 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                 col1, col2 = st.columns([1, 1])
                 with col1:
                     if st.form_submit_button("Submit Feedback"):
-                        # Insert negative feedback - use user_question if available, otherwise fallback
+                        # Mark as submitted immediately (optimistic UI)
+                        st.session_state[f"{feedback_key}_submitted"] = True
+                        st.session_state[f"{feedback_key}_show_form"] = False
+                        
+                        # Get feedback data
                         rewritten_question = user_question or st.session_state.get('current_query', title)
                         
                         sql_result_dict = {
@@ -1144,22 +1099,35 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                             'sql_query': sql_query,
                             'query_results': data,
                             'narrative': narrative,
-                            'user_question': user_question  # Include user_question in sql_result
+                            'user_question': user_question
                         }
                         
-                        success = asyncio.run(_insert_feedback_row(
-                            rewritten_question, sql_query, False, table_name, feedback_text
-                        ))
+                        # Fire and forget - run feedback insertion in background thread
+                        def submit_negative_feedback_background():
+                            try:
+                                success = asyncio.run(_insert_feedback_row(
+                                    rewritten_question, sql_query, False, table_name, feedback_text
+                                ))
+                                if success:
+                                    log_event('info', "Negative feedback submitted (background)", feedback_type="negative")
+                                else:
+                                    print(f"⚠️ Background negative feedback submission returned False")
+                            except Exception as e:
+                                print(f"❌ Background negative feedback error: {e}")
+                                log_event('error', f"Background negative feedback failed: {str(e)}", error_type=type(e).__name__)
                         
-                        if success:
-                            st.session_state[f"{feedback_key}_submitted"] = True
-                            st.session_state[f"{feedback_key}_show_form"] = False
-                            log_event('info', "Negative feedback submitted", feedback_type="negative")
-                            st.success("Thank you for your feedback! We'll work on improving.")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Failed to save feedback")
+                        # Start background thread
+                        feedback_thread = threading.Thread(
+                            target=submit_negative_feedback_background,
+                            daemon=True,
+                            name=f"NegativeFeedback-{st.session_state.session_id[:8]}"
+                        )
+                        feedback_thread.start()
+                        
+                        # Show success message immediately (no waiting)
+                        st.success("Thank you for your feedback! We'll work on improving.")
+                        time.sleep(0.5)
+                        st.rerun()
                 
                 with col2:
                     if st.form_submit_button("Cancel"):
@@ -1177,7 +1145,6 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
     
     # Ensure sql_result is a dictionary
     if not isinstance(sql_result, dict):
-        print(f"❌ SQL result is not a dict: {type(sql_result)} - {str(sql_result)[:100]}...")
         st.error(f"Error: Invalid SQL result format (expected dict, got {type(sql_result).__name__})")
         return
     
@@ -1187,27 +1154,32 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
     # Get functional_names if not passed as parameter (for historical display)
     if not functional_names and 'functional_names' in sql_result:
         functional_names = sql_result.get('functional_names')
-        print(f"📊 Extracted functional_names from sql_result: {functional_names}")
     
     # Get powerbi_data if not passed as parameter
     if not powerbi_data and 'powerbi_data' in sql_result:
         powerbi_data = sql_result.get('powerbi_data')
-        print(f"📊 Extracted powerbi_data from sql_result")
     
     # Get sql_generation_story if available
     sql_generation_story = sql_result.get('sql_generation_story', '')
-    if sql_generation_story:
-        print(f"📖 Extracted sql_generation_story from sql_result: {sql_generation_story[:100]}...")
-    
     # Get table_name for feedback tracking (technical name)
     table_name = sql_result.get('selected_dataset')
-    print(f"📊 Extracted table_name for feedback: {table_name}")
     
     # Determine if this is historical (inverse of show_feedback)
     is_historical = not show_feedback
     
     # Check if multiple results
     if sql_result.get('multiple_results', False):
+        # Display SQL Generation Story once at the top for multiple queries
+        if sql_generation_story and sql_generation_story.strip():
+            st.markdown(f"""
+            <div class="explanation-card">
+                <div class="explanation-title">
+                    <span>📖</span> How I solved this
+                </div>
+                <div class="explanation-text">{sql_generation_story}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         query_results = sql_result.get('query_results', [])
         for i, result in enumerate(query_results):
             title = result.get('title', f'Query {i+1}')
@@ -1215,11 +1187,11 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
             data = result.get('data', [])
             narrative = result.get('narrative', '')
             
-            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data AND sql_story
+            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data, but NO sql_story (already shown once)
             render_single_sql_result(
                 title, sql_query, data, narrative, 
                 user_question, show_feedback, message_idx, 
-                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story
+                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None
             )
     else:
         # Single result - use rewritten_question if available, otherwise default
@@ -1275,8 +1247,6 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         else:
             datasets_text = str(functional_names)
         
-        print(f"🎨 Displaying functional_names in SQL result (historical session): {datasets_text}")
-        
         # Use same styling as selection_reasoning message (sky blue box)
         st.markdown(f"""
         <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px; margin: 10px 0;">
@@ -1295,7 +1265,6 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
-            print(f"⚠️ SQL query is not a string: {type(sql_query)}")
             sql_query = str(sql_query)
         
         # Remove any [object Object] artifacts that may have been injected
@@ -1340,11 +1309,9 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     # Check if we have Power BI data to display (ONLY if report_found is true)
     has_powerbi_info = False
     if powerbi_data:
-        print(f"🔍 Power BI Data Check: {powerbi_data}")
         report_found = powerbi_data.get('report_found', False)
         report_filter = powerbi_data.get('report_filter', '')
         report_url = powerbi_data.get('report_url', '')
-        print(f"   report_found={report_found}, has_filter={bool(report_filter)}, has_url={bool(report_url)}")
         # Show Power BI section ONLY if report_found is true
         has_powerbi_info = report_found
         print(f"   has_powerbi_info={has_powerbi_info}")
@@ -1353,8 +1320,6 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     
     # Display Narrative Insights (full width) - Optum styled insights card
     if narrative:
-        print(f"📝 Narrative content preview (first 200 chars): {narrative[:200]}")
-        print(f"📝 Narrative contains '<div'?: {('<div' in narrative)}")
         safe_narrative_html = convert_text_to_safe_html(narrative)
         st.markdown(f"""
         <div class="insights-card">
@@ -1401,17 +1366,11 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         </div>
         '''
         
-        print(f"📊 Rendering Power BI card HTML (length: {len(report_card_html)} chars)")
-        
         st.markdown(report_card_html, unsafe_allow_html=True)
-        
-        print(f"✅ Power BI card rendered with Optum styling")
-
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
     """Render strategic analysis response with reasoning and multiple strategic queries"""
     
-    print(f"🔥 RENDERING STRATEGIC ANALYSIS")
     
     # 1. SHOW STRATEGIC REASONING FIRST
     if strategic_reasoning:
@@ -1444,7 +1403,6 @@ def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_
                 st.markdown("---")
     else:
         st.error("No strategic query results found or invalid format.")
-        print(f"🔥 ERROR: strategic_results is not a list: {type(strategic_results)}")
 
 def render_single_strategic_result(title, sql_query, data, narrative, index, show_feedback=True):
     """Render a single strategic analysis result"""
@@ -1460,7 +1418,6 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
-            print(f"⚠️ Strategic SQL query is not a string: {type(sql_query)}")
             sql_query = str(sql_query)
         
         # Remove any [object Object] artifacts that may have been injected
@@ -1518,8 +1475,6 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
 def render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning=None, show_feedback=True):
     """Render drillthrough analysis response with reasoning and multiple operational queries"""
     
-    print(f"🔥 RENDERING DRILLTHROUGH ANALYSIS")
-    
     # 1. SHOW DRILLTHROUGH REASONING FIRST
     if drillthrough_reasoning:
         formatted_reasoning = convert_text_to_safe_html(drillthrough_reasoning)
@@ -1552,7 +1507,6 @@ def render_drillthrough_analysis(drillthrough_results, drillthrough_reasoning=No
                 st.markdown("---")
     else:
         st.error("No drillthrough query results found or invalid format.")
-        print(f"🔥 ERROR: drillthrough_results is not a list: {type(drillthrough_results)}")
 
 def render_single_drillthrough_result(title, sql_query, data, narrative, causational_insights, index, show_feedback=True):
     """Render a single drillthrough analysis result"""
@@ -1568,7 +1522,6 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
-            print(f"⚠️ Drillthrough SQL query is not a string: {type(sql_query)}")
             sql_query = str(sql_query)
         
         # Remove any [object Object] artifacts that may have been injected
@@ -1640,7 +1593,6 @@ def add_assistant_message(content, message_type="standard"):
     print(f"✅ Added {message_type} message (total messages now: {len(st.session_state.messages)}): {content_preview}")
     
     # Debug: Show current message state
-    print(f"📊 Current message summary:")
     for i, msg in enumerate(st.session_state.messages[-3:]):  # Show last 3 messages
         role = msg.get('role', 'unknown')
         msg_type = msg.get('message_type', 'standard')
@@ -1653,12 +1605,10 @@ def add_assistant_message(content, message_type="standard"):
         st.session_state.current_followup_questions = []
         # Enter clarification mode - hide radio button
         st.session_state.in_clarification_mode = True
-        print("🔒 ENTERED clarification mode - radio button will be hidden")
     
     # Set clarification mode for router-generated clarification questions
     if message_type in ["needs_followup", "dataset_clarification"]:
         st.session_state.in_clarification_mode = True
-        print(f"🔒 ENTERED clarification mode ({message_type}) - radio button will be hidden")
 
 def add_selection_reasoning_message(functional_names, history_sql_used=False):
     """
@@ -1675,7 +1625,6 @@ def add_selection_reasoning_message(functional_names, history_sql_used=False):
     }
     
     st.session_state.messages.append(message)
-    print(f"✅ Added functional_names message (total messages now: {len(st.session_state.messages)}) | history_sql_used: {history_sql_used}")
 
 def add_sql_result_message(sql_result, rewritten_question=None, functional_names=None, powerbi_data=None, selected_dataset=None, sql_generation_story=None):
     """
@@ -1693,22 +1642,18 @@ def add_sql_result_message(sql_result, rewritten_question=None, functional_names
     # Add functional_names to sql_result dict if not already present
     if functional_names and 'functional_names' not in sql_result:
         sql_result['functional_names'] = functional_names
-        print(f"  ✅ Added functional_names to sql_result: {functional_names}")
     
     # Add Power BI data to sql_result dict if not already present
     if powerbi_data and 'powerbi_data' not in sql_result:
         sql_result['powerbi_data'] = powerbi_data
-        print(f"  ✅ Added Power BI data to sql_result (report_found: {powerbi_data.get('report_found')})")
     
     # Add selected_dataset (technical table names) to sql_result dict if not already present
     if selected_dataset and 'selected_dataset' not in sql_result:
         sql_result['selected_dataset'] = selected_dataset
-        print(f"  ✅ Added selected_dataset to sql_result: {selected_dataset}")
     
     # Add sql_generation_story to sql_result dict if not already present
     if sql_generation_story and 'sql_generation_story' not in sql_result:
         sql_result['sql_generation_story'] = sql_generation_story
-        print(f"  ✅ Added sql_generation_story to sql_result: {sql_generation_story[:100]}...")
     
     message = {
         "role": "assistant",
@@ -1724,7 +1669,6 @@ def add_sql_result_message(sql_result, rewritten_question=None, functional_names
     }
     
     st.session_state.messages.append(message)
-    print(f"✅ Added SQL result message (total messages now: {len(st.session_state.messages)})")
     
     # Debug: Show SQL result summary
     if sql_result.get('multiple_results'):
@@ -1746,7 +1690,8 @@ async def _insert_session_tracking_row(sql_result: Dict[str, Any], full_state: D
           from router state, NOT technical table names
     """
     try:
-        db_client = st.session_state.get('db_client')
+        # Ensure db_client exists (recreate if session was cleared)
+        db_client = ensure_db_client()
         if not db_client:
             print("⚠️ No db_client in session; skipping tracking insert")
             return
@@ -1838,12 +1783,7 @@ async def _fetch_session_history():
         """
         
         print("🕐 Fetching session history for user (NEW TABLE):", user_id)
-        print("🔍 SQL Query:", fetch_sql)
-
         result = await db_client.execute_sql_async_audit(fetch_sql)
-
-        print(f"🔍 Database result type: {type(result)}")
-        print(f"🔍 Database result: {result}")
         
         # Handle different response formats from database client
         sessions = []
@@ -1851,11 +1791,9 @@ async def _fetch_session_history():
         if isinstance(result, list):
             # Direct list response
             sessions = result
-            print(f"✅ Direct list response with {len(sessions)} sessions")
         elif isinstance(result, dict):
             if result.get('success'):
                 sessions = result.get('data', [])
-                print(f"✅ Dict response with success=True, {len(sessions)} sessions")
             else:
                 print("⚠️ Dict response with success=False")
                 print(f"🔍 Error details: {result}")
@@ -1869,7 +1807,6 @@ async def _fetch_session_history():
             if isinstance(session, dict):
                 session_id = session.get('session_id', 'NO_ID')
                 last_activity = session.get('last_activity', 'NO_TIMESTAMP')
-                print(f"  Session {i+1}: {session_id} | Last Activity: {last_activity}")
             else:
                 print(f"  Session {i+1}: Unexpected session type: {type(session)} - {session}")
         
@@ -1897,39 +1834,26 @@ async def _fetch_session_records(session_id: str):
         FROM prd_optumrx_orxfdmprdsa.rag.fdmbotsession_tracking_updt
         WHERE user_id = '{user_id}' AND session_id = '{session_id}'
         ORDER BY insert_ts ASC
-        """
-        
-        print(f"🎯 EXECUTING DATABASE QUERY (NEW TABLE): Fetching all records for session: {session_id}")
-        print("🔍 SQL Query:", fetch_sql)
-        
+        """        
         result = await db_client.execute_sql_async_audit(fetch_sql)
-        
-        print(f"🔍 Database result type: {type(result)}")
-        
+                
         # Handle different response formats from database client
         records = []
         
         if isinstance(result, list):
             records = result
-            print(f"✅ Direct list response with {len(records)} records")
         elif isinstance(result, dict):
             if result.get('success'):
                 records = result.get('data', [])
-                print(f"✅ Dict response with success=True, {len(records)} records")
             else:
-                print("⚠️ Dict response with success=False")
-                print(f"🔍 Error details: {result}")
                 return []
         else:
-            print(f"⚠️ Unexpected result type: {type(result)}")
             return []
         
         # Debug each record
         for i, record in enumerate(records):
             if isinstance(record, dict):
-                print(f"  Record {i+1}: {record.get('user_question', 'NO_QUESTION')[:50]}... - {record.get('insert_ts', 'NO_TIMESTAMP')}")
                 print(f"    Selected dataset: {record.get('selected_dataset', 'N/A')}")
-                print(f"    sql_info present: {bool(record.get('sql_info'))}")
             elif isinstance(record, str):
                 print(f"  Record {i+1}: String record: {record[:100]}...")
             else:
@@ -1955,7 +1879,6 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
     try:
         db_client = st.session_state.get('db_client')
         if not db_client:
-            print("⚠️ No db_client in session; skipping email notification")
             return False
         
         # Get user info
@@ -2019,9 +1942,7 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
             "sivakumm@optum.com"  # Admin
         ]
         recipients_str = ";".join(recipients)
-        
-        print(f"📧 Preparing to send feedback email to: {recipients_str}")
-        
+            
         # Call your production notebook using REST API
         notebook_path = "/Workspace/FDM/AI_RAG/send_feedback_email"
         
@@ -2034,13 +1955,6 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
         }
         
         # Debug: Log parameters being sent to notebook
-        print(f"📋 Email notification parameters:")
-        print(f"   to_emails: {recipients_str}")
-        print(f"   subject: {subject}")
-        print(f"   body length: {len(body)} chars")
-        print(f"   body preview (first 200 chars): {body[:200]}")
-        print(f"   body preview (last 100 chars): {body[-100:]}")
-        print(f"   from_email: fdm-bot-noreply@optum.com")
         
         # Verify body contains HTML
         if '<html>' in body.lower() and '</html>' in body.lower():
@@ -2050,7 +1964,8 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
         
         # Call the notebook asynchronously using your existing job cluster
         # Cluster ID extracted from JDBC: 0226-101532-dse5plow
-        db_client = st.session_state.get('db_client')
+        # Ensure db_client exists (recreate if session was cleared)
+        db_client = ensure_db_client()
         if db_client:
             result = await db_client.run_notebook_async(
                 notebook_path, 
@@ -2060,13 +1975,10 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
             )
             
             if result.get("success"):
-                print(f"✅ Email notification sent successfully (run_id: {result.get('run_id')})")
                 return True
             else:
-                print(f"⚠️ Email notification failed: {result.get('error', result.get('state_message', 'Unknown error'))}")
                 return False
         else:
-            print("⚠️ No db_client available for email notification")
             return False
         
     except Exception as e:
@@ -2085,7 +1997,8 @@ async def _insert_feedback_row(user_question: str, sql_result: str, positive_fee
         table_name: Can be a string or a list of strings
     """
     try:
-        db_client = st.session_state.get('db_client')
+        # Ensure db_client exists (recreate if session was cleared)
+        db_client = ensure_db_client()
         if not db_client:
             print("⚠️ No db_client in session; skipping feedback insert")
             return False
@@ -2116,7 +2029,6 @@ async def _insert_feedback_row(user_question: str, sql_result: str, positive_fee
             ('{session_id}', '{user_id}', '{user_question_escaped}', '{payload_escaped}', {positive_feedback}, '{feedback_escaped}', current_timestamp(), '{table_name_clean}')
         """
 
-        print(f"🗄️ Inserting feedback: {'👍' if positive_feedback else '👎'} - {len(payload_escaped)} chars")
         await db_client.execute_sql_async_audit(insert_sql)
         print("✅ Feedback insert succeeded")
         
@@ -2158,7 +2070,6 @@ async def _fetch_last_session_summary():
         LIMIT 1
         """
         
-        print(f"🔍 Fetching last session summary for user: {user_id}")
         result = await db_client.execute_sql_async_audit(fetch_sql)
         
         # Handle different response formats from database client
@@ -2168,7 +2079,6 @@ async def _fetch_last_session_summary():
             data = result.get('data', [])
             return data[0] if data else None
         else:
-            print(f"⚠️ No session summary found or unexpected result format: {type(result)}")
             return None
             
     except Exception as e:
@@ -2181,7 +2091,6 @@ async def _generate_session_overview(narrative_summary: str):
         # Get the database client to access the Claude API
         db_client = st.session_state.get('db_client')
         if not db_client:
-            print("⚠️ No db_client available for LLM generation")
             return None
         
         # Create a narrative-focused prompt for the LLM with adaptive length
@@ -2222,11 +2131,7 @@ def render_last_session_overview():
     """Fetch and display a brief overview of the user's last session"""
     try:
         print(f"🔍 DEBUG: render_last_session_overview called")
-        print(f"   messages count: {len(st.session_state.messages)}")
-        print(f"   session_explicitly_loaded: {st.session_state.get('session_explicitly_loaded', False)}")
-        print(f"   first_question_asked: {st.session_state.get('first_question_asked', False)}")
-        print(f"   session_overview_shown: {st.session_state.get('session_overview_shown', False)}")
-        
+      
         # Only show if this is a fresh session (no messages yet)
         if st.session_state.messages:
             print("❌ EARLY RETURN: Messages already exist - not showing overview")
@@ -2254,17 +2159,12 @@ def render_last_session_overview():
             session_id = last_summary.get('session_id', 'Unknown')
             insert_ts = last_summary.get('insert_ts', 'Unknown')
         else:
-            print(f"⚠️ Unexpected summary format: {type(last_summary)}")
             return
         
         if not narrative_summary or narrative_summary.strip() == '':
-            print("ℹ️ Empty narrative summary found")
             # Mark as shown even if empty summary, so we don't keep trying
             st.session_state.session_overview_shown = True
-            return
-        
-        print(f"📋 Found last session summary from {insert_ts}")
-        
+            return        
         # Generate LLM narrative overview for all sessions
         try:
             print("🎬 Starting LLM overview generation...")
@@ -3957,9 +3857,7 @@ def main():
                     st.session_state.followup_state = None
                     
                     # ============ COSMOS DB: SAVE COMPLETE STATE SNAPSHOT ============
-                    # Workflow is complete - save entire state to Cosmos
-                    save_state_snapshot()
-                    
+                    # Workflow is complete - save entire state to Cosmos                    
                     st.rerun()
         
         # Handle drillthrough execution after strategic analysis has been rendered
@@ -3999,9 +3897,7 @@ def main():
                     st.session_state.drillthrough_state = None
                     
                     # ============ COSMOS DB: SAVE COMPLETE STATE SNAPSHOT ============
-                    # Drillthrough analysis complete - save entire state to Cosmos
-                    save_state_snapshot()
-                    
+                    # Drillthrough analysis complete - save entire state to Cosmos                    
                     st.rerun()
 
         st.markdown("""

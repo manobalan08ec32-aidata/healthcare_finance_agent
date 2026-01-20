@@ -55,7 +55,7 @@ class LLMNavigationController:
         existing_domain_selection = state.get('domain_selection', [])
         total_retry_count = state.get('llm_retry_count', 0)
         
-        self._log('info', "Processing user query", state, question=current_question[:100])
+        self._log('info', "Processing user query", state, question=current_question)
         
         # Single-step processing: Analyze → Rewrite → Extract in one call
         return await self._single_step_processing(
@@ -66,7 +66,7 @@ class LLMNavigationController:
                                      total_retry_count: int, state: AgentState) -> Dict[str, any]:
         """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt"""
         
-        self._log('info', "Starting question analysis and rewriting")
+        # self._log('info', "Starting question analysis and rewriting")
         questions_history = state.get('user_question_history', [])
         previous_question = state.get('rewritten_question', '') 
         conversation_memory = state.get('conversation_memory', {
@@ -98,7 +98,7 @@ class LLMNavigationController:
                     current_forecast_cycle,
                     conversation_memory
                 )
-                print('question prompt', prompt)
+                # print('question prompt', prompt)
                 print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],

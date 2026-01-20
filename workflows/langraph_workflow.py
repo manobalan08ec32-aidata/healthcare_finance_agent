@@ -865,10 +865,10 @@ class AsyncHealthcareFinanceWorkflow:
             print(f"📦 Astream step: {list(step.keys())}")
             for node_name, node_state in step.items():
                 if node_name == '__end__':
-                    print(f"🏁 Workflow end - final state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
+                    # print(f"🏁 Workflow end - final state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
                     yield {"type": "workflow_end", "name": node_name, "data": node_state}
                 else:
-                    print(f"✅ Node completed: {node_name} - state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
+                    # print(f"✅ Node completed: {node_name} - state keys: {list(node_state.keys()) if isinstance(node_state, dict) else 'Not a dict'}")
                     yield {"type": "node_end", "name": node_name, "data": node_state}
                     
     async def astream_followup(self, state_after_main: AgentState, config: Dict[str, Any]):

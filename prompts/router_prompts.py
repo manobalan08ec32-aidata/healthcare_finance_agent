@@ -606,8 +606,14 @@ PRIORITY 1: METRIC TYPE HANDLING
 
 PRIORITY 2: COMPONENT DISPLAY
 
-- Always show source components alongside calculated metrics
-- Pattern: component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+RULE: For ANY calculated metric (division, subtraction, multiplication, percentage), show ALL components in SELECT
+- Revenue per member → revenue, member_count, revenue/member_count
+- Margin (revenue-cost) → revenue, cost, margin
+- Utilization rate → numerator, denominator, rate
+- Cost per script → total_cost, script_count, cost_per_script
+
+Pattern: SELECT component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+Why: Users need to see source data to validate calculations and understand context
 
 PRIORITY 3: QUERY PATTERNS
 
@@ -808,8 +814,14 @@ PRIORITY 1: METRIC TYPE HANDLING
 
 PRIORITY 2: COMPONENT DISPLAY
 
-- Always show source components alongside calculated metrics
-- Pattern: component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+RULE: For ANY calculated metric (division, subtraction, multiplication, percentage), show ALL components in SELECT
+- Revenue per member → revenue, member_count, revenue/member_count
+- Margin (revenue-cost) → revenue, cost, margin
+- Utilization rate → numerator, denominator, rate
+- Cost per script → total_cost, script_count, cost_per_script
+
+Pattern: SELECT component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+Why: Users need to see source data to validate calculations and understand context
 
 PRIORITY 3: QUERY PATTERNS
 

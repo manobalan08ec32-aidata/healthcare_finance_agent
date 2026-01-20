@@ -1,0 +1,13 @@
+{
+  "PBM Network": [
+    { "Peoplesoft GL": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast" },
+    { "Rx Claims": "prd_optumrx_orxfdmprdsa.rag.pbm_claims" },
+    { "CBS Billing": "prd_optumrx_orxfdmprdsa.rag.claim_billing" }
+    
+  ],
+  "Optum Pharmacy": [
+    { "Pharmacy IRIS Claims": "prd_optumrx_orxfdmprdsa.rag.pharmacy_claims" },
+    { "Peoplesoft GL": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast" },
+    { "CBS Billing": "prd_optumrx_orxfdmprdsa.rag.claim_billing" }
+  ]
+}

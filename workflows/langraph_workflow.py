@@ -1,6 +1,7 @@
 import asyncio
 import time
 from datetime import datetime
+from pytz import timezone
 from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -12,6 +13,10 @@ from agents.followup_question import FollowupQuestionAgent
 from agents.strategic_planner import StrategicPlanner
 from agents.drillthrough_planner import DrillthroughPlanner
 from agents.narrative_agent import NarrativeAgent
+from core.logger import setup_logger, log_with_user_context
+
+# Initialize logger for this module
+logger = setup_logger(__name__)
 
 class AsyncHealthcareFinanceWorkflow:
     """Simplified async LangGraph workflow focusing on navigation controller"""
@@ -141,7 +146,6 @@ class AsyncHealthcareFinanceWorkflow:
 
     async def _entry_router_node(self, state: AgentState) -> AgentState:
         """Entry router node to decide workflow entry point."""
-        print("Entry router node: Deciding entry point...")
         
         # Reset error messages
         state['nav_error_msg'] = None
@@ -180,13 +184,17 @@ class AsyncHealthcareFinanceWorkflow:
     async def _navigation_controller_node(self, state: AgentState) -> AgentState:
         """Async Navigation Controller node"""
         
-        navigation_start_time = datetime.now().isoformat()
+        cst = timezone('America/Chicago')
+        navigation_start_time = datetime.now(cst).strftime('%Y-%m-%d %H:%M:%S %Z')
         print(f"Navigation Controller starting: {navigation_start_time}")
+        
+        # Store navigation start timestamp in state
+        state['navigation_start_ts'] = navigation_start_time
         
         try:
             # Call navigation controller - ASYNC CALL
             nav_result = await self.nav_controller.process_user_query(state)
-            print('nav_result',nav_result) 
+            # print('nav_result',nav_result) 
             # Update state with navigation results
             state['current_question'] = nav_result['rewritten_question']
             state['question_type'] = nav_result['question_type']
@@ -199,6 +207,18 @@ class AsyncHealthcareFinanceWorkflow:
             state['missing_dataset_items'] = False
             state['sql_followup_topic_drift'] = False
             state['sql_followup_but_new_question'] = False
+            state['matched_sql'] = None
+            state['matched_table_name'] = None
+            state['history_question_match'] = None
+            state['history_sql_used'] = False
+            state['report_found'] = False
+            state['report_url'] = None
+            state['report_filter'] = None
+            state['report_name'] = None
+            state['match_type'] = None
+            state['report_reason'] = None
+            state['sql_history_section']=None
+            state['sql_generation_story']=None
 
 
             # Add retry count tracking
@@ -322,12 +342,13 @@ class AsyncHealthcareFinanceWorkflow:
         """Router Agent: Dataset selection with dynamic interrupt and clarification support"""
 
         print(f"\n🎯 Router Agent: Selecting dataset")
-        router_start_time = datetime.now().isoformat()
+        cst = timezone('America/Chicago')
+        router_start_time = datetime.now(cst)  # Keep as aware datetime for duration calculation
 
         try:
             # Execute router agent - ASYNC CALL
             selection_result = await self.router_agent.select_dataset(state)
-            
+            # print('router output',selection_result)
             # ========================================
             # HANDLE SQL FOLLOW-UP VALIDATION FLAGS
             # ========================================
@@ -389,6 +410,7 @@ class AsyncHealthcareFinanceWorkflow:
                 state['selected_dataset'] = selection_result.get('selected_dataset', [])
                 state['dataset_metadata'] = selection_result.get('dataset_metadata', '')
                 state['functional_names'] = selection_result.get('functional_names', [])
+                # print('coming inside sql follow up',state)
                 return state
             
             # 3. If requires_clarification is True, store follow-up info and return
@@ -440,6 +462,11 @@ class AsyncHealthcareFinanceWorkflow:
                 if not state['sql_result'].get('multiple_results', False):
                     state['sql_result']['title'] = state.get('rewritten_question', '')
                 
+                # NEW: Extract and store SQL generation story
+                state['sql_generation_story'] = selection_result.get('sql_result', {}).get('sql_story', '')
+                if state['sql_generation_story']:
+                    print(f"📖 SQL generation story captured: {state['sql_generation_story'][:100]}...")
+                
                 state['selected_dataset'] = selection_result.get('selected_dataset', [])
                 state['dataset_metadata'] = selection_result.get('dataset_metadata', '')
                 state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
@@ -448,6 +475,10 @@ class AsyncHealthcareFinanceWorkflow:
                 state['filter_metadata_results'] = None
                 state['filter_values'] = None
                 state['followup_reasoning'] = None
+                
+                # Capture history_sql_used flag from router agent result
+                state['history_sql_used'] = selection_result.get('history_sql_used', False)
+                print(f"📋 History SQL used: {state['history_sql_used']}")
 
                 # Reset flags
                 state['dataset_followup_question'] = False
@@ -460,10 +491,12 @@ class AsyncHealthcareFinanceWorkflow:
 
                 state['next_agent_disp'] = 'SQL Analysis Complete'
                 
-                router_end_time = datetime.now().isoformat()
-                router_duration = (datetime.fromisoformat(router_end_time) - datetime.fromisoformat(router_start_time)).total_seconds()
+                cst = timezone('America/Chicago')
+                router_end_time = datetime.now(cst)
+                state['router_node_end_ts'] = router_end_time.strftime('%Y-%m-%d %H:%M:%S %Z')  # Format for storage
+                router_duration = (router_end_time - router_start_time).total_seconds()  # Subtract aware datetimes
                 print(f"⏱️ router duration: {router_duration:.3f} seconds")
-            
+                # print('router node output:', state)
                 return state
             
         except Exception as e:
@@ -538,12 +571,13 @@ class AsyncHealthcareFinanceWorkflow:
         print(f"\n📝 Narrative Agent: Generating narrative from SQL results")
         
         try:
-            # Execute narrative synthesis - ASYNC CALL
+            # Execute narrative synthesis - ASYNC CALL (includes Power BI matching in parallel)
             narrative_output = await self.narrative_agent.synthesize_narrative(state)
-
+            
             if not narrative_output.get('success', False):
                 state['narrative_error_msg'] = narrative_output.get('error', 'Narrative synthesis failed')
                 state['current_agent'] = 'narrative_agent'
+                state['report_found'] = False
                 print(f"  ❌ Narrative synthesis failed: {narrative_output.get('error', 'Unknown error')}")
                 return state
             else:
@@ -551,12 +585,35 @@ class AsyncHealthcareFinanceWorkflow:
                 state['narrative_error_msg'] = ''
                 state['narrative_complete'] = True
                 
+                # Store Power BI matching results
+                state['report_found'] = narrative_output.get('report_found', False)
+                state['report_url'] = narrative_output.get('report_url')
+                state['report_filter'] = narrative_output.get('report_filter')
+                state['report_name'] = narrative_output.get('report_name')
+                state['match_type'] = narrative_output.get('match_type')
+                state['report_reason'] = narrative_output.get('report_reason')
+                
+                if state['report_found']:
+                    print(f"  🎯 Power BI Report Found:")
+                    print(f"     Report: {state['report_name']}")
+                    print(f"     Match: {state['match_type']}")
+                    print(f"     URL: {state['report_url']}")
+                    print(f"     Filters: {state['report_filter']}")
+                else:
+                    print(f"  ℹ️ No Power BI report match found")
+                
                 # Process and store narrative history after successful synthesis
                 sql_result = state.get('sql_result', {})
                 self._update_narrative_history(state, sql_result)
+
                 
                 print(f"  ✅ Narrative synthesis completed successfully")
-            
+                
+                # Store narrative end timestamp in CST
+                cst = timezone('America/Chicago')
+                narrative_end_time = datetime.now(cst).strftime('%Y-%m-%d %H:%M:%S %Z')
+                state['narrative_end_ts'] = narrative_end_time
+            # print('narrative output',state)    
             return state
                         
         except Exception as e:
@@ -925,7 +982,9 @@ class HealthcareFinanceWorkflow:
             followup_questions=[],
             followup_generation_success=False,
             follow_up_questions_history=[],
-            narrative_response=None
+            narrative_response=None,
+            # History tracking
+            history_sql_used=False
         )
         
         # Create config with session thread

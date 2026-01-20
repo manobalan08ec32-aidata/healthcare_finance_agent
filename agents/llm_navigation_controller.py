@@ -98,7 +98,7 @@ class LLMNavigationController:
                     current_forecast_cycle,
                     conversation_memory
                 )
-                # print('question prompt', prompt)
+                print('question prompt', prompt)
                 print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],

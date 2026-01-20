@@ -1121,7 +1121,7 @@ Use history to validate filter column choices. Never use history for time values
         print("=" * 60)
         
         planner_prompt = self._build_sql_planner_prompt(context, state)
-        print("planner Prompt:", planner_prompt)
+        # print("planner Prompt:", planner_prompt)
         
         context_output = None
         
@@ -1135,7 +1135,11 @@ Use history to validate filter column choices. Never use history for time values
                     system_prompt="You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup>. No other text."
                 )
                 
-                print("SQL Planner Response:", planner_response)                
+                # print("SQL Planner Response:", planner_response)      
+
+                self._log('info', "LLM response received from SQL planner prompt", state,
+                         llm_response=planner_response,
+                         attempt=attempt + 1)          
                 # Extract context and check followup
                 context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response)
                 
@@ -1181,7 +1185,7 @@ Use history to validate filter column choices. Never use history for time values
         
         for attempt in range(self.max_retries):
             try:
-                print("writer prompt",writer_prompt)
+                # print("writer prompt",writer_prompt)
                 writer_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": writer_prompt}],
                     max_tokens=2500,
@@ -1191,6 +1195,10 @@ Use history to validate filter column choices. Never use history for time values
                 )
                 
                 print(f"SQL writer Response: {writer_response}")
+
+                self._log('info', "LLM response received from SQL writer prompt", state,
+                         llm_response=writer_response,
+                         attempt=attempt + 1)
                 
                 # Extract pattern analysis
                 pattern_analysis = ""
@@ -1340,7 +1348,7 @@ Use history to validate filter column choices. Never use history for time values
 
         for attempt in range(self.max_retries):
             try:
-                print('follow up sql prompt',followup_sql_prompt)
+                # print('follow up sql prompt',followup_sql_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": followup_sql_prompt}],
                     max_tokens=3000,

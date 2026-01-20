@@ -1,0 +1,38 @@
+[
+  {
+    "table": "prd_optumrx_orxfdmprdsa.rag.pbm_claims",
+    "name": "Rx Claims",
+    "desc": "Claim-level financial/utilization analysis across client, pharmacy, drug dimensions",
+    "phi_cols": ["member_id", "member_date_of_birth"],
+    "high_level": false,
+    "useful_for": ["claim-level analysis", "client analysis", "drug/therapy performance", "manufacturer insights", "revenue per script", "GDR metrics", "LOB tracking", "daily/monthly trends", "rate analysis"],
+    "not_useful_for": ["budget summaries", "forecast comparisons", "aggregated reporting without claim detail","HDP,Home Delivery analysis","SP,Mail,Specialty Analysis"],
+    "metrics": ["revenue", "client due amount","Line count", "app due amount", "expense", "cogs", "Gross Margin %", "wac", "awp", "unadjusted_scripts", "adjusted_scripts", "30_day_scripts", "90_day_scripts", "revenue_per_script", "generic_dispensing_ratio", "volume", "rate_variance", "mix_variance", "volume_variance", "gross margin"],
+    "attrs": ["Claim Number", "Submit Date", "Client ID", "Client Name", "Pharmacy NPI", "Drug Name", "Therapy Class", "Drug Manufacturer", "Line of Business", "State", "Brand vs Generic", "Client Type", "GPI Number", "Pharmacy Name", "Pharmacy Type", "Carrier ID", "Member Date of Birth", "Member Sex", "Product Category", "Claim Status"],
+    "time": ["daily", "monthly", "quarterly", "yearly"]
+  },
+  {
+    "table": "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast",
+    "name": "Peoplesoft General Ledger",
+    "desc": "Ledger-level actuals, forecasts, budget for comparative analysis at LOB level",
+    "phi_cols": [],
+    "high_level": true,
+    "useful_for": ["client revenue analysis", "volume/script analysis", "monthly actuals", "high level client analysis", "GAAP analysis", "actuals vs forecast vs budget", "LOB tracking", "rate analysis"],
+    "not_useful_for": ["drug/therapy analysis", "client expense/margin alone", "daily granularity", "carrier analysis"],
+    "metrics": ["revenue", "expense", "rate_variance", "mix_variance", "revenue per script","volume_variance", "cogs", "sga", "ioi", "membership", "unadjusted_scripts", "adjusted_scripts","Line count" ,"30_day_scripts", "90_day_scripts", "volume", "Cost %", "Gross Margin %", "Operating Expenses %", "Operating Cost %", "IOI %", "Utilization PMPM (Unadjusted)", "Utilization PMPM (Adjusted)", "Revenue per Script (Unadj)", "Cost per Script (Unadj)", "Margin per Script (Unadj)", "IOI per Script (Unadj)", "Revenue per Script (Adj)", "Cost per Script (Adj)", "Margin per Script (Adj)", "IOI per Script (Adj)", "Generic Penetration %", "Op Exp per Script (Unadjusted)", "Op Cost per Script (Unadjusted)", "Op Exp per Script (Adjusted)"],
+    "attrs": ["Ledger", "Mail Service", "Home Delivery", "Specialty", "Line of Business", "Transaction Date", "Year", "Month", "Quarter", "Product Category", "Product Category Level 1", "Product Category Level 2", "Client ID", "Client Name"],
+    "time": ["monthly", "quarterly", "yearly"]
+  },
+  {
+    "table": "prd_optumrx_orxfdmprdsa.rag.claim_billing",
+    "name": "CBS Billing",
+    "desc": "Billing info at invoice level for client, carrier, account, group",
+    "phi_cols": [],
+    "high_level": false,
+    "useful_for": ["claim-level billing", "client billing", "invoice analysis"],
+    "not_useful_for": ["expense analysis"],
+    "metrics": ["billed amount", "revenue from billing", "claim fee", "claim cost", "activity fee"],
+    "attrs": ["Claim Number", "Claim Status", "Invoice Number", "Invoice Date", "Invoice GL Date", "Carrier ID", "Account ID", "Group ID", "Client ID", "Client Description", "Drug Name", "Therapy Class", "Drug Manufacturer", "Brand vs Generic", "GPI Number", "Billed Amount", "Revenue Source Type", "Oracle Product Code", "Oracle Product Description", "Activity Category", "Billing Entity Code", "Billing Entity Name", "FQA Company Code", "FQA Geography Code", "FQA Affiliate Code", "FQA Account Code", "FQA LOB Code", "FQA Department Code", "FQA Product Code", "FQA Sub Account Code", "Line of Business"],
+    "time": ["daily", "monthly", "quarterly", "yearly"]
+  }
+]

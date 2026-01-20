@@ -1,0 +1,45 @@
+"""
+Prompts package for the Agentic Text-to-SQL system.
+
+This package contains all hardcoded LLM prompts organized by agent:
+- navigation_prompts: Navigation controller prompts for question analysis and rewriting
+- router_prompts: Router agent prompts for dataset selection and SQL generation
+- reflection_prompts: Reflection agent prompts for post-execution analysis (to be added)
+"""
+
+from .navigation_prompts import (
+    NAVIGATION_SYSTEM_PROMPT,
+    NAVIGATION_COMBINED_PROMPT,
+)
+
+from .router_prompts import (
+    ROUTER_SYSTEM_PROMPT,
+    DATASET_SELECTION_PROMPT,
+    DATASET_CLARIFICATION_PROMPT,
+    SQL_PLANNER_SYSTEM_PROMPT,
+    SQL_PLANNER_PROMPT,
+    SQL_WRITER_SYSTEM_PROMPT,
+    SQL_WRITER_PROMPT,
+    SQL_HISTORY_SECTION_TEMPLATE,
+    SQL_FOLLOWUP_SYSTEM_PROMPT,
+    SQL_FOLLOWUP_PROMPT,
+    SQL_FIX_PROMPT,
+)
+
+__all__ = [
+    # Navigation prompts
+    "NAVIGATION_SYSTEM_PROMPT",
+    "NAVIGATION_COMBINED_PROMPT",
+    # Router prompts
+    "ROUTER_SYSTEM_PROMPT",
+    "DATASET_SELECTION_PROMPT",
+    "DATASET_CLARIFICATION_PROMPT",
+    "SQL_PLANNER_SYSTEM_PROMPT",
+    "SQL_PLANNER_PROMPT",
+    "SQL_WRITER_SYSTEM_PROMPT",
+    "SQL_WRITER_PROMPT",
+    "SQL_HISTORY_SECTION_TEMPLATE",
+    "SQL_FOLLOWUP_SYSTEM_PROMPT",
+    "SQL_FOLLOWUP_PROMPT",
+    "SQL_FIX_PROMPT",
+]

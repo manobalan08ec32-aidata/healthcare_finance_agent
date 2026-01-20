@@ -832,6 +832,11 @@ def initialize_session_state():
     authenticated_user = get_authenticated_user()
     authenticated_user_name = get_authenticated_user_name()
     
+    # DEBUG: Log what we received from main.py
+    print(f"🔍 DEBUG chat.py: authenticated_user = {authenticated_user}")
+    print(f"🔍 DEBUG chat.py: authenticated_user_name = {authenticated_user_name}")
+    print(f"🔍 DEBUG chat.py: session_state keys = {list(st.session_state.keys())}")
+    
     # Log user login (only meaningful log)
     if authenticated_user != 'unknown_user':
         log_event('info', f"User authenticated: {authenticated_user_name}")
@@ -1043,30 +1048,23 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                     'user_question': user_question
                 }
                 
-                # Fire and forget - run feedback insertion in background thread
-                def submit_feedback_background():
-                    try:
-                        success = asyncio.run(_insert_feedback_row(
-                            rewritten_question, sql_query, True, table_name
-                        ))
-                        if success:
-                            log_event('info', "Positive feedback submitted (background)", feedback_type="positive")
-                        else:
-                            print(f"⚠️ Background feedback submission returned False")
-                    except Exception as e:
-                        print(f"❌ Background feedback error: {e}")
-                        log_event('error', f"Background feedback failed: {str(e)}", error_type=type(e).__name__)
+                # Run feedback insertion synchronously (not in background thread)
+                # This ensures session state context is preserved
+                try:
+                    success = asyncio.run(_insert_feedback_row(
+                        rewritten_question, sql_query, True, table_name
+                    ))
+                    if success:
+                        log_event('info', "Positive feedback submitted", feedback_type="positive")
+                        st.success("Thank you for your feedback! 👍")
+                    else:
+                        print(f"⚠️ Feedback submission returned False")
+                        st.warning("Feedback submission encountered an issue, but we've noted it.")
+                except Exception as e:
+                    print(f"❌ Feedback error: {e}")
+                    log_event('error', f"Feedback failed: {str(e)}", error_type=type(e).__name__)
+                    st.error("Failed to submit feedback. Please try again.")
                 
-                # Start background thread (daemon=True means don't block app shutdown)
-                feedback_thread = threading.Thread(
-                    target=submit_feedback_background,
-                    daemon=True,
-                    name=f"PositiveFeedback-{st.session_state.session_id[:8]}"
-                )
-                feedback_thread.start()
-                
-                # Show success message immediately (no waiting)
-                st.success("Thank you for your feedback! 👍")
                 time.sleep(0.5)
                 st.rerun()
         
@@ -1102,30 +1100,23 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                             'user_question': user_question
                         }
                         
-                        # Fire and forget - run feedback insertion in background thread
-                        def submit_negative_feedback_background():
-                            try:
-                                success = asyncio.run(_insert_feedback_row(
-                                    rewritten_question, sql_query, False, table_name, feedback_text
-                                ))
-                                if success:
-                                    log_event('info', "Negative feedback submitted (background)", feedback_type="negative")
-                                else:
-                                    print(f"⚠️ Background negative feedback submission returned False")
-                            except Exception as e:
-                                print(f"❌ Background negative feedback error: {e}")
-                                log_event('error', f"Background negative feedback failed: {str(e)}", error_type=type(e).__name__)
+                        # Run feedback insertion synchronously (not in background thread)
+                        # This ensures session state context is preserved
+                        try:
+                            success = asyncio.run(_insert_feedback_row(
+                                rewritten_question, sql_query, False, table_name, feedback_text
+                            ))
+                            if success:
+                                log_event('info', "Negative feedback submitted", feedback_type="negative")
+                                st.success("Thank you for your feedback! We'll work on improving.")
+                            else:
+                                print(f"⚠️ Negative feedback submission returned False")
+                                st.warning("Feedback submission encountered an issue, but we've noted it.")
+                        except Exception as e:
+                            print(f"❌ Negative feedback error: {e}")
+                            log_event('error', f"Negative feedback failed: {str(e)}", error_type=type(e).__name__)
+                            st.error("Failed to submit feedback. Please try again.")
                         
-                        # Start background thread
-                        feedback_thread = threading.Thread(
-                            target=submit_negative_feedback_background,
-                            daemon=True,
-                            name=f"NegativeFeedback-{st.session_state.session_id[:8]}"
-                        )
-                        feedback_thread.start()
-                        
-                        # Show success message immediately (no waiting)
-                        st.success("Thank you for your feedback! We'll work on improving.")
                         time.sleep(0.5)
                         st.rerun()
                 
@@ -1886,6 +1877,11 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
         user_name = get_authenticated_user_name()
         session_id = st.session_state.get('session_id', 'unknown')
         
+        # DEBUG: Log what user info we have
+        print(f"🔍 DEBUG _send_feedback_email_async: user_email = {user_email}")
+        print(f"🔍 DEBUG _send_feedback_email_async: user_name = {user_name}")
+        print(f"🔍 DEBUG _send_feedback_email_async: session_id = {session_id}")
+        
         # Construct email subject
         subject = f"FDM Bot Feedback Alert raised by User: {user_name}"
         
@@ -1939,7 +1935,7 @@ async def _send_feedback_email_async(user_question: str, feedback_text: str, sql
         recipients = [
             user_email,  # Logged-in user
             "vivek_kishore@optum.com",  # Support team
-            "sivakumm@optum.com"  # Admin
+            "ORXFDM_Cloud_Support@ds.uhc.com"  # Admin
         ]
         recipients_str = ";".join(recipients)
             
@@ -2171,8 +2167,8 @@ def render_last_session_overview():
             spinner_placeholder = st.empty()
             with spinner_placeholder, st.spinner("✍️ Writing the story of our last conversation..."):
                 print("⏳ Spinner active - calling _generate_session_overview")
-                overview="This feature is disabled to save cost for now. Will be enabled during demo's"
-                # overview = asyncio.run(_generate_session_overview(narrative_summary))
+                # overview="This feature is disabled to save cost for now. Will be enabled during demo's"
+                overview = asyncio.run(_generate_session_overview(narrative_summary))
                 print(f"✅ LLM response received: {len(overview) if overview else 0} chars")
             spinner_placeholder.empty()
             print("✅ Spinner cleared")

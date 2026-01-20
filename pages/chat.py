@@ -2031,12 +2031,22 @@ async def _insert_feedback_row(user_question: str, sql_result: str, positive_fee
         # 🆕 NEW: Send email notification for negative feedback (thumbs down)
         if not positive_feedback:
             print("📧 Negative feedback detected - triggering email notification")
-            email_sent = await _send_feedback_email_async(
-                user_question=user_question,
-                feedback_text=feedback_text,
-                sql_query=sql_result,
-                table_name=table_name_clean
-            )
+            
+            # Show spinner while sending email
+            import streamlit as st
+            email_spinner_placeholder = st.empty()
+            with email_spinner_placeholder:
+                with st.spinner("📧 Sending feedback notification email..."):
+                    email_sent = await _send_feedback_email_async(
+                        user_question=user_question,
+                        feedback_text=feedback_text,
+                        sql_query=sql_result,
+                        table_name=table_name_clean
+                    )
+            
+            # Clear spinner after completion
+            email_spinner_placeholder.empty()
+            
             if email_sent:
                 print("✅ Feedback email notification sent successfully")
             else:
@@ -2167,8 +2177,8 @@ def render_last_session_overview():
             spinner_placeholder = st.empty()
             with spinner_placeholder, st.spinner("✍️ Writing the story of our last conversation..."):
                 print("⏳ Spinner active - calling _generate_session_overview")
-                # overview="This feature is disabled to save cost for now. Will be enabled during demo's"
-                overview = asyncio.run(_generate_session_overview(narrative_summary))
+                overview="This feature is disabled to save cost for now. Will be enabled during demo's"
+                # overview = asyncio.run(_generate_session_overview(narrative_summary))
                 print(f"✅ LLM response received: {len(overview) if overview else 0} chars")
             spinner_placeholder.empty()
             print("✅ Spinner cleared")

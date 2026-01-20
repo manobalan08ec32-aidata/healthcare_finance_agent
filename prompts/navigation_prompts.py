@@ -15,9 +15,9 @@ NAVIGATION_SYSTEM_PROMPT = "You are a healthcare finance analytics agent that an
 NAVIGATION_COMBINED_PROMPT = """
 You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values.
 
-====================================================
+
 INPUTS
-====================================================
+
 Current Input: "{current_question}"
 Previous Question: "{previous_question}"
 History: {history_context}
@@ -27,9 +27,8 @@ Previous Year: {previous_year}
 Forecast Cycle: {current_forecast_cycle}
 Memory: {memory_context}
 
-====================================================
+
 CRITICAL: SMART YEAR ASSIGNMENT FOR PARTIAL DATES
-====================================================
 
 **WHEN USER MENTIONS ONLY MONTH/QUARTER WITHOUT YEAR:**
 
@@ -40,21 +39,20 @@ CRITICAL: SMART YEAR ASSIGNMENT FOR PARTIAL DATES
 **Month Ordering:** January(1) < February(2) < March(3) < April(4) < May(5) < June(6) < July(7) < August(8) < September(9) < October(10) < November(11) < December(12)
 
 **Examples (assuming current date is {current_month_name} {current_year}):**
-- User asks "December" → December (month 12) is {december_comparison} {current_month_name} (month {current_month}) → Use {december_year} ✓
-- User asks "January" → January (month 1) is {january_comparison} {current_month_name} (month {current_month}) → Use {january_year} ✓
-- User asks "{current_month_name}" → Same as current month → Use {current_year} ✓
+- User asks "December" → December (month 12) is "BEFORE" if 12 < {current_month} else "AFTER" if 12 > {current_month} else "SAME AS" {current_month_name} (month {current_month}) → Use {previous_year} if 12 > {current_month} else {current_year} ✓
+- User asks "January" → January (month 1) is "BEFORE" if 1 < {current_month} else "AFTER" if 1 > {current_month} else "SAME AS" {current_month_name} (month {current_month}) → Use {previous_year} if 1 > {current_month} else {current_year} ✓
+- User asks "{current_month_name}" → Same as {current_month} → Use {current_year} ✓
 
 **Quarter Handling:**
-- Q1 (Jan-Mar): Use {q1_year}
-- Q2 (Apr-Jun): Use {q2_year}
-- Q3 (Jul-Sep): Use {q3_year}
-- Q4 (Oct-Dec): Use {q4_year}
+- Q1 (Jan-Mar): Use {previous_year} if 3 < {current_month} else {current_year}
+- Q2 (Apr-Jun): Use {previous_year} if 6 < {current_month} else {current_year}
+- Q3 (Jul-Sep): Use {previous_year} if 9 < {current_month} else {current_year}
+- Q4 (Oct-Dec): Use {previous_year} if 12 < {current_month} else {current_year}
 
-**CRITICAL:** When user says just "December" in {current_month_name}, they mean the MOST RECENT December, which is December {most_recent_december_year}!
+**CRITICAL:** When user says just "December" in {current_month_name}, they mean the MOST RECENT December, which is December {previous_year} if {current_month} < 12 else {current_year}
 
-====================================================
+
 CRITICAL: FILTER INHERITANCE & SUBSTITUTION RULES
-====================================================
 
 **DOMAIN FILTERS** (PBM, HDP, SP, Specialty, Mail, PBM Retail, Home Delivery):
 1. Current HAS domain + Previous HAS domain → REPLACE (use current only)
@@ -76,9 +74,8 @@ CRITICAL: FILTER INHERITANCE & SUBSTITUTION RULES
 - Prev: "GLP-1" → Curr: "Wegovy" → Final: "Wegovy" (entity replacement)
 - Prev: "PBM for GLP-1" → Curr: "Ozempic" → Final: "PBM for Ozempic" (inherit domain, replace entity)
 
-====================================================
+
 PROCESSING RULES - APPLY SEQUENTIALLY
-====================================================
 
 **RULE 1: PREFIX DETECTION & STRIPPING**
 Check for and strip these prefixes:
@@ -184,17 +181,7 @@ IF question contains growth/decline terms WITHOUT preceding metric:
   * "the decline" → NO metric ✗
 - Action: Inherit metric from previous question, place BEFORE the term
 
-**RULE 7: MEMORY DIMENSION TAGGING**
-
-IF memory exists AND value found in memory:
-1. Extract dimension KEY from memory (not value)
-2. Add dimension prefix: "for [dimension_key] [value]"
-
-Example with memory {{"client_id": ["57760"]}}:
-- User: "revenue for 57760"
-- Tag: "revenue for client_id 57760"
-
-**RULE 8: FORECAST CYCLE RULES**
+**RULE 7: FORECAST CYCLE RULES**
 
 Apply to rewritten question:
 - "forecast" alone → Add: "forecast {current_forecast_cycle}"
@@ -202,7 +189,7 @@ Apply to rewritten question:
 - Cycle alone (8+4) → Add: "forecast 8+4"
 - Both present → Keep as-is
 
-**RULE 9: BUILD REWRITTEN QUESTION**
+**RULE 8: BUILD REWRITTEN QUESTION**
 
 Based on context_decision:
 
@@ -219,7 +206,7 @@ FOLLOW_UP:
   * Metrics: Current missing → inherit from previous
   * Attributes: Current missing → inherit from previous
   * **Time: Current missing → ALWAYS inherit from previous** (Q3 2025, July 2025, etc.)
-- Apply Rules 6-8
+- Apply Rules 6-7
 - user_message: "Using [inherited items] from previous question"
 
 ⚠️ TIME INHERITANCE: If current question has NO time reference (no month, quarter, year), ALWAYS copy the complete time reference from previous question.
@@ -245,7 +232,7 @@ VALIDATION/Correction handling:
   * Curr: "use Claims table instead of Ledger"
   * Result: "What is revenue for GLP-1 drugs for July 2025 - use Claims table instead of Ledger"
 
-**RULE 10: FILTER VALUE EXTRACTION**
+**RULE 9: FILTER VALUE EXTRACTION**
 
 ⚠️ CRITICAL: Extract filter values from the FINAL REWRITTEN question (after all inheritance applied)
 
@@ -292,9 +279,7 @@ Operators: by, for, breakdown, versus, vs
 Time: Q1-Q4, months, years
 Pure numbers without context
 
-====================================================
-QUICK REFERENCE EXAMPLES
-====================================================
+QUICK REFERENCE EXAMPLES:
 
 NEW: "new question - What is PBM revenue Q3 2025?"
 → Strip prefix, components complete → "What is revenue for PBM for Q3 2025"
@@ -312,9 +297,8 @@ METRIC INHERITANCE: "show the decline" (Prev: "revenue for PBM")
 → No metric before "decline" → "show the revenue decline for PBM"
 → Filters: ["PBM"]
 
-====================================================
 OUTPUT FORMAT
-====================================================
+
 **CRITICAL REQUIREMENTS:**
 1. Return ONLY valid JSON - no markdown, no code blocks, no extra text
 2. Do NOT wrap in ```json or ```

@@ -69,6 +69,7 @@ class AgentState(TypedDict):
     dataset_metadata: Optional[str]                # Metadata for selected datasets
     functional_names: Optional[List[str]]          # User-friendly dataset names
     user_selected_datasets: Optional[List[str]]    # Datasets selected by user from UI dropdown
+    available_datasets: Optional[List[Dict[str, str]]]  # All datasets available for current domain
     
     # Dataset clarification handling
     requires_dataset_clarification: Optional[bool] # Dataset clarification needed
@@ -101,6 +102,7 @@ class AgentState(TypedDict):
     # SQL follow-up handling
     sql_followup_question: Optional[str]           # SQL clarification message
     needs_followup: Optional[bool]                 # SQL needs follow-up flag
+    dataset_change_requested: Optional[bool]       # Flag indicating user requested dataset change during SQL followup
     
     # SQL history and results
     questions_sql_history: Optional[List[str]]     # SQL queries with titles history

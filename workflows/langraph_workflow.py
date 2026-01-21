@@ -220,7 +220,6 @@ class AsyncHealthcareFinanceWorkflow:
             state['sql_history_section']=None
             state['sql_generation_story']=None
 
-
             # Add retry count tracking
             state['llm_retry_count'] = nav_result.get('llm_retry_count', 0)
             
@@ -392,11 +391,11 @@ class AsyncHealthcareFinanceWorkflow:
             # Reset flags if neither condition is met
             state['sql_followup_topic_drift'] = False
             state['sql_followup_but_new_question'] = False
-            
+
             # ========================================
             # CONTINUE WITH EXISTING LOGIC
             # ========================================
-            
+
             # 1. If error message exists, handle as before
             if selection_result.get('error'):
                 state['router_error_msg'] = selection_result.get('error_message', '')

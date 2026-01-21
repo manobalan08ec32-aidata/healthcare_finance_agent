@@ -335,6 +335,7 @@ class LLMRouterAgent:
                 state['selected_dataset'] = selection_result.get('final_actual_tables', [])
                 state['selected_filter_context'] = selection_result.get('selected_filter_context', '')
                 state['selection_reasoning'] = selection_result.get('selection_reasoning', '')
+                state['functional_names'] = selection_result.get('functional_names', '')
                 # After selection, extract metadata and set flag for SQL generation
                 metadata_result = await self.get_metadata(
                     state=state,
@@ -964,10 +965,11 @@ class LLMRouterAgent:
         history_question_match = state.get('history_question_match', '')
         matched_sql = state.get('matched_sql', '')
 
-        # Build dataset context
+        # Build dataset context functional_names
         selected_functional_names = state.get('functional_names', [])
         available_datasets = state.get('available_datasets', [])
-
+        print(f"Selected functional names: {selected_functional_names}")
+        print(f"Selected available_datasets : {available_datasets}")
         # Get other available datasets (excluding selected ones)
         other_datasets = [
             d['functional_name'] for d in available_datasets
@@ -1003,8 +1005,6 @@ Use history to validate filter column choices. Never use history for time values
         )
 
         return prompt
-
-
 
 
     def _build_sql_writer_prompt(self, context_output: str, state: Dict, current_question: str) -> str:
@@ -1137,7 +1137,7 @@ Use history to validate filter column choices. Never use history for time values
         print("=" * 60)
         
         planner_prompt = self._build_sql_planner_prompt(context, state)
-        # print("planner Prompt:", planner_prompt)
+        print("planner Prompt:", planner_prompt[:5000])
         
         context_output = None
         
@@ -1151,7 +1151,7 @@ Use history to validate filter column choices. Never use history for time values
                     system_prompt="You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup>. No other text."
                 )
                 
-                # print("SQL Planner Response:", planner_response)      
+                print("SQL Planner Response:", planner_response)      
 
                 self._log('info', "LLM response received from SQL planner prompt", state,
                          llm_response=planner_response,
@@ -1201,7 +1201,7 @@ Use history to validate filter column choices. Never use history for time values
         
         for attempt in range(self.max_retries):
             try:
-                # print("writer prompt",writer_prompt)
+                print("writer prompt",writer_prompt[:5000])
                 writer_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": writer_prompt}],
                     max_tokens=2500,
@@ -1379,7 +1379,7 @@ Use history to validate filter column choices. Never use history for time values
 
         for attempt in range(self.max_retries):
             try:
-                # print('follow up sql prompt',followup_sql_prompt)
+                print('follow up sql prompt',followup_sql_prompt[:6000])
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": followup_sql_prompt}],
                     max_tokens=3000,
@@ -1445,10 +1445,10 @@ Use history to validate filter column choices. Never use history for time values
                                     state['dataset_metadata'] = new_metadata_result.get('metadata', '')
 
                                     # Clear history SQL context (no longer relevant)
-                                    state['matched_sql'] = ''
-                                    state['history_question_match'] = ''
-                                    state['matched_table_name'] = ''
-                                    state['history_sql_used'] = False
+                                    # state['matched_sql'] = ''
+                                    # state['history_question_match'] = ''
+                                    # state['matched_table_name'] = ''
+                                    # state['history_sql_used'] = False
 
                                     print(f"✅ Switched to dataset(s): {', '.join(matched_functional_names)}")
                                     print(f"✅ Loaded new metadata for {len(matched_tables)} table(s)")
@@ -1640,12 +1640,15 @@ Use history to validate filter column choices. Never use history for time values
             dataset_metadata=dataset_metadata,
             mandatory_columns_text=mandatory_columns_text,
             filter_metadata_results=filter_metadata_results,
-            history_section=history_section
+            history_section=history_section,
+            sql_followup_question=state.get('sql_followup_question', ''),
+            sql_followup_answer=state.get('current_question', '')
         )
 
         # Retry logic for SQL generation
         for attempt in range(self.max_retries):
             try:
+                print(f'Dataset change SQL prompt: {sql_generation_prompt[:5000]}')
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": sql_generation_prompt}],
                     max_tokens=3000,

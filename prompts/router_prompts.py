@@ -343,6 +343,9 @@ EXTRACTED FILTER VALUES: {filter_metadata_results}
 METADATA: {dataset_metadata}
 MANDATORY FILTERS: {mandatory_columns_text}
 
+DATASET SELECTION CONTEXT:
+{dataset_context}
+
 
 VALIDATION STEPS
 
@@ -481,6 +484,8 @@ IF FOLLOWUP_REQUIRED, add after </context>:
 <followup>
 I need one clarification to generate accurate SQL:
 
+SELECTED DATASET: [dataset name(s)]
+
 [Brief question about the specific ambiguity]
 
 Options:
@@ -488,6 +493,8 @@ Options:
 2. [column_name] - [brief description with sample values]
 
 Which one did you mean?
+
+NOTE: I'm using the "[dataset name]" dataset. If you think a different dataset would be better (Available: [list other datasets from OTHER AVAILABLE DATASETS]), please let me know and I can switch.
 </followup>
 
 RULES FOR OUTPUT
@@ -739,6 +746,117 @@ enhance_reason: Multiple separate queries - history pattern not applicable
 """
 
 # ============================================================================
+# SQL DATASET CHANGE PROMPT
+# ============================================================================
+
+SQL_DATASET_CHANGE_PROMPT = """BUSINESS CONTEXT: You are a Databricks SQL code generator for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Your role is to generate accurate SQL queries for authorized business reporting and analytics on de-identified aggregate healthcare metrics.
+
+TASK: Generate production-ready Databricks SQL after user requested dataset change. The user has selected a different dataset during SQL generation follow-up.
+
+CURRENT QUESTION: {current_question}
+
+METADATA: {dataset_metadata}
+
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+
+EXTRACTED FILTER VALUES:
+{filter_metadata_results}
+
+{history_section}
+
+SQL GENERATION RULES
+
+PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
+
+M1. MANDATORY FILTERS - Filters marked [MANDATORY] MUST be in WHERE clause, NEVER omit
+M2. CASE-INSENSITIVE - Use UPPER() for all string comparisons
+M3. SAFE DIVISION - Always use NULLIF(denominator, 0)
+M4. NUMERIC FORMATTING - Amounts: ROUND(x, 0), Percentages: ROUND(x, 3)
+M5. ONE COLUMN PER FILTER - Apply filter to single column, no OR across multiple columns
+
+PRIORITY 1: METRIC TYPE HANDLING
+
+- Pivot metric_type via CASE WHEN, never GROUP BY metric_type for calculations
+- Pattern: SUM(CASE WHEN metric_type = 'X' THEN amt ELSE 0 END) AS x_value
+- Calculations happen across columns in same row, not across rows
+
+PRIORITY 2: COMPONENT DISPLAY
+
+RULE: For ANY calculated metric (division, subtraction, multiplication, percentage), show ALL components in SELECT
+- Revenue per member → revenue, member_count, revenue/member_count
+- Margin (revenue-cost) → revenue, cost, margin
+- Utilization rate → numerator, denominator, rate
+- Cost per script → total_cost, script_count, cost_per_script
+
+Pattern: SELECT component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+Why: Users need to see source data to validate calculations and understand context
+
+PRIORITY 3: QUERY PATTERNS
+
+TIME COMPARISON (Always side-by-side columns, NEVER GROUP BY time period):
+- Each period as column: SUM(CASE WHEN period = X THEN amt ELSE 0 END) AS period_x
+- Include variance: period_2 - period_1 AS variance
+- Include variance_pct: (variance / NULLIF(period_1, 0)) * 100
+- Applies to: MoM, QoQ, YoY, any "X vs Y" time comparison
+
+TOP N:
+- ORDER BY metric DESC LIMIT N
+- Include percentage of total when relevant
+
+PERCENTAGE OF TOTAL:
+- value, value * 100.0 / NULLIF((SELECT SUM FROM same_filters), 0) AS pct
+
+PATTERN - BREAKDOWN BY MULTIPLE VALUES:
+SELECT product_category, ROUND(SUM(amount), 0) AS value
+FROM table
+WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
+GROUP BY product_category
+
+INSTRUCTIONS:
+- Analyze the user question and metadata to determine the best SQL approach
+- Use column names and table structures exactly as provided in METADATA
+- Apply all MANDATORY FILTER COLUMNS in WHERE clause
+- Incorporate EXTRACTED FILTER VALUES where applicable
+- Follow history SQL patterns if ENHANCE decision is YES
+
+OUTPUT FORMAT
+
+Single SQL (for questions that can be answered with one query):
+
+<sql>
+[Complete Databricks SQL query]
+</sql>
+
+<sql_story>
+[2-3 sentences explaining the query in business-friendly language]
+</sql_story>
+
+<history_sql_used>true | false</history_sql_used>
+
+Multiple SQL (for questions requiring data from multiple unrelated tables):
+
+<multiple_sql>
+<query1_title>[Descriptive title for query 1 - max 8 words]</query1_title>
+<query1>
+[SQL query 1]
+</query1>
+
+<query2_title>[Descriptive title for query 2 - max 8 words]</query2_title>
+<query2>
+[SQL query 2]
+</query2>
+
+[Add more queries if needed: query3_title, query3, etc.]
+</multiple_sql>
+
+<sql_story>
+[2-3 sentences explaining what data each query returns and how they together answer the question]
+</sql_story>
+
+<history_sql_used>true | false</history_sql_used>
+"""
+
+# ============================================================================
 # SQL FOLLOWUP PROMPTS
 # ============================================================================
 
@@ -759,6 +877,8 @@ MANDATORY FILTER COLUMNS: {mandatory_columns_text}
 EXTRACTED column contain FILTER VALUES:
 {filter_metadata_results}
 
+SELECTED DATASET: {selected_dataset_name}
+OTHER AVAILABLE DATASETS: {other_available_datasets}
 
 {history_section}
 
@@ -771,12 +891,25 @@ USER'S RESPONSE: {sql_followup_answer}
 
 **FIRST, analyze if the user's response is relevant:**
 
-1. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
-2. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
-3. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
+1. **DATASET_CHANGE_REQUEST**: User explicitly requests a different dataset → Extract new dataset name, return dataset_change flag
+2. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
+3. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
+4. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
 
-**If NOT RELEVANT (categories 2 or 3), immediately return the appropriate XML response below and STOP.**
-**If RELEVANT (category 1), proceed to STEP 2 for SQL generation.*
+DATASET CHANGE VALIDATION:
+- If user mentions a dataset name from OTHER AVAILABLE DATASETS → DATASET_CHANGE_REQUEST
+- If user mentions a dataset name NOT in available list → TOPIC_DRIFT (treat as irrelevant)
+- User can select one or multiple datasets - extract all mentioned
+
+Examples:
+- "Use Pharmacy IRIS Claims instead" → DATASET_CHANGE_REQUEST
+- "Can you use CBS Billing?" → DATASET_CHANGE_REQUEST
+- "Use both Rx Claims and CBS Billing" → DATASET_CHANGE_REQUEST (multiple)
+- "Use Medical Claims" (not available) → TOPIC_DRIFT
+
+**If DATASET_CHANGE_REQUEST (category 1), return the dataset change XML below and STOP.**
+**If NOT RELEVANT (categories 3 or 4), return the appropriate XML response below and STOP.**
+**If RELEVANT (category 2), proceed to STEP 2 for SQL generation.**
 
 =========================================
 STEP 2: SQL GENERATION (Only if RELEVANT)
@@ -844,11 +977,6 @@ FROM table
 WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
 GROUP BY product_category
 
-PATTERN - BREAKDOWN BY MULTIPLE VALUES:
-SELECT product_category, ROUND(SUM(amount), 0) AS value
-FROM table
-WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
-GROUP BY product_category
 
 APPLY HISTORY PATTERN (if ENHANCE = YES):
 
@@ -884,13 +1012,26 @@ OUTPUT FORMATS
 IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
 return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
 
-**OPTION 1: If user's response is a NEW QUESTION**
+**OPTION 1: If user requests DATASET CHANGE (valid datasets only)**
+<dataset_change>
+<detected>true</detected>
+<requested_datasets>[List of functional dataset names, e.g. "Pharmacy IRIS Claims" or "Rx Claims, CBS Billing"]</requested_datasets>
+<reasoning>[Brief 1-sentence why user wants to change dataset]</reasoning>
+</dataset_change>
+
+**OPTION 2: If user mentions INVALID dataset (not in available list)**
+<topic_drift>
+<detected>true</detected>
+<reasoning>User mentioned dataset "[dataset name]" which is not available. Available datasets are: [list]. This is off-topic.</reasoning>
+</topic_drift>
+
+**OPTION 3: If user's response is a NEW QUESTION**
 <new_question>
 <detected>true</detected>
 <reasoning>[Brief 1-sentence why this is a new question]</reasoning>
 </new_question>
 
-**OPTION 2: If user's response is TOPIC DRIFT (unrelated)**
+**OPTION 4: If user's response is TOPIC DRIFT (unrelated)**
 <topic_drift>
 <detected>true</detected>
 <reasoning>[Brief 1-sentence why this is off-topic]</reasoning>

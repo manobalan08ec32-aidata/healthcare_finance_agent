@@ -18,6 +18,7 @@ from prompts.router_prompts import (
     SQL_PLANNER_PROMPT,
     SQL_WRITER_SYSTEM_PROMPT,
     SQL_WRITER_PROMPT,
+    SQL_DATASET_CHANGE_PROMPT,
     SQL_HISTORY_SECTION_TEMPLATE,
     SQL_NO_HISTORY_SECTION,
     SQL_FOLLOWUP_SYSTEM_PROMPT,
@@ -34,51 +35,38 @@ class LLMRouterAgent:
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
         self.max_retries = 3
-    
+
+    def _load_available_datasets(self, domain_selection: str) -> List[Dict[str, str]]:
+        """Load available datasets from metadata.json for the given domain"""
+        try:
+            metadata_config_path = "config/metadata/metadata.json"
+            with open(metadata_config_path, 'r') as f:
+                metadata_config = json.load(f)
+
+            domain_datasets = metadata_config.get(domain_selection, [])
+
+            # Convert to list of dicts with functional_name and table_name
+            available_datasets = []
+            for dataset_dict in domain_datasets:
+                for functional_name, table_name in dataset_dict.items():
+                    available_datasets.append({
+                        "functional_name": functional_name,
+                        "table_name": table_name
+                    })
+
+            print(f"✅ Loaded {len(available_datasets)} available datasets for {domain_selection}")
+            return available_datasets
+
+        except Exception as e:
+            print(f"❌ Failed to load available datasets: {e}")
+            return []
+
     def _log(self, level: str, message: str, state: AgentState = None, **extra):
         """Helper method to log with session context from state"""
         user_email = state.get('user_email') if state else None
         session_id = state.get('session_id') if state else None
         log_with_user_context(logger, level, f"[Router] {message}", user_email, session_id, **extra)
-    
-    def _format_json_compact(self, data: Any) -> str:
-        """Format JSON with compact arrays (keep arrays on single lines)"""
-        def format_value(obj, indent_level=0):
-            indent = "  " * indent_level
-            next_indent = "  " * (indent_level + 1)
-            
-            if isinstance(obj, dict):
-                lines = ["{"]
-                items = list(obj.items())
-                for i, (key, value) in enumerate(items):
-                    comma = "," if i < len(items) - 1 else ""
-                    if isinstance(value, (list, dict)):
-                        lines.append(f'{next_indent}"{key}": {format_value(value, indent_level + 1)}{comma}')
-                    else:
-                        lines.append(f'{next_indent}"{key}": {json.dumps(value)}{comma}')
-                lines.append(f"{indent}}}")
-                return "\n".join(lines)
-            
-            elif isinstance(obj, list):
-                if not obj:
-                    return "[]"
-                # Check if all items are simple types (strings, numbers, booleans)
-                if all(isinstance(item, (str, int, float, bool, type(None))) for item in obj):
-                    # Keep array on single line
-                    return json.dumps(obj)
-                else:
-                    # If array contains objects, format each on new line
-                    lines = ["["]
-                    for i, item in enumerate(obj):
-                        comma = "," if i < len(obj) - 1 else ""
-                        lines.append(f"{next_indent}{format_value(item, indent_level + 1)}{comma}")
-                    lines.append(f"{indent}]")
-                    return "\n".join(lines)
-            
-            else:
-                return json.dumps(obj)
         
-        return format_value(data)
         
     async def select_dataset(self, state: AgentState) -> Dict[str, any]:
         """Enhanced dataset selection with complete workflow handling"""
@@ -90,6 +78,13 @@ class LLMRouterAgent:
         selection_reasoning = ''
         functional_names = []
         filter_metadata_results = []  # Initialize to prevent UnboundLocalError
+
+        # Load available datasets for the domain and cache in state
+        domain_selection = state.get('domain_selection', '')
+        if domain_selection and not state.get('available_datasets'):
+            available_datasets = self._load_available_datasets(domain_selection)
+            state['available_datasets'] = available_datasets
+            print(f"📊 Cached {len(available_datasets)} available datasets in state")
 
         # Priority 1: Check if this is a dataset clarification follow-up
         if state.get('requires_dataset_clarification', False) and not state.get('is_sql_followup', False):
@@ -493,13 +488,17 @@ class LLMRouterAgent:
         """Extract metadata from mandatory embeddings JSON file"""
         try:
             tables_list = selected_dataset if isinstance(selected_dataset, list) else [selected_dataset] if selected_dataset else []
-            
+
             print(f'📊 Loading metadata for {len(tables_list)} table(s): {tables_list}')
-            
+
+            # Get domain selection from state
+            domain_selection = state.get('domain_selection', 'Optum Pharmacy')
+            print(f'🎯 Domain selection: {domain_selection}')
+
             # ===== STEP 1: Load Mandatory Embeddings (Full Metadata) =====
-            mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list)
+            mandatory_contexts = get_mandatory_embeddings_for_tables(tables_list, domain_selection)
             print(f'✅ Mandatory contexts loaded: {len(mandatory_contexts)} tables')
-            
+
             # ===== STEP 2: Build Metadata from Mandatory Contexts =====
             metadata = ""
             
@@ -965,6 +964,22 @@ class LLMRouterAgent:
         history_question_match = state.get('history_question_match', '')
         matched_sql = state.get('matched_sql', '')
 
+        # Build dataset context
+        selected_functional_names = state.get('functional_names', [])
+        available_datasets = state.get('available_datasets', [])
+
+        # Get other available datasets (excluding selected ones)
+        other_datasets = [
+            d['functional_name'] for d in available_datasets
+            if d['functional_name'] not in selected_functional_names
+        ]
+
+        dataset_context = f"""
+SELECTED DATASET: {', '.join(selected_functional_names) if selected_functional_names else 'None'}
+
+OTHER AVAILABLE DATASETS: {', '.join(other_datasets) if other_datasets else 'None'}
+"""
+
         # History hint for filter resolution
         history_hint = ""
         if matched_sql and history_question_match:
@@ -983,7 +998,8 @@ Use history to validate filter column choices. Never use history for time values
             filter_metadata_results=filter_metadata_results,
             history_hint=history_hint,
             dataset_metadata=dataset_metadata,
-            mandatory_columns_text=mandatory_columns_text
+            mandatory_columns_text=mandatory_columns_text,
+            dataset_context=dataset_context
         )
 
         return prompt
@@ -1330,8 +1346,21 @@ Use history to validate filter column choices. Never use history for time values
         
         # Format mandatory columns for prompt
         mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
-        
+
         has_multiple_tables = len(selected_datasets) > 1 if isinstance(selected_datasets, list) else False
+
+        # Build dataset context for followup
+        selected_functional_names = state.get('functional_names', [])
+        available_datasets = state.get('available_datasets', [])
+
+        # Get other available datasets (excluding selected ones)
+        other_datasets = [
+            d['functional_name'] for d in available_datasets
+            if d['functional_name'] not in selected_functional_names
+        ]
+
+        selected_dataset_name = ', '.join(selected_functional_names) if selected_functional_names else 'None'
+        other_available_datasets = ', '.join(other_datasets) if other_datasets else 'None'
 
         # Use imported prompt template
         followup_sql_prompt = SQL_FOLLOWUP_PROMPT.format(
@@ -1343,7 +1372,9 @@ Use history to validate filter column choices. Never use history for time values
             filter_metadata_results=filter_metadata_results,
             history_section=history_section,
             sql_followup_question=sql_followup_question,
-            sql_followup_answer=sql_followup_answer
+            sql_followup_answer=sql_followup_answer,
+            selected_dataset_name=selected_dataset_name,
+            other_available_datasets=other_available_datasets
         )
 
         for attempt in range(self.max_retries):
@@ -1362,8 +1393,81 @@ Use history to validate filter column choices. Never use history for time values
                 self._log('info', "LLM response received from SQL followup handler", state,
                          llm_response=llm_response,
                          attempt=attempt + 1)
-                
-                # Check for new_question flag first
+
+                # Check for dataset_change flag first
+                dataset_change_match = re.search(
+                    r'<dataset_change>.*?<detected>(.*?)</detected>.*?<requested_datasets>(.*?)</requested_datasets>.*?<reasoning>(.*?)</reasoning>.*?</dataset_change>',
+                    llm_response, re.DOTALL
+                )
+                if dataset_change_match:
+                    detected = dataset_change_match.group(1).strip().lower() == 'true'
+                    requested_datasets_str = dataset_change_match.group(2).strip()
+                    reasoning = dataset_change_match.group(3).strip()
+
+                    if detected:
+                        # Parse requested datasets (can be comma-separated)
+                        requested_dataset_names = [name.strip() for name in requested_datasets_str.split(',')]
+
+                        # Map to table names
+                        available_datasets = state.get('available_datasets', [])
+                        matched_tables = []
+                        matched_functional_names = []
+
+                        for req_name in requested_dataset_names:
+                            for dataset in available_datasets:
+                                # LLM handles semantic matching, so we just need exact match here
+                                if dataset['functional_name'].strip() == req_name.strip():
+                                    matched_tables.append(dataset['table_name'])
+                                    matched_functional_names.append(dataset['functional_name'])
+                                    break
+
+                        if matched_tables:
+                            # Check if same as current selection
+                            current_datasets = set(state.get('selected_dataset', []))
+                            if set(matched_tables) == current_datasets:
+                                print(f"ℹ️ User selected same dataset(s) - skipping reload, proceeding to SQL")
+                                # Don't reload metadata, just continue to SQL generation
+                                # Fall through to SQL generation by NOT returning early
+                            else:
+                                print(f"🔄 Dataset change requested: {', '.join(matched_functional_names)}")
+
+                                # Load new metadata for all selected datasets
+                                domain_selection = state.get('domain_selection', 'Optum Pharmacy')
+                                new_metadata_result = await self.get_metadata(
+                                    state=state,
+                                    selected_dataset=matched_tables
+                                )
+
+                                if not new_metadata_result.get('error', False):
+                                    # Update state with new dataset(s) and metadata
+                                    state['selected_dataset'] = matched_tables
+                                    state['functional_names'] = matched_functional_names
+                                    state['dataset_metadata'] = new_metadata_result.get('metadata', '')
+
+                                    # Clear history SQL context (no longer relevant)
+                                    state['matched_sql'] = ''
+                                    state['history_question_match'] = ''
+                                    state['matched_table_name'] = ''
+                                    state['history_sql_used'] = False
+
+                                    print(f"✅ Switched to dataset(s): {', '.join(matched_functional_names)}")
+                                    print(f"✅ Loaded new metadata for {len(matched_tables)} table(s)")
+
+                                    # ✨ Auto-generate SQL with new dataset instead of returning to user
+                                    print(f"🔨 Auto-generating SQL with new dataset")
+
+                                    # Extract updated context for SQL generation
+                                    sql_context = self._extract_context(state)
+
+                                    # Generate SQL using the new dataset
+                                    # Just like _generate_sql_with_followup_async, we return the SQL
+                                    # The parent caller will handle execution
+                                    sql_result = await self._generate_sql_after_dataset_change(sql_context, state)
+
+                                    # Return SQL generation result directly (parent will execute)
+                                    return sql_result
+
+                # Check for new_question flag
                 new_question_match = re.search(r'<new_question>.*?<detected>(.*?)</detected>.*?<reasoning>(.*?)</reasoning>.*?</new_question>', llm_response, re.DOTALL)
                 if new_question_match:
                     detected = new_question_match.group(1).strip().lower() == 'true'
@@ -1480,6 +1584,166 @@ Use history to validate filter column choices. Never use history for time values
             'history_sql_used': False,  # 🆕 NEW FIELD
             'error': f"SQL generation with follow-up failed after {self.max_retries} attempts due to Model errors"
     }
+
+    async def _generate_sql_after_dataset_change(self, context: Dict, state: Dict) -> Dict[str, Any]:
+        """Generate SQL after dataset change without re-validation
+
+        This method is called when user changes dataset during follow-up.
+        It generates SQL directly using the new dataset metadata without
+        going through the planner validation again.
+
+        Args:
+            context: Execution context containing question, metadata, etc.
+            state: Current state with updated dataset information
+
+        Returns:
+            Dictionary with SQL generation result
+        """
+
+        current_question = context.get('current_question', '')
+        dataset_metadata = context.get('dataset_metadata', '')
+        filter_metadata_results = state.get('filter_metadata_results', [])
+        selected_datasets = state.get('selected_dataset', [])
+
+        # Build mandatory columns (same as in _generate_sql_with_followup_async)
+        mandatory_column_mapping = {
+            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": ["Ledger"],
+            "prd_optumrx_orxfdmprdsa.rag.pbm_claims": ["product_category='PBM'"]
+        }
+
+        mandatory_columns_info = []
+        if isinstance(selected_datasets, list):
+            for dataset in selected_datasets:
+                if dataset in mandatory_column_mapping:
+                    for col in mandatory_column_mapping[dataset]:
+                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
+
+        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
+
+        # Build history section (if available)
+        history_question_match = state.get('history_question_match', '')
+        matched_sql = state.get('matched_sql', '')
+        has_history = bool(matched_sql and history_question_match)
+
+        if has_history:
+            history_section = SQL_HISTORY_SECTION_TEMPLATE.format(
+                history_question_match=history_question_match,
+                matched_sql=matched_sql
+            )
+        else:
+            history_section = SQL_NO_HISTORY_SECTION
+
+        # Use comprehensive SQL_DATASET_CHANGE_PROMPT template
+        # This is a copy of SQL_WRITER_PROMPT but without context_output field
+        sql_generation_prompt = SQL_DATASET_CHANGE_PROMPT.format(
+            current_question=current_question,
+            dataset_metadata=dataset_metadata,
+            mandatory_columns_text=mandatory_columns_text,
+            filter_metadata_results=filter_metadata_results,
+            history_section=history_section
+        )
+
+        # Retry logic for SQL generation
+        for attempt in range(self.max_retries):
+            try:
+                llm_response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": sql_generation_prompt}],
+                    max_tokens=3000,
+                    temperature=0.0,
+                    top_p=0.1,
+                    system_prompt=SQL_WRITER_SYSTEM_PROMPT
+                )
+
+                print(f'Dataset change SQL response: {llm_response}')
+
+                # Extract sql_story FIRST (before other tags)
+                sql_story = ""
+                story_match = re.search(r'<sql_story>(.*?)</sql_story>', llm_response, re.DOTALL)
+                if story_match:
+                    sql_story = story_match.group(1).strip()
+                    print(f"📖 Captured SQL generation story from dataset change ({len(sql_story)} chars)")
+
+                # Check for multiple SQL queries FIRST
+                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
+                if multiple_sql_match:
+                    multiple_content = multiple_sql_match.group(1).strip()
+
+                    # Extract individual queries with titles
+                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
+                    if query_matches:
+                        sql_queries = []
+                        query_titles = []
+                        for i, (query_num, title, query) in enumerate(query_matches):
+                            cleaned_query = query.strip().replace('`', '')
+                            cleaned_title = title.strip()
+                            if cleaned_query and cleaned_title:
+                                sql_queries.append(cleaned_query)
+                                query_titles.append(cleaned_title)
+
+                        if sql_queries:
+                            # Extract history_sql_used flag
+                            history_sql_used = False
+                            history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE)
+                            if history_match:
+                                history_sql_used = history_match.group(1).lower() == 'true'
+                                print(f"📊 history_sql_used flag from LLM: {history_sql_used}")
+
+                            print(f"✅ Multiple SQL queries generated after dataset change")
+                            return {
+                                'success': True,
+                                'multiple_sql': True,
+                                'topic_drift': False,
+                                'new_question': False,
+                                'sql_queries': sql_queries,
+                                'query_titles': query_titles,
+                                'query_count': len(sql_queries),
+                                'history_sql_used': history_sql_used,
+                                'sql_story': sql_story
+                            }
+
+                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
+
+                # Check for single SQL query
+                match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
+                if match:
+                    sql_query = match.group(1).strip()
+                    sql_query = sql_query.replace('`', '')  # Remove backticks
+
+                    if not sql_query:
+                        raise ValueError("Empty SQL query in XML response")
+
+                    # Extract history_sql_used flag
+                    history_sql_used = False
+                    history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE)
+                    if history_match:
+                        history_sql_used = history_match.group(1).lower() == 'true'
+                        print(f"📊 history_sql_used flag from LLM: {history_sql_used}")
+
+                    print(f"✅ SQL generated successfully after dataset change")
+                    return {
+                        'success': True,
+                        'multiple_sql': False,
+                        'topic_drift': False,
+                        'new_question': False,
+                        'sql_query': sql_query,
+                        'history_sql_used': history_sql_used,
+                        'sql_story': sql_story
+                    }
+                else:
+                    raise ValueError("No valid XML response found (expected sql or multiple_sql)")
+
+            except Exception as e:
+                print(f"❌ SQL generation after dataset change - attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+
+        return {
+            'success': False,
+            'topic_drift': False,
+            'new_question': False,
+            'history_sql_used': False,
+            'error': f"SQL generation failed after dataset change ({self.max_retries} attempts)"
+        }
 
     async def _execute_sql_with_retry_async(self, initial_sql: str, context: Dict, max_retries: int = 3) -> Dict:
         """Execute SQL with intelligent retry logic and async handling"""

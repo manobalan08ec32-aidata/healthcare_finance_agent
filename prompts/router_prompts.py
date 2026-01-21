@@ -484,7 +484,7 @@ IF FOLLOWUP_REQUIRED, add after </context>:
 <followup>
 I need one clarification to generate accurate SQL:
 
-SELECTED DATASET: [dataset name(s)]
+Selected Dataset: [dataset name(s)]
 
 [Brief question about the specific ambiguity]
 
@@ -494,7 +494,9 @@ Options:
 
 Which one did you mean?
 
-NOTE: I'm using the "[dataset name]" dataset. If you think a different dataset would be better (Available: [list other datasets from OTHER AVAILABLE DATASETS]), please let me know and I can switch.
+NOTE: If you feel another dataset(s) would be more appropriate (Available Datasets: [list other datasets from OTHER AVAILABLE DATASETS]), please let me know and I can switch.
+You will have only one opportunity to make this change.
+
 </followup>
 
 RULES FOR OUTPUT
@@ -699,47 +701,25 @@ Generate straightforward SQL based on context INTENT:
 
 OUTPUT FORMAT
 
-FOR SINGLE_TABLE and MULTI_TABLE_JOIN:
-
-<pattern_analysis>
-pattern_detected: [GROUPING_SETS_TOTAL | UNION_TOTAL | SIMPLE | NONE]
-breakdown_column: [column or null]
-parent_dimension: [column or null]
-enhance_decision: [YES | NO]
-enhance_reason: [brief explanation]
-</pattern_analysis>
-
+For single SQL:
 <sql>
 [Complete Databricks SQL]
 </sql>
 
-<sql_story>
-[2-3 sentences explaining the query in business terms]
-</sql_story>
-
-<history_sql_used>[true | false]</history_sql_used>
-
-FOR MULTI_TABLE_SEPARATE:
-
-<pattern_analysis>
-pattern_detected: NONE
-enhance_decision: NO
-enhance_reason: Multiple separate queries - history pattern not applicable
-</pattern_analysis>
-
+For MULTIPLE queries:
 <multiple_sql>
-<query1_title>[From QUERY_1 ANSWERS field - max 8 words]</query1_title>
-<query1>
-[SQL for QUERY_1]
-</query1>
-<query2_title>[From QUERY_2 ANSWERS field - max 8 words]</query2_title>
-<query2>
-[SQL for QUERY_2]
-</query2>
+<query1_title>[Short title - max 8 words]</query1_title>
+<query1>[SQL]</query1>
+<query2_title>[Short title]</query2_title>
+<query2>[SQL]</query2>
 </multiple_sql>
 
 <sql_story>
-[Explain that question required data from multiple tables without join relationship. Describe what each query returns.]
+[2-3 sentences in business-friendly language explaining:
+ - What table/data is being queried
+ - What filters are applied
+ - What metric/calculation is returned
+ - How user's clarification was incorporated]
 </sql_story>
 
 <history_sql_used>false</history_sql_used>
@@ -753,7 +733,11 @@ SQL_DATASET_CHANGE_PROMPT = """BUSINESS CONTEXT: You are a Databricks SQL code g
 
 TASK: Generate production-ready Databricks SQL after user requested dataset change. The user has selected a different dataset during SQL generation follow-up.
 
-CURRENT QUESTION: {current_question}
+ORIGINAL USER QUESTION: {current_question}
+
+INTERMEDIATE FOLLOWUP QUESTION : {sql_followup_question}
+
+INTERMEDIATE USER QUESTION : {sql_followup_answer}
 
 METADATA: {dataset_metadata}
 
@@ -827,33 +811,29 @@ Single SQL (for questions that can be answered with one query):
 [Complete Databricks SQL query]
 </sql>
 
-<sql_story>
-[2-3 sentences explaining the query in business-friendly language]
-</sql_story>
-
-<history_sql_used>true | false</history_sql_used>
-
 Multiple SQL (for questions requiring data from multiple unrelated tables):
 
+For MULTIPLE queries:
 <multiple_sql>
-<query1_title>[Descriptive title for query 1 - max 8 words]</query1_title>
-<query1>
-[SQL query 1]
-</query1>
-
-<query2_title>[Descriptive title for query 2 - max 8 words]</query2_title>
-<query2>
-[SQL query 2]
-</query2>
-
-[Add more queries if needed: query3_title, query3, etc.]
+<query1_title>[Short title - max 8 words]</query1_title>
+<query1>[SQL]</query1>
+<query2_title>[Short title]</query2_title>
+<query2>[SQL]</query2>
 </multiple_sql>
 
 <sql_story>
-[2-3 sentences explaining what data each query returns and how they together answer the question]
+[2-3 sentences in business-friendly language explaining:
+ - What table/data is being queried
+ - What filters are applied
+ - What metric/calculation is returned
+ - How user's clarification was incorporated]
 </sql_story>
 
 <history_sql_used>true | false</history_sql_used>
+
+HISTORY_SQL_USED VALUES:
+- true = Used historical SQL structure with filter replacement
+- false = Generated fresh (no history or history not applicable)
 """
 
 # ============================================================================
@@ -870,26 +850,16 @@ SQL_FOLLOWUP_PROMPT = """You are a Databricks SQL generator for DANA (Data Analy
 CONTEXT: This is PHASE 2 of a two-phase process. In Phase 1, you asked a clarifying question. The user has now responded. Your task is to generate Databricks SQL using the original question + user's clarification.
 
 ORIGINAL USER QUESTION: {current_question}
-**AVAILABLE METADATA**: {dataset_metadata}
-MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
-JOIN INFORMATION: {join_clause}
-MANDATORY FILTER COLUMNS: {mandatory_columns_text}
-EXTRACTED column contain FILTER VALUES:
-{filter_metadata_results}
-
 SELECTED DATASET: {selected_dataset_name}
 OTHER AVAILABLE DATASETS: {other_available_datasets}
 
-{history_section}
-
-====================================
 STEP 1: VALIDATE FOLLOW-UP RESPONSE
-====================================
 
 YOUR PREVIOUS QUESTION: {sql_followup_question}
+
 USER'S RESPONSE: {sql_followup_answer}
 
-**FIRST, analyze if the user's response is relevant:**
+**First Silently analyze if the user's response is relevant:** ⚠️ CRITICAL OUTPUT INSTRUCTION: DO NOT output any reasoning, thinking steps, or explanatory text. Go DIRECTLY to the XML output format specified below.:
 
 1. **DATASET_CHANGE_REQUEST**: User explicitly requests a different dataset → Extract new dataset name, return dataset_change flag
 2. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
@@ -911,9 +881,16 @@ Examples:
 **If NOT RELEVANT (categories 3 or 4), return the appropriate XML response below and STOP.**
 **If RELEVANT (category 2), proceed to STEP 2 for SQL generation.**
 
-=========================================
 STEP 2: SQL GENERATION (Only if RELEVANT)
-=========================================
+
+**AVAILABLE METADATA**: {dataset_metadata}
+MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
+JOIN INFORMATION: {join_clause}
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+EXTRACTED column contain FILTER VALUES:
+{filter_metadata_results}
+
+{history_section}
 
 Generate a high-quality Databricks SQL query using:
 1. The ORIGINAL user question as the primary requirement
@@ -1010,7 +987,7 @@ Generate straightforward SQL based on context INTENT:
 OUTPUT FORMATS
 ==============================
 IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
-return ONLY the SQL query wrapped in XML tags. No other text, explanations, or formatting
+return ONLY the SQL query wrapped in XML tags. DO NOT output any reasoning, thinking steps, or explanatory text.
 
 **OPTION 1: If user requests DATASET CHANGE (valid datasets only)**
 <dataset_change>
@@ -1044,16 +1021,6 @@ For SINGLE query:
 [Complete Databricks SQL incorporating original question + user's clarification]
 </sql>
 
-<sql_story>
-[2-3 sentences in business-friendly language explaining:
- - What table/data is being queried
- - What filters are applied
- - What metric/calculation is returned
- - How user's clarification was incorporated]
-</sql_story>
-
-<history_sql_used>true | false</history_sql_used>
-
 For MULTIPLE queries:
 <multiple_sql>
 <query1_title>[Short title - max 8 words]</query1_title>
@@ -1063,7 +1030,11 @@ For MULTIPLE queries:
 </multiple_sql>
 
 <sql_story>
-[2-3 sentences explaining the queries and how user's clarification was applied]
+[2-3 sentences in business-friendly language explaining:
+ - What table/data is being queried
+ - What filters are applied
+ - What metric/calculation is returned
+ - How user's clarification was incorporated]
 </sql_story>
 
 <history_sql_used>true | false</history_sql_used>

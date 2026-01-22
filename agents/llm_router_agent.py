@@ -82,12 +82,13 @@ class LLMRouterAgent:
         functional_names = []
         filter_metadata_results = []  # Initialize to prevent UnboundLocalError
 
-        # Load available datasets for the domain and cache in state
+        # Load available datasets for the domain (simple approach - no caching needed)
         domain_selection = state.get('domain_selection', '')
-        if domain_selection and not state.get('available_datasets'):
+        
+        if domain_selection:
             available_datasets = self._load_available_datasets(domain_selection)
             state['available_datasets'] = available_datasets
-            print(f"📊 Cached {len(available_datasets)} available datasets in state")
+            print(f"📊 Loaded {len(available_datasets)} available datasets for {domain_selection}")
 
         # Priority 1: Check if this is a dataset clarification follow-up
         if state.get('requires_dataset_clarification', False) and not state.get('is_sql_followup', False):

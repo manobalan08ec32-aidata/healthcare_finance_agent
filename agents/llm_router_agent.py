@@ -1037,72 +1037,82 @@ Use history to validate filter column choices. Never use history for time values
 
 
     def _extract_context_and_followup(self, response: str) -> tuple[str, bool, str]:
-        """Extract context block and check for followup
-        
+        """Extract context block and check for followup or plan_approval
+
         Returns:
-            tuple: (context_content, needs_followup, followup_text)
+            tuple: (context_content, needs_followup, followup_or_plan_text)
         """
-        
+
         # Extract context block
         context_match = re.search(r'<context>(.*?)</context>', response, re.DOTALL)
         if not context_match:
             raise ValueError("No <context> block found in response")
-        
+
         context_content = context_match.group(1).strip()
-        
+
         # Check for followup - either in tag or in DECISION
         followup_match = re.search(r'<followup>(.*?)</followup>', response, re.DOTALL)
-        needs_followup = bool(followup_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
-        followup_text = followup_match.group(1).strip() if followup_match else ""
-        
+
+        # Check for plan_approval block
+        plan_approval_match = re.search(r'<plan_approval>(.*?)</plan_approval>', response, re.DOTALL)
+
+        # Determine if needs followup (followup OR plan_approval)
+        needs_followup = bool(followup_match) or bool(plan_approval_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
+
+        # Get the text to display (followup takes priority if both exist)
+        if followup_match:
+            followup_text = followup_match.group(1).strip()
+        elif plan_approval_match:
+            followup_text = plan_approval_match.group(1).strip()
+        else:
+            followup_text = ""
+
         return context_content, needs_followup, followup_text
 
+    async def _search_and_store_feedback_history(self, current_question: str, table_names: list, state: Dict) -> bool:
+        """Search feedback SQL and store history in state
 
-    async def _assess_and_generate_sql_async(self, context: Dict, state: Dict) -> Dict[str, Any]:
-        """SQL generation with two-stage approach
-        
-        Stage 1 (SQL Planner): Validates and builds context
-        Stage 2 (SQL Writer): Generates SQL from context
+        Args:
+            current_question: The user's question to search for
+            table_names: List of table names to search against
+            state: State dict to update with results
+
+        Returns:
+            bool: True if history match found, False otherwise
         """
-        
-        current_question = context.get('current_question', '')
-        selected_datasets = state.get('selected_dataset', [])
-        
-        # ============================================================
-        # STEP 1: Search for historical SQL feedback
-        # ============================================================
-        print(f"🔍 Searching feedback SQL for: {selected_datasets}")
+        print(f"🔍 Searching feedback SQL for: {table_names}")
         feedback_results = await self.db_client.sp_vector_search_feedback_sql(
-            current_question, table_names=selected_datasets
+            current_question, table_names=table_names
         )
-        
+
+        # Initialize with empty strings (no match case)
         matched_sql = ''
         history_question_match = ''
         matched_table_name = ''
-        
+
         if feedback_results:
             print(f"🤖 Analyzing {len(feedback_results)} feedback candidates...")
             feedback_selection_result = await self.db_client._llm_feedback_selection(feedback_results, state)
-            
+
             if feedback_selection_result.get('status') == 'match_found':
                 matched_seq_id = feedback_selection_result.get('seq_id')
-                
+
                 for result in feedback_results:
                     if result.get('seq_id') == matched_seq_id:
                         history_question_match = result.get('user_question', '')
                         matched_sql = result.get('sql_query', '')
                         matched_table_name = result.get('table_name', '')
-                        
-                        state['history_question_match'] = history_question_match
-                        state['matched_sql'] = matched_sql
-                        state['matched_table_name'] = matched_table_name
-                        
                         print(f"✅ History match: {matched_table_name}")
                         break
-        
+
+        # Store in state (empty strings if no match)
+        state['history_question_match'] = history_question_match
+        state['matched_sql'] = matched_sql
+        state['matched_table_name'] = matched_table_name
+
         has_history = bool(matched_sql and history_question_match)
 
-        # Build history section using imported templates
+        # Build and store history section
         if has_history:
             history_section = SQL_HISTORY_SECTION_TEMPLATE.format(
                 history_question_match=history_question_match,
@@ -1111,7 +1121,77 @@ Use history to validate filter column choices. Never use history for time values
         else:
             history_section = SQL_NO_HISTORY_SECTION
         state['sql_history_section'] = history_section
+
+        return has_history
+
+    async def _load_metadata_for_dataset_change(
+        self,
+        matched_tables: list,
+        matched_functional_names: list,
+        state: Dict
+    ) -> Dict[str, Any]:
+        """Load metadata for dataset change and refresh feedback history
+
+        Args:
+            matched_tables: List of new table names
+            matched_functional_names: List of new functional names
+            state: State dict to update
+
+        Returns:
+            Dict with 'success' bool and 'error_message' if failed
+        """
+        print(f"🔄 Dataset change requested: {', '.join(matched_functional_names)}")
+
+        # Load new metadata
+        new_metadata_result = await self.get_metadata(
+            state=state,
+            selected_dataset=matched_tables
+        )
+
+        if new_metadata_result.get('error', False):
+            return {
+                'success': False,
+                'error_message': new_metadata_result.get('message', 'Failed to load metadata')
+            }
+
+        # Update state with new dataset(s) and metadata
+        state['selected_dataset'] = matched_tables
+        state['functional_names'] = matched_functional_names
+        state['dataset_metadata'] = new_metadata_result.get('metadata', '')
+
+        print(f"✅ Switched to dataset(s): {', '.join(matched_functional_names)}")
+        print(f"✅ Loaded new metadata for {len(matched_tables)} table(s)")
+
+        # Refresh feedback history for new tables
+        current_question = state.get('current_question', '')
+        await self._search_and_store_feedback_history(
+            current_question=current_question,
+            table_names=matched_tables,
+            state=state
+        )
+        print(f"🔄 Refreshed feedback history for new dataset(s)")
+
+        return {'success': True}
+
+    async def _assess_and_generate_sql_async(self, context: Dict, state: Dict) -> Dict[str, Any]:
+        """SQL generation with two-stage approach
+
+        Stage 1 (SQL Planner): Validates and builds context
+        Stage 2 (SQL Writer): Generates SQL from context
+        """
         
+        current_question = context.get('current_question', '')
+        selected_datasets = state.get('selected_dataset', [])
+
+        # ============================================================
+        # STEP 1: Search for historical SQL feedback
+        # ============================================================
+        has_history = await self._search_and_store_feedback_history(
+            current_question=current_question,
+            table_names=selected_datasets,
+            state=state
+        )
+
         # ============================================================
         # STEP 2: Build mandatory columns
         # ============================================================
@@ -1148,7 +1228,7 @@ Use history to validate filter column choices. Never use history for time values
                     max_tokens=10000,
                     temperature=0.0,
                     top_p=0.1,
-                    system_prompt="You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup>. No other text."
+                    system_prompt="You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup> or <plan_approval>. No other text."
                 )
                 
                 print("SQL Planner Response:", planner_response)      
@@ -1429,30 +1509,14 @@ Use history to validate filter column choices. Never use history for time values
                                 # Don't reload metadata, just continue to SQL generation
                                 # Fall through to SQL generation by NOT returning early
                             else:
-                                print(f"🔄 Dataset change requested: {', '.join(matched_functional_names)}")
-
-                                # Load new metadata for all selected datasets
-                                domain_selection = state.get('domain_selection', 'Optum Pharmacy')
-                                new_metadata_result = await self.get_metadata(
-                                    state=state,
-                                    selected_dataset=matched_tables
+                                # Load metadata and refresh feedback history for new tables
+                                load_result = await self._load_metadata_for_dataset_change(
+                                    matched_tables=matched_tables,
+                                    matched_functional_names=matched_functional_names,
+                                    state=state
                                 )
 
-                                if not new_metadata_result.get('error', False):
-                                    # Update state with new dataset(s) and metadata
-                                    state['selected_dataset'] = matched_tables
-                                    state['functional_names'] = matched_functional_names
-                                    state['dataset_metadata'] = new_metadata_result.get('metadata', '')
-
-                                    # Clear history SQL context (no longer relevant)
-                                    # state['matched_sql'] = ''
-                                    # state['history_question_match'] = ''
-                                    # state['matched_table_name'] = ''
-                                    # state['history_sql_used'] = False
-
-                                    print(f"✅ Switched to dataset(s): {', '.join(matched_functional_names)}")
-                                    print(f"✅ Loaded new metadata for {len(matched_tables)} table(s)")
-
+                                if load_result.get('success'):
                                     # ✨ Auto-generate SQL with new dataset instead of returning to user
                                     print(f"🔨 Auto-generating SQL with new dataset")
 
@@ -1460,8 +1524,6 @@ Use history to validate filter column choices. Never use history for time values
                                     sql_context = self._extract_context(state)
 
                                     # Generate SQL using the new dataset
-                                    # Just like _generate_sql_with_followup_async, we return the SQL
-                                    # The parent caller will handle execution
                                     sql_result = await self._generate_sql_after_dataset_change(sql_context, state)
 
                                     # Return SQL generation result directly (parent will execute)

@@ -223,69 +223,37 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     # Single status display and spinner
     status_display = st.empty()
     spinner_placeholder = st.empty()
-    stop_button_placeholder = st.empty()
-    
+
     # Track which node is currently being shown in status
     current_status_node = None
-    
-    # Initialize stop flag
-    if 'stop_requested' not in st.session_state:
-        st.session_state.stop_requested = False
 
     def show_spinner():
-        """Show a persistent spinner indicator with user query and stop button"""
-        col1, col2 = spinner_placeholder.columns([5, 1])
-        with col1:
-            st.markdown(f"""
-                <div style="display: flex; align-items: center; padding: 8px 12px; background-color: #f0f8ff; border-radius: 6px; margin-bottom: 10px;">
-                    <div class="spinner" style="
-                        border: 3px solid #f3f3f3;
-                        border-top: 3px solid #3498db;
-                        border-radius: 50%;
-                        width: 20px;
-                        height: 20px;
-                        animation: spin 1s linear infinite;
-                        margin-right: 10px;
-                    "></div>
-                    <span style="color: #2c3e50; font-weight: 500;">Processing: <strong>{user_query[:50]}{'...' if len(user_query) > 50 else ''}</strong></span>
-                </div>
-                <style>
-                    @keyframes spin {{
-                        0% {{ transform: rotate(0deg); }}
-                        100% {{ transform: rotate(360deg); }}
-                    }}
-                </style>
-            """, unsafe_allow_html=True)
-        with col2:
-            if st.button("🛑 Stop", key="stop_workflow_btn", type="secondary", help="Stop the current query"):
-                st.session_state.stop_requested = True
-                print("🛑 Stop requested by user!")
-                st.rerun()
-    
+        """Show a persistent spinner indicator with user query"""
+        spinner_placeholder.markdown(f"""
+            <div style="display: flex; align-items: center; padding: 8px 12px; background-color: #FAF8F2; border-radius: 6px; margin-bottom: 10px;">
+                <div class="spinner" style="
+                    border: 3px solid #f3f3f3;
+                    border-top: 3px solid #FF612B;
+                    border-radius: 50%;
+                    width: 20px;
+                    height: 20px;
+                    animation: spin 1s linear infinite;
+                    margin-right: 10px;
+                "></div>
+                <span style="color: #2c3e50; font-weight: 500;">Processing: <strong>{user_query[:50]}{'...' if len(user_query) > 50 else ''}</strong></span>
+            </div>
+            <style>
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
+        """, unsafe_allow_html=True)
+
     def hide_spinner():
         """Hide the spinner indicator"""
         spinner_placeholder.empty()
-        stop_button_placeholder.empty()
-    
-    def check_stop_requested():
-        """Check if stop was requested and handle cleanup while preserving session state"""
-        if st.session_state.get('stop_requested', False):
-            print("🛑 Stop detected - cancelling workflow")
-            hide_spinner()
-            status_display.warning("⚠️ Query cancelled by user")
-            
-            # Add cancellation message to chat history
-            add_assistant_message("Query cancelled by user. Your session has been preserved.", message_type="standard")
-            
-            # IMPORTANT: Mark session cache for refresh so cancelled query is still tracked
-            st.session_state.refresh_session_cache = True
-            
-            # Reset flags
-            st.session_state.stop_requested = False
-            st.session_state.processing = False
-            return True
-        return False
-    
+
     def update_status_for_node(node_name: str):
         """Update status display for the given node that is STARTING"""
         nonlocal current_status_node
@@ -330,17 +298,9 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     update_status_for_node('entry_router')
     
     log_event('info', "Workflow started", question=user_query[:100] if user_query else "N/A")
-    
-    # Reset stop flag at start
-    st.session_state.stop_requested = False
-                
+
     try:
         async for ev in workflow.astream_events(initial_state, config=config):
-            # Check for stop request at each iteration
-            if check_stop_requested():
-                add_assistant_message("Query cancelled by user.", message_type="standard")
-                return
-            
             et = ev.get('type')
             name = ev.get('name')
             state = ev.get('data', {}) or {}
@@ -821,11 +781,7 @@ def initialize_session_state():
     if 'session_explicitly_loaded' not in st.session_state:
         st.session_state.session_explicitly_loaded = False
         print(f"🔧 Session explicitly loaded flag initialized to False")
-    
-    # Initialize stop flag for cancelling queries
-    if 'stop_requested' not in st.session_state:
-        st.session_state.stop_requested = False
-    
+
     # Initialize session cache refresh flag
     if 'refresh_session_cache' not in st.session_state:
         st.session_state.refresh_session_cache = False
@@ -1159,12 +1115,23 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                     'user_question': user_question
                 }
                 
-                # Run feedback insertion synchronously (not in background thread)
-                # This ensures session state context is preserved
+                # Run feedback insertion - handle event loop conflicts
                 try:
-                    success = asyncio.run(_insert_feedback_row(
-                        rewritten_question, sql_query, True, table_name
-                    ))
+                    try:
+                        # Try asyncio.run() first (works when no event loop is running)
+                        success = asyncio.run(_insert_feedback_row(
+                            rewritten_question, sql_query, True, table_name
+                        ))
+                    except RuntimeError as re:
+                        # Event loop already running - use alternative approach
+                        if "already running" in str(re):
+                            loop = asyncio.get_event_loop()
+                            success = loop.run_until_complete(_insert_feedback_row(
+                                rewritten_question, sql_query, True, table_name
+                            ))
+                        else:
+                            raise re
+
                     if success:
                         log_event('info', "Positive feedback submitted", feedback_type="positive")
                         st.success("Thank you for your feedback! 👍")
@@ -1175,8 +1142,8 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                     print(f"❌ Feedback error: {e}")
                     log_event('error', f"Feedback failed: {str(e)}", error_type=type(e).__name__)
                     st.error("Failed to submit feedback. Please try again.")
-                
-                time.sleep(0.5)
+
+                time.sleep(1.0)
                 st.rerun()
         
         with col2:
@@ -1211,12 +1178,23 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                             'user_question': user_question
                         }
                         
-                        # Run feedback insertion synchronously (not in background thread)
-                        # This ensures session state context is preserved
+                        # Run feedback insertion - handle event loop conflicts
                         try:
-                            success = asyncio.run(_insert_feedback_row(
-                                rewritten_question, sql_query, False, table_name, feedback_text
-                            ))
+                            try:
+                                # Try asyncio.run() first (works when no event loop is running)
+                                success = asyncio.run(_insert_feedback_row(
+                                    rewritten_question, sql_query, False, table_name, feedback_text
+                                ))
+                            except RuntimeError as re:
+                                # Event loop already running - use alternative approach
+                                if "already running" in str(re):
+                                    loop = asyncio.get_event_loop()
+                                    success = loop.run_until_complete(_insert_feedback_row(
+                                        rewritten_question, sql_query, False, table_name, feedback_text
+                                    ))
+                                else:
+                                    raise re
+
                             if success:
                                 log_event('info', "Negative feedback submitted", feedback_type="negative")
                                 st.success("Thank you for your feedback! We'll work on improving.")
@@ -1227,8 +1205,8 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
                             print(f"❌ Negative feedback error: {e}")
                             log_event('error', f"Negative feedback failed: {str(e)}", error_type=type(e).__name__)
                             st.error("Failed to submit feedback. Please try again.")
-                        
-                        time.sleep(0.5)
+
+                        time.sleep(1.0)
                         st.rerun()
                 
                 with col2:
@@ -1351,10 +1329,10 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         
         # Use same styling as selection_reasoning message (sky blue box)
         st.markdown(f"""
-        <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 12px; margin: 10px 0;">
+        <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 12px; margin: 10px 0;">
             <div style="display: flex; align-items: center;">
                 <span style="font-size: 1rem; margin-right: 8px;">📊</span>
-                <strong style="color: #1e3a8a; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
+                <strong style="color: #D74120; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2317,15 +2295,15 @@ def render_last_session_overview():
             
             # Use LLM-generated narrative overview with dark blue font
             st.markdown(f"""
-            <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 16px; margin: 16px 0;">
                 <div style="display: flex; align-items: center; margin-bottom: 12px;">
                     <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
-                    <strong style="color: #1e3a8a; font-size: 1.1rem;">What we discussed last time</strong>
+                    <strong style="color: #D74120; font-size: 1.1rem;">What we discussed last time</strong>
                 </div>
-                <div style="color: #1e3a8a; line-height: 1.6; font-weight: 500;">
+                <div style="color: #D74120; line-height: 1.6; font-weight: 500;">
                     {cleaned_overview}
                 </div>
-                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #e3f2fd; color: #1e3a8a; font-size: 0.9rem;">
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #D74120; font-size: 0.9rem;">
                     <em>Ready to continue? Ask me a new question! 🚀</em>
                 </div>
             </div>
@@ -2333,15 +2311,15 @@ def render_last_session_overview():
         else:
             # Fallback: Show a simple message with the session info
             st.markdown(f"""
-            <div style="background-color: #f0f8ff; border: 1px solid #4a90e2; border-radius: 8px; padding: 16px; margin: 16px 0;">
+            <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 16px; margin: 16px 0;">
                 <div style="display: flex; align-items: center; margin-bottom: 12px;">
                     <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
-                    <strong style="color: #1e3a8a; font-size: 1.1rem;">Welcome back!</strong>
+                    <strong style="color: #D74120; font-size: 1.1rem;">Welcome back!</strong>
                 </div>
-                <div style="color: #1e3a8a; line-height: 1.6; font-weight: 500;">
+                <div style="color: #D74120; line-height: 1.6; font-weight: 500;">
                     I found your previous session from <strong>{insert_ts}</strong>. Model could not process at this time!
                 </div>
-                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #e3f2fd; color: #1e3a8a; font-size: 0.9rem;">
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #D74120; font-size: 0.9rem;">
                     <em>Ready to continue? Ask me a new question! 🚀</em>
                 </div>
             </div>
@@ -2652,7 +2630,7 @@ def render_sidebar_history():
         /* Dark blue border for session history selectbox */
         div[data-testid="stSelectbox"][key="session_dropdown"] > div > div,
         [data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div {
-            border: 2px solid #1e3a8a !important;
+            border: 2px solid #D74120 !important;
             border-radius: 6px !important;
         }
         </style>
@@ -2817,7 +2795,7 @@ def render_sidebar_dataset_selector():
         /* Dark blue border for dataset selectbox */
         div[data-testid="stSelectbox"][key="dataset_selectbox"] > div > div,
         div[data-testid="stSelectbox"]:has(div[data-baseweb="select"]) > div > div {
-            border: 2px solid #1e3a8a !important;
+            border: 2px solid #D74120 !important;
             border-radius: 6px !important;
         }
         </style>
@@ -3127,10 +3105,10 @@ def add_message_type_css():
     }
     
     .explanation-title {
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: none;
+        letter-spacing: normal;
         color: #FF612B;
         margin-bottom: 10px;
         display: flex;
@@ -3200,14 +3178,15 @@ def add_message_type_css():
         gap: 10px;
     }
     
-    /* ===== KEY INSIGHTS CARD - CYAN BACKGROUND ===== */
+    /* ===== KEY INSIGHTS CARD - WHITE WITH AMBER ACCENT ===== */
     .insights-card {
-        background: linear-gradient(135deg, #D9F6FA 0%, #FFFFFF 100%);
-        border-radius: 16px;
-        padding: 22px 26px;
-        margin: 20px 0;
-        border: 1px solid rgba(217, 246, 250, 0.6);
-        box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+        background: #FFFFFF;
+        border-radius: 12px;
+        padding: 20px 24px;
+        margin: 16px 0;
+        border: 1px solid #EDE8E0;
+        border-left: 4px solid #F9A667;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     
     .insights-header {
@@ -3345,26 +3324,26 @@ def add_message_type_css():
         padding: 1.25rem;
         background: linear-gradient(135deg, #FAFAF8 0%, #FFFFFF 100%);
         border-radius: 14px;
-        border-left: 4px solid #1e3a8a;
+        border-left: 4px solid #FF612B;
         box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
-    
+
     .followup-header {
         font-weight: 600;
         color: #1a1a1a;
         margin-bottom: 1rem;
         font-size: 16px;
     }
-    
+
     .followup-button {
         display: block;
         width: 100%;
         margin: 0.5rem 0;
         padding: 14px 18px;
         background-color: white;
-        border: 2px solid #1e3a8a;
+        border: 2px solid #D74120;
         border-radius: 10px;
-        color: #1e3a8a;
+        color: #D74120;
         text-align: left;
         cursor: pointer;
         transition: all 0.2s ease;
@@ -3372,11 +3351,11 @@ def add_message_type_css():
         line-height: 1.5;
         font-weight: 500;
     }
-    
+
     .followup-button:hover {
-        background: linear-gradient(135deg, #1e3a8a 0%, #2d4a9a 100%);
+        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%);
         color: white;
-        box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3);
         border-color: transparent;
     }
     
@@ -3438,11 +3417,11 @@ def add_message_type_css():
         padding: 0 !important;
     }
     
-    /* ===== GENERAL BUTTON STYLING - DARK BLUE FOR FOLLOW-UPS ===== */
+    /* ===== GENERAL BUTTON STYLING - OPTUM ORANGE FOR FOLLOW-UPS ===== */
     .stButton > button {
         background-color: white !important;
-        color: #1e3a8a !important;
-        border: 2px solid #1e3a8a !important;
+        color: #D74120 !important;
+        border: 2px solid #D74120 !important;
         border-radius: 10px !important;
         padding: 12px 18px !important;
         margin: 0 !important;
@@ -3450,7 +3429,7 @@ def add_message_type_css():
         text-align: left !important;
         font-size: 14px !important;
         line-height: 1.5 !important;
-        transition: all 0.2s ease !important;   
+        transition: all 0.2s ease !important;
         height: auto !important;
         min-height: 44px !important;
         white-space: normal !important;
@@ -3459,17 +3438,17 @@ def add_message_type_css():
     }
 
     .stButton > button:hover {
-        background: linear-gradient(135deg, #1e3a8a 0%, #2d4a9a 100%) !important;
+        background: linear-gradient(135deg, #FF612B 0%, #F9A667 100%) !important;
         color: white !important;
-        box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(255, 97, 43, 0.3) !important;
         transform: translateY(-1px) !important;
         border-color: transparent !important;
     }
 
     .stButton > button:focus {
-        background: linear-gradient(135deg, #1e3a8a 0%, #15296b 100%) !important;
+        background: linear-gradient(135deg, #FF612B 0%, #D74120 100%) !important;
         color: white !important;
-        box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.2) !important;
+        box-shadow: 0 0 0 3px rgba(255, 97, 43, 0.2) !important;
         outline: none !important;
         border-color: transparent !important;
     }
@@ -3481,8 +3460,8 @@ def add_message_type_css():
 
     .stButton button[kind="secondary"] {
         background-color: white !important;
-        color: #1e3a8a !important;
-        border-color: #1e3a8a !important;
+        color: #D74120 !important;
+        border-color: #D74120 !important;
     }
     
     /* ===== CHAT INPUT - OPTUM STYLED ===== */
@@ -3572,14 +3551,7 @@ def add_message_type_css():
     .stDataFrame table tr:hover {
         background-color: #FAFAF8 !important;
     }
-    
-    /* Total row highlight - Optum Peach */
-    .stDataFrame table tr:last-child td {
-        background: linear-gradient(135deg, #FFD1AB 0%, #FFFFFF 100%) !important;
-        font-weight: 700 !important;
-        color: #D74120 !important;
-    }
-    
+
     /* ===== SIDEBAR SESSION ITEMS ===== */
     .session-item {
         padding: 12px 14px;
@@ -3814,18 +3786,7 @@ def main():
         
         # Processing indicator and streaming workflow execution
         if st.session_state.processing:
-            # Check if stop was already requested before starting
-            if st.session_state.get('stop_requested', False):
-                st.session_state.stop_requested = False
-                st.session_state.processing = False
-                
-                add_assistant_message("Query cancelled by user. Your session has been preserved.", message_type="standard")
-                asyncio.sleep(5)  # Small delay to ensure message appears before rerun
-                # Mark session cache for refresh
-                st.session_state.refresh_session_cache = True
-                st.rerun()
-            
-            # Run the workflow (stop button is shown inside show_spinner())
+            # Run the workflow
             run_streaming_workflow(workflow, st.session_state.current_query)
             st.session_state.processing = False
             st.session_state.workflow_started = False
@@ -4346,10 +4307,10 @@ def render_chat_message_enhanced(message, message_idx):
                 st.markdown(f"""
                 <div class="assistant-message">
                     <div style="display: flex; align-items: flex-start; gap: 8px;">
-                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #1e3a8a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px;">
+                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #D74120; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px;">
                             📋
                         </div>
-                        <div style="background-color: #FFFFFF; padding: 16px 20px; border-radius: 12px; border-left: 4px solid #1e3a8a; flex: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                        <div style="background-color: #FFFFFF; padding: 16px 20px; border-radius: 12px; border-left: 4px solid #FF612B; flex: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
                             {formatted_content}
                         </div>
                     </div>

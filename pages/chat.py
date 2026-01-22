@@ -826,7 +826,13 @@ def initialize_session_state():
     # Track if Cosmos state has been loaded for this session
     if 'cosmos_loaded' not in st.session_state:
         st.session_state.cosmos_loaded = False
-    
+
+    # Initialize plan approval state for button interactions
+    if 'plan_approval_submitted' not in st.session_state:
+        st.session_state.plan_approval_submitted = False
+    if 'pending_user_input' not in st.session_state:
+        st.session_state.pending_user_input = None
+
     # Authenticated user info should always come from main.py - don't initialize here
     # Just log what we have (or fallback if nothing was passed)
     authenticated_user = get_authenticated_user()
@@ -953,6 +959,51 @@ def format_sql_followup_question(text):
     result = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', result)
     
     return result
+
+def format_plan_approval_content(text):
+    """Format plan approval content with color highlighting for SQL plan summary display
+
+    - Headers with emojis (📋🎯📊📌🔍🔗📈💡): Bold dark blue
+    - Warning section (⚠️ Why Asking): Red/orange
+    - Options line: Green emphasis
+    - Note section: Gray italic
+    - Separators (━): Gray
+    """
+    if not text:
+        return ""
+
+    lines = text.split('\n')
+    formatted_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        # Escape HTML special characters
+        escaped = stripped.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        # Headers with emojis - bold dark blue
+        if any(e in stripped for e in ['📋', '🎯', '📊', '📌', '🔍', '🔗', '📈', '💡']):
+            formatted = f'<span style="color: #003366; font-weight: 700;">{escaped}</span>'
+        # Warning - red/orange
+        elif '⚠️' in stripped or 'Why Asking' in stripped:
+            formatted = f'<span style="color: #D74120; font-weight: 600;">{escaped}</span>'
+        # Options - green
+        elif 'Options:' in stripped:
+            formatted = f'<span style="color: #2E7D32; font-weight: 600;">{escaped}</span>'
+        # Separators - gray
+        elif stripped.startswith('━'):
+            formatted = f'<span style="color: #666;">{escaped}</span>'
+        # Note - italic gray
+        elif stripped.upper().startswith('NOTE:'):
+            formatted = f'<span style="color: #666; font-style: italic;">{escaped}</span>'
+        # Bullet points - keep default but with proper formatting
+        elif stripped.startswith('•') or stripped.startswith('-'):
+            formatted = f'<span style="color: #333; margin-left: 8px;">{escaped}</span>'
+        else:
+            formatted = escaped
+
+        formatted_lines.append(formatted)
+
+    return '<br>'.join(formatted_lines)
 
 def format_sql_data_for_streamlit(data):
     """Format SQL data for proper Streamlit display with numeric conversion"""
@@ -4021,7 +4072,19 @@ def main():
             print("✅ Radio button rendered (not in clarification mode)")
         else:
             print("🔒 Radio button hidden (in clarification mode)")
-        
+
+        # Handle plan approval button clicks
+        if st.session_state.get('plan_approval_submitted', False):
+            pending_input = st.session_state.get('pending_user_input', '')
+            if pending_input:
+                print(f"📋 Plan approval response: {pending_input}")
+                # Clear the flags
+                st.session_state.plan_approval_submitted = False
+                st.session_state.pending_user_input = None
+                # Process as if user typed this response
+                start_processing(pending_input)
+                st.rerun()
+
         # Chat input at the bottom
         if prompt := st.chat_input("Ask a question...", disabled=st.session_state.processing):
             # Immediately clear follow-up questions when new input is detected
@@ -4261,20 +4324,79 @@ def render_chat_message_enhanced(message, message_idx):
 
         # Handle needs_followup messages with special formatting
         if message_type == "needs_followup":
-            # Apply color formatting to the SQL followup question
-            formatted_content = format_sql_followup_question(content)
-            st.markdown(f"""
-            <div class="assistant-message">
-                <div style="display: flex; align-items: flex-start; gap: 8px;">
-                    <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
-                        🤖
-                    </div>
-                    <div class="assistant-message-content">
-                        {formatted_content}
+            # Check if this is a plan_approval (detected by content pattern)
+            is_plan_approval = content and ('📋 SQL Plan Summary' in content or '🎯 Intent:' in content)
+
+            if is_plan_approval:
+                # Plan approval - Orange/Amber styling to distinguish from regular followups
+                formatted_content = format_plan_approval_content(content)
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #FF9800; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px;">
+                            📋
+                        </div>
+                        <div style="background-color: #FFF3E0; padding: 12px; border-radius: 8px; border-left: 4px solid #FF9800; flex: 1;">
+                            {formatted_content}
+                        </div>
                     </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+
+                # Add approval buttons (only for non-historical messages)
+                if not is_historical:
+                    approval_key = f"plan_approval_{message_idx}"
+                    show_other_input = st.session_state.get(f"{approval_key}_show_other", False)
+
+                    if not show_other_input:
+                        # Show approval buttons
+                        col1, col2, col3 = st.columns([1, 1, 2])
+                        with col1:
+                            if st.button("✅ Yes, Approve", key=f"{approval_key}_approve", type="primary"):
+                                st.session_state.pending_user_input = "approve"
+                                st.session_state.plan_approval_submitted = True
+                                st.rerun()
+                        with col2:
+                            if st.button("✏️ Other", key=f"{approval_key}_other", type="secondary"):
+                                st.session_state[f"{approval_key}_show_other"] = True
+                                st.rerun()
+                    else:
+                        # Show text input for custom response
+                        with st.form(key=f"{approval_key}_form"):
+                            custom_response = st.text_area(
+                                "Provide your feedback or modifications:",
+                                placeholder="e.g., 'change to claims dataset' or 'add carrier filter' or 'modify time range to Q1-Q2'",
+                                height=80
+                            )
+                            form_col1, form_col2 = st.columns([1, 1])
+                            with form_col1:
+                                if st.form_submit_button("Submit", type="primary"):
+                                    if custom_response.strip():
+                                        st.session_state.pending_user_input = custom_response.strip()
+                                        st.session_state.plan_approval_submitted = True
+                                        st.session_state[f"{approval_key}_show_other"] = False
+                                        st.rerun()
+                                    else:
+                                        st.warning("Please enter your feedback")
+                            with form_col2:
+                                if st.form_submit_button("Cancel"):
+                                    st.session_state[f"{approval_key}_show_other"] = False
+                                    st.rerun()
+            else:
+                # Regular SQL followup - existing orange styling
+                formatted_content = format_sql_followup_question(content)
+                st.markdown(f"""
+                <div class="assistant-message">
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                            🤖
+                        </div>
+                        <div class="assistant-message-content">
+                            {formatted_content}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             # Use consistent warm gold background for all system messages with icon
             safe_content_html = convert_text_to_safe_html(content)

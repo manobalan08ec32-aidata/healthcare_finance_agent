@@ -901,6 +901,59 @@ def convert_text_to_safe_html(text):
                 html_paragraphs.append(cleaned_paragraph)
     return ''.join(html_paragraphs)
 
+def format_sql_followup_question(text):
+    """Format SQL followup question with color highlighting for dataset and note sections
+    
+    - SELECTED DATASET section: Entire line in Dark Blue color (#003366) with bold
+    - NOTE section onwards: Red color (#D74120) with italic for clear attention
+    - Rest: Black (default) for main question
+    """
+    if not text:
+        return ""
+    
+    import re
+    
+    # Don't escape HTML yet - we need to check for patterns first
+    # Split into lines for processing
+    lines = text.split('\n')
+    formatted_lines = []
+    in_note_section = False
+    
+    for line in lines:
+        stripped_line = line.strip()
+        
+        # Escape HTML special characters for this line
+        escaped_line = stripped_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        
+        # Check if this is the SELECTED DATASET line (case-insensitive) - make entire line dark blue
+        if 'SELECTED DATASET:' in stripped_line.upper():
+            # Entire line in dark blue with bold (including full table/dataset name)
+            formatted_line = f'<span style="color: #003366; font-weight: 700;">{escaped_line}</span>'
+        
+        # Check if we're starting the NOTE section
+        elif stripped_line.upper().startswith('NOTE:'):
+            in_note_section = True
+            # Use italic style and red color for NOTE section
+            formatted_line = f'<span style="color: #D74120; font-style: italic;">{escaped_line}</span>'
+        
+        # If we're in the NOTE section, continue with red and italic
+        elif in_note_section:
+            formatted_line = f'<span style="color: #D74120; font-style: italic;">{escaped_line}</span>'
+        
+        # Otherwise, keep default black color for main question
+        else:
+            formatted_line = f'<span style="color: #000000;">{escaped_line}</span>'
+        
+        formatted_lines.append(formatted_line)
+    
+    # Join with <br> tags for line breaks
+    result = '<br>'.join(formatted_lines)
+    
+    # Apply bold formatting to ** markers if any (process after color spans are added)
+    result = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', result)
+    
+    return result
+
 def format_sql_data_for_streamlit(data):
     """Format SQL data for proper Streamlit display with numeric conversion"""
     import pandas as pd
@@ -921,7 +974,7 @@ def format_sql_data_for_streamlit(data):
         val_str = str(val)
         
         # Check if this is a client ID or similar identifier column - avoid comma formatting
-        is_id_column = any(id_pattern in column_name.lower() for id_pattern in ['client_id', 'member_id', 'patient_id', 'id'])
+        is_id_column = any(id_pattern in column_name.lower() for id_pattern in ['client_id', 'member_id', 'patient_id', 'id','ndc_code','ndc'])
         
         # Check if this is a percentage column
         is_percentage_column = any(pct_pattern in column_name.lower() for pct_pattern in ['percent', 'pct', '_pct', 'ratio'])
@@ -4206,20 +4259,37 @@ def render_chat_message_enhanced(message, message_idx):
                 # We skip rendering it to prevent the empty, greyed-out space.
                 return 
 
-        # Use consistent warm gold background for all system messages with icon
-        safe_content_html = convert_text_to_safe_html(content)
-        st.markdown(f"""
-        <div class="assistant-message">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
-                    🤖
-                </div>
-                <div class="assistant-message-content">
-                    {safe_content_html}
+        # Handle needs_followup messages with special formatting
+        if message_type == "needs_followup":
+            # Apply color formatting to the SQL followup question
+            formatted_content = format_sql_followup_question(content)
+            st.markdown(f"""
+            <div class="assistant-message">
+                <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                        🤖
+                    </div>
+                    <div class="assistant-message-content">
+                        {formatted_content}
+                    </div>
                 </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        else:
+            # Use consistent warm gold background for all system messages with icon
+            safe_content_html = convert_text_to_safe_html(content)
+            st.markdown(f"""
+            <div class="assistant-message">
+                <div style="display: flex; align-items: flex-start; gap: 8px;">
+                    <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #ff6b35; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 14px;">
+                        🤖
+                    </div>
+                    <div class="assistant-message-content">
+                        {safe_content_html}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

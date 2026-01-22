@@ -221,6 +221,7 @@ class AsyncHealthcareFinanceWorkflow:
             state['sql_history_section']=None
             state['sql_generation_story']=None
             state['functional_names']=None
+            state['reasoning_context']=None
 
             # Add retry count tracking
             state['llm_retry_count'] = nav_result.get('llm_retry_count', 0)

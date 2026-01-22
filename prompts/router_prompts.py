@@ -311,9 +311,7 @@ CRITICAL: Be decisive about response type to avoid processing loops.
 SQL_PLANNER_SYSTEM_PROMPT = "You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup> or <plan_approval>. No other text."
 
 
-SQL_PLANNER_PROMPT = """BUSINESS CONTEXT: You are a SQL query planning assistant for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. 
-
-TASK: Analyze the user's business question and validate that all required data elements can be mapped to available database columns. Output a structured plan for SQL generation.
+SQL_PLANNER_PROMPT = """  TASK: You are a SQL query planning assistant for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Analyze the user's business question and validate that all required data elements can be mapped to available database columns
 
 CORE RULES
 
@@ -334,8 +332,6 @@ MANDATORY FILTERS: {mandatory_columns_text}
 
 DATASET SELECTION CONTEXT:
 {dataset_context}
-
-OTHER AVAILABLE DATASETS: {other_available_datasets}
 
 VALIDATION STEPS
 
@@ -430,7 +426,7 @@ When ANY info is missing or ambiguous:
 • Ambiguous column (multiple matches, cannot resolve)
 • Vague time reference ("recently", "lately", "a while ago")
 • Unclear metric or grouping intent
-→ Output: <context> + <followup>
+→ Output: <followup>
 
 PATH B - SHOW_PLAN:
 When ALL info is available BUT complexity or risk exists:
@@ -439,7 +435,8 @@ COMPLEXITY (2+ triggers SHOW_PLAN):
 • Multiple JOINs (3+ tables)
 • Business calculations (variance, YoY, margin %, forecast vs actual)
 • Multiple interacting filters (time + category + carrier together)
-• Aggregation across 3+ dimensions
+• Aggregation across 3+ dimensions,bigger formula involved,correlated sub query needed
+• Filter clarity issues , never assume
 • Assumptions user should validate (fiscal vs calendar quarter)
 
 RISK (ANY triggers SHOW_PLAN):
@@ -447,8 +444,8 @@ RISK (ANY triggers SHOW_PLAN):
 • Time grain interpretation affects outcome
 • Filter value resolved but not fully clear (value has variations in data)
 
-HISTORY OVERRIDE: Similar pattern in history + filters match current → skip to PATH C
-→ Output: <context> + <plan_approval>
+HISTORY OVERRIDE: Similar pattern or calculation exists in history question or history SQL + filters match current question→ skip to PATH C
+→ Output:<plan_approval>
 
 PATH C - SQL_READY:
 When ALL info mapped successfully AND query is straightforward OR history confirms pattern
@@ -460,7 +457,8 @@ OUTPUT FORMAT
 EXECUTION_PATH: [SQL_READY | FOLLOWUP_REQUIRED | SHOW_PLAN]
 APPROVAL_REASON: [if SHOW_PLAN: one-line reason | else: none]
 QUERY_TYPE: [SINGLE_TABLE | MULTI_TABLE_JOIN | MULTI_TABLE_SEPARATE]
-INTENT: [simple_aggregate | breakdown | comparison | top_n | trend]
+
+HISTORY_COLUMNS: [If history_hint is available, extract and list key columns from historical SQL (from SELECT, GROUP BY, ORDER BY). Format: "column1, column2, ..." or "none" if no history available.]
 
 QUERY_1:
 TABLE: [full.table.name] AS [alias]
@@ -505,35 +503,41 @@ NOTE: Other available datasets: {other_available_datasets}. Let me know if you'd
 
 IF SHOW_PLAN, add after </context>:
 
+⚠️ IMPORTANT: Keep the plan approval BUSINESS-FRIENDLY. Avoid technical jargon like "grouping dimension", "metric", "LAG window function", data types like [STRING], [INT]. Write for business users, not developers.
+
 <plan_approval>
-📋 SQL Plan Summary
+📋 SQL Plan Summary for SQL Generation
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 Intent: [What the query will calculate]
+🎯 What We'll Answer: [Plain English description of what the query will show]
+
 📊 Dataset: [dataset name]
 
-📌 Columns:
-• [column1] ([purpose: grouping/metric/filter])
-• [column2] ([purpose])
+📌 What You'll See:
+• [Result 1 - e.g., "Monthly revenue totals (July - December 2025)"]
+• [Result 2 - e.g., "Percentage change compared to previous month"]
+• [Result 3 - e.g., "Filtered to COVID-19 vaccines only"]
 
-🔍 Filters:
-• [column] = '[value]' [TYPE]
-• Time: [range if applicable]
+🔍 Filters Applied:
+• [Filter 1 in plain English - e.g., "Therapy: COVID-19 vaccines"]
+• [Filter 2 - e.g., "Time Period: July - December 2025"]
+• [Mandatory filter - e.g., "Product Category: PBM (always applied)"]
 
-🔗 Joins: [join info or "None"]
+🔗 Joins: [Only show if joins exist, otherwise omit this section entirely]
 
-📈 Aggregations: [SUM/COUNT/AVG expressions]
-
-💡 Assumptions: [Any assumptions, or "None"]
-
-⚠️ Why Asking: [APPROVAL_REASON]
+📈 How We'll Calculate:
+• [Calculation approach in plain English - e.g., "Sum total revenue for each month"]
+• [Formula explanation - e.g., "Month-over-month % change = (Current Month - Prior Month) ÷ Prior Month × 100"]
+• [Example if helpful - e.g., "Example: July=$100K, August=$120K → Change = +20%"]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NOTE: Other available datasets: {other_available_datasets}. Let me know if you'd like to switch.
 
 Options: ✅ Approve | ✏️ Modify | 🔀 Switch Dataset
+
 </plan_approval>
 
 RULES FOR OUTPUT
 - Always include EXECUTION_PATH, QUERY_TYPE, INTENT at top of <context>
+- Always include HISTORY_COLUMNS after INTENT (extract from history_hint if available, else "none")
 - APPROVAL_REASON only when EXECUTION_PATH is SHOW_PLAN
 - Always use QUERY_1 block (even for single table)
 - QUERY_2 only when multiple tables needed (follows QUERY_1 structure)
@@ -541,7 +545,7 @@ RULES FOR OUTPUT
 - String filters must use UPPER(): UPPER(col) = UPPER('value')
 - SELECT expressions must be complete and ready to use
 - Use table alias (t1, t2) for all column references
-- Output per EXECUTION_PATH: SQL_READY→<context> | SHOW_PLAN→<context>+<plan_approval> | FOLLOWUP→<context>+<followup>
+- Output per EXECUTION_PATH: SQL_READY→<context> | SHOW_PLAN→<plan_approval> | FOLLOWUP→<followup>
 """
 
 # ============================================================================

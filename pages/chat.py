@@ -1001,7 +1001,7 @@ def format_plan_approval_content(text):
             formatted = f'<span style="color: #666;">{escaped}</span>'
         # Note - italic gray
         elif stripped.upper().startswith('NOTE:'):
-            formatted = f'<span style="color: #666; font-style: italic;">{escaped}</span>'
+            formatted = f'<span style="color: #D74120; font-style: italic;">{escaped}</span>'
         # Bullet points - keep default but with proper formatting
         elif stripped.startswith('•') or stripped.startswith('-'):
             formatted = f'<span style="color: #333; margin-left: 8px;">{escaped}</span>'
@@ -4341,15 +4341,15 @@ def render_chat_message_enhanced(message, message_idx):
             is_plan_approval = message.get('plan_approval_exists_flg', False)
 
             if is_plan_approval:
-                # Plan approval - Orange/Amber styling to distinguish from regular followups
+                # Plan approval - White background with blue left border for clean, professional look
                 formatted_content = format_plan_approval_content(content)
                 st.markdown(f"""
                 <div class="assistant-message">
                     <div style="display: flex; align-items: flex-start; gap: 8px;">
-                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #FF9800; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px;">
+                        <div style="flex-shrink: 0; width: 32px; height: 32px; background-color: #1e3a8a; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px;">
                             📋
                         </div>
-                        <div style="background-color: #FFF3E0; padding: 12px; border-radius: 8px; border-left: 4px solid #FF9800; flex: 1;">
+                        <div style="background-color: #FFFFFF; padding: 16px 20px; border-radius: 12px; border-left: 4px solid #1e3a8a; flex: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
                             {formatted_content}
                         </div>
                     </div>

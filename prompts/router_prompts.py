@@ -891,35 +891,9 @@ ORIGINAL USER QUESTION: {current_question}
 SELECTED DATASET: {selected_dataset_name}
 OTHER AVAILABLE DATASETS: {other_available_datasets}
 
-STEP 1: VALIDATE FOLLOW-UP RESPONSE
-
 YOUR PREVIOUS QUESTION: {sql_followup_question}
 
 USER'S RESPONSE: {sql_followup_answer}
-
-**First Silently analyze if the user's response is relevant:** ⚠️ CRITICAL OUTPUT INSTRUCTION: DO NOT output any reasoning, thinking steps, or explanatory text. Go DIRECTLY to the XML output format specified below.:
-
-1. **DATASET_CHANGE_REQUEST**: User explicitly requests a different dataset → Extract new dataset name, return dataset_change flag
-2. **RELEVANT**: User directly answered or provided clarification → PROCEED to SQL generation
-3. **NEW_QUESTION**: User asked a completely new question instead of answering → STOP, return new_question flag
-4. **TOPIC_DRIFT**: User's response is completely unrelated/off-topic → STOP, return topic_drift flag
-
-DATASET CHANGE VALIDATION:
-- If user mentions a dataset name from OTHER AVAILABLE DATASETS → DATASET_CHANGE_REQUEST
-- If user mentions a dataset name NOT in available list → TOPIC_DRIFT (treat as irrelevant)
-- User can select one or multiple datasets - extract all mentioned
-
-Examples:
-- "Use Pharmacy IRIS Claims instead" → DATASET_CHANGE_REQUEST
-- "Can you use CBS Billing?" → DATASET_CHANGE_REQUEST
-- "Use both Rx Claims and CBS Billing" → DATASET_CHANGE_REQUEST (multiple)
-- "Use Medical Claims" (not available) → TOPIC_DRIFT
-
-**If DATASET_CHANGE_REQUEST (category 1), return the dataset change XML below and STOP.**
-**If NOT RELEVANT (categories 3 or 4), return the appropriate XML response below and STOP.**
-**If RELEVANT (category 2), proceed to STEP 2 for SQL generation.**
-
-STEP 2: SQL GENERATION (Only if RELEVANT)
 
 **AVAILABLE METADATA**: {dataset_metadata}
 MULTIPLE TABLES AVAILABLE: {has_multiple_tables}
@@ -1027,33 +1001,6 @@ OUTPUT FORMATS
 IMPORTANT: You can use proper SQL formatting with line breaks and indentation inside the XML tags
 return ONLY the SQL query wrapped in XML tags. DO NOT output any reasoning, thinking steps, or explanatory text.
 
-**OPTION 1: If user requests DATASET CHANGE (valid datasets only)**
-<dataset_change>
-<detected>true</detected>
-<requested_datasets>[List of functional dataset names, e.g. "Pharmacy IRIS Claims" or "Rx Claims, CBS Billing"]</requested_datasets>
-<reasoning>[Brief 1-sentence why user wants to change dataset]</reasoning>
-</dataset_change>
-
-**OPTION 2: If user mentions INVALID dataset (not in available list)**
-<topic_drift>
-<detected>true</detected>
-<reasoning>User mentioned dataset "[dataset name]" which is not available. Available datasets are: [list]. This is off-topic.</reasoning>
-</topic_drift>
-
-**OPTION 3: If user's response is a NEW QUESTION**
-<new_question>
-<detected>true</detected>
-<reasoning>[Brief 1-sentence why this is a new question]</reasoning>
-</new_question>
-
-**OPTION 4: If user's response is TOPIC DRIFT (unrelated)**
-<topic_drift>
-<detected>true</detected>
-<reasoning>[Brief 1-sentence why this is off-topic]</reasoning>
-</topic_drift>
-
-IF SQL GENERATION (user response was RELEVANT):
-
 For SINGLE query:
 <sql>
 [Complete Databricks SQL incorporating original question + user's clarification]
@@ -1084,13 +1031,9 @@ HISTORY_SQL_USED VALUES:
 EXECUTION INSTRUCTION
 
 Execute stages in order:
-
-1. Validate follow-up response -> RELEVANT / NEW_QUESTION / TOPIC_DRIFT
-2. If NEW_QUESTION or TOPIC_DRIFT -> Output flag and STOP
-3. Apply user's clarification as HIGH CONFIDENCE override
-4.Determine history pattern reuse level (if history available)
-5.STAGE 4: Generate SQL with mandatory requirements
-6.Output reasoning_summary + SQL
+1. Apply user's clarification as HIGH CONFIDENCE override
+2.Determine history pattern reuse level (if history available)
+3. Generate SQL with mandatory requirements
 
 CRITICAL REMINDERS:
 - User's response resolves the ambiguity - apply it directly
@@ -1099,6 +1042,216 @@ CRITICAL REMINDERS:
 - Show calculation components (don't just show the result)
 - Do NOT ask another follow-up question under any circumstances
 """
+
+# ============================================================================
+# SQL FOLLOWUP VALIDATION PROMPTS (Two-Step Flow - Step 1)
+# ============================================================================
+
+SQL_FOLLOWUP_VALIDATION_SYSTEM_PROMPT = "You are a response classifier for a SQL generation assistant. Classify user follow-up responses into exactly one category. Output only the XML format specified, no explanations or additional text."
+
+# Dynamic placeholders: {current_question}, {selected_dataset_name}, {other_available_datasets},
+# {sql_followup_question}, {sql_followup_answer}
+SQL_FOLLOWUP_VALIDATION_PROMPT = """TASK: Classify the user's follow-up response to determine the next action.
+
+CONTEXT:
+- ORIGINAL USER QUESTION: {current_question}
+- SELECTED DATASET: {selected_dataset_name}
+- OTHER AVAILABLE DATASETS: {other_available_datasets}
+
+CLARIFICATION EXCHANGE:
+- YOUR PREVIOUS QUESTION: {sql_followup_question}
+- USER'S RESPONSE: {sql_followup_answer}
+
+CLASSIFICATION RULES:
+
+1. **SIMPLE_APPROVAL**: User confirms/accepts without adding new constraints
+   - Examples: "yes", "ok", "looks good", "proceed", "that's correct", "go ahead", "sure", "approved", "confirm"
+   - Key indicator: Short affirmative response with no additional requirements
+
+2. **APPROVAL_WITH_MODIFICATIONS**: User approves but adds constraints/specifications
+   - Examples: "yes, but only for Q1 2024", "ok, also include the cost column", "proceed with top 10", "yes, and filter by specialty"
+   - Key indicator: Affirmative + additional criteria ("but", "also", "and", "with", "only")
+
+3. **DATASET_CHANGE_REQUEST**: User explicitly requests different dataset(s)
+   - Must mention a dataset name from OTHER AVAILABLE DATASETS list
+   - Examples: "Use Pharmacy IRIS Claims instead", "Can you use CBS Billing?", "Switch to Rx Claims"
+   - Key indicator: Explicit dataset name mention + intent to change
+
+4. **NEW_QUESTION**: User asks a completely different question instead of answering
+   - Ignores the clarification and asks something unrelated to it
+   - Examples: Asking about different metrics, different time periods not offered, different analysis entirely
+   - Key indicator: Question mark, new analytical intent
+
+5. **TOPIC_DRIFT**: User's response is off-topic or nonsensical
+   - Response doesn't relate to clarification or business context
+   - Includes requests for datasets NOT in available list
+   - Examples: Random text, unavailable dataset requests, non-business content
+
+OUTPUT FORMAT (return ONLY this XML, no other text):
+
+<validation>
+<classification>[SIMPLE_APPROVAL|APPROVAL_WITH_MODIFICATIONS|DATASET_CHANGE_REQUEST|NEW_QUESTION|TOPIC_DRIFT]</classification>
+<modifications>[If APPROVAL_WITH_MODIFICATIONS: describe the modifications. Otherwise: none]</modifications>
+<requested_datasets>[If DATASET_CHANGE_REQUEST: comma-separated dataset names. Otherwise: none]</requested_datasets>
+<reasoning>[1 sentence explaining why this classification was chosen]</reasoning>
+</validation>
+"""
+
+# ============================================================================
+# SQL FOLLOWUP SIMPLE APPROVAL PROMPT (Two-Step Flow - Step 2a)
+# ============================================================================
+
+# Dynamic placeholders: {current_question}, {sql_followup_question}, {sql_followup_answer},
+# {dataset_metadata}, {mandatory_columns_text}, {filter_metadata_results}, {history_section}
+
+SQL_FOLLOWUP_SIMPLE_APPROVAL_PROMPT = """BUSINESS CONTEXT: You are a Databricks SQL code generator for DANA (Data Analytics Assistant), an internal enterprise business intelligence system at Optum. Your role is to generate accurate SQL queries for authorized business reporting and analytics on de-identified aggregate healthcare metrics.
+
+CONTEXT: This is PHASE 2 of a two-phase process. In Phase 1, you asked a clarifying question. The user has now responded. Your task is to generate Databricks SQL using the original question + user's clarification.
+
+ORIGINAL QUESTION: {current_question}
+
+CLARIFICATION EXCHANGE:
+- Your question: {sql_followup_question}
+- User's approval: {sql_followup_answer}
+
+PLANNED SQL CONTEXT:
+{reasoning_context}
+
+MANDATORY FILTER COLUMNS: {mandatory_columns_text}
+
+EXTRACTED FILTER VALUES:
+{filter_metadata_results}
+
+{history_section}
+
+SQL GENERATION RULES
+
+PRIORITY 0: MANDATORY REQUIREMENTS (violation = query failure)
+
+M1. MANDATORY FILTERS - Filters marked [MANDATORY] MUST be in WHERE clause, NEVER omit
+M2. CASE-INSENSITIVE - Use UPPER() for all string comparisons
+M3. SAFE DIVISION - Always use NULLIF(denominator, 0)
+M4. NUMERIC FORMATTING - Amounts: ROUND(x, 0), Percentages: ROUND(x, 3)
+M5. ONE COLUMN PER FILTER - Apply filter to single column, no OR across multiple columns
+
+PRIORITY 1: METRIC TYPE HANDLING
+
+- Pivot metric_type via CASE WHEN, never GROUP BY metric_type for calculations
+- Pattern: SUM(CASE WHEN metric_type = 'X' THEN amt ELSE 0 END) AS x_value
+- Calculations happen across columns in same row, not across rows
+
+PRIORITY 2: COMPONENT DISPLAY
+
+RULE: For ANY calculated metric (division, subtraction, multiplication, percentage), show ALL components in SELECT
+- Revenue per member → revenue, member_count, revenue/member_count
+- Margin (revenue-cost) → revenue, cost, margin
+- Utilization rate → numerator, denominator, rate
+- Cost per script → total_cost, script_count, cost_per_script
+
+Pattern: SELECT component_1, component_2, component_1 / NULLIF(component_2, 0) AS derived_metric
+Why: Users need to see source data to validate calculations and understand context
+
+PRIORITY 3: QUERY PATTERNS
+
+TIME COMPARISON (Always side-by-side columns, NEVER GROUP BY time period):
+- Each period as column: SUM(CASE WHEN period = X THEN amt ELSE 0 END) AS period_x
+- Include variance: period_2 - period_1 AS variance
+- Include variance_pct: (variance / NULLIF(period_1, 0)) * 100
+- Applies to: MoM, QoQ, YoY, any "X vs Y" time comparison
+
+TOP N:
+- ORDER BY metric DESC LIMIT N
+- Include percentage of total when relevant
+
+PERCENTAGE OF TOTAL:
+- value, value * 100.0 / NULLIF((SELECT SUM FROM same_filters), 0) AS pct
+
+PATTERN - BREAKDOWN BY MULTIPLE VALUES:
+SELECT product_category, ROUND(SUM(amount), 0) AS value
+FROM table
+WHERE UPPER(product_category) IN (UPPER('HDP'), UPPER('SP'))
+GROUP BY product_category
+
+READING CONTEXT:
+
+QUERY_TYPE = SINGLE_TABLE:
+- Read QUERY_1 block
+- Build single SELECT...FROM...WHERE...GROUP BY statement
+
+QUERY_TYPE = MULTI_TABLE_JOIN:
+- Read QUERY_1 and QUERY_2 blocks
+- Use JOIN clause from context
+- Build single SQL with JOIN
+
+QUERY_TYPE = MULTI_TABLE_SEPARATE:
+- Read each QUERY_N block
+- Generate SEPARATE SQL for each
+- Each query answers part of the question (see ANSWERS field)
+- Output in <multiple_sql> format
+
+BUILDING SQL FROM CONTEXT:
+
+1. SELECT: Use expressions from SELECT section exactly as provided
+2. FROM: Use TABLE from context with alias
+3. WHERE: Apply all FILTERS from context (already have UPPER() for strings)
+4. GROUP BY: Use GROUP_BY from context (skip if "none")
+5. ORDER BY: Use ORDER_BY from context (skip if "none")
+6. LIMIT: Use LIMIT from context (skip if "none")
+
+APPLY HISTORY PATTERN (if ENHANCE = YES):
+
+IF GROUPING_SETS_TOTAL:
+-- Use CTE for calculations, then apply GROUPING() in final SELECT. Learn that exact pattern from history sql.
+
+IF UNION_TOTAL:
+-- Detail query
+SELECT dimension, breakdown_col, ROUND(SUM(metric), 0) AS metric
+FROM table WHERE [filters]
+GROUP BY dimension, breakdown_col
+
+UNION ALL
+
+-- Total query
+SELECT dimension, 'OVERALL_TOTAL' AS breakdown_col, ROUND(SUM(metric), 0) AS metric
+FROM table WHERE [filters]
+GROUP BY dimension
+
+ORDER BY dimension, CASE WHEN breakdown_col = 'OVERALL_TOTAL' THEN 0 ELSE 1 END
+
+IF ENHANCE = NO:
+Generate straightforward SQL based on context INTENT:
+- simple_aggregate → No GROUP BY on dimensions, just aggregate
+- breakdown → GROUP BY dimension columns
+- comparison → Side-by-side CASE WHEN for periods/categories
+- top_n → ORDER BY metric DESC LIMIT N
+- trend → GROUP BY time dimension, ORDER BY time
+
+OUTPUT FORMAT
+
+For single SQL:
+<sql>
+[Complete Databricks SQL]
+</sql>
+
+For MULTIPLE queries:
+<multiple_sql>
+<query1_title>[Short title - max 8 words]</query1_title>
+<query1>[SQL]</query1>
+<query2_title>[Short title]</query2_title>
+<query2>[SQL]</query2>
+</multiple_sql>
+
+<sql_story>
+[2-3 sentences in business-friendly language explaining:
+ - What table/data is being queried
+ - What filters are applied
+ - What metric/calculation is returned
+ - How user's clarification was incorporated]
+</sql_story>
+
+<history_sql_used>false</history_sql_used>
+"""
+
 
 # ============================================================================
 # SQL FIX PROMPT

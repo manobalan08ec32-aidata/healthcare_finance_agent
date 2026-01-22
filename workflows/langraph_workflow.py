@@ -211,6 +211,7 @@ class AsyncHealthcareFinanceWorkflow:
             state['matched_table_name'] = None
             state['history_question_match'] = None
             state['history_sql_used'] = False
+            state['plan_approval_exists_flg'] = False  # Reset plan approval flag for new questions
             state['report_found'] = False
             state['report_url'] = None
             state['report_filter'] = None

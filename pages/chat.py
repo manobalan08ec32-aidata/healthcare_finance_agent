@@ -412,7 +412,14 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                     if state.get('needs_followup'):
                         hide_spinner()
                         status_display.empty()
-                        add_assistant_message(state.get('sql_followup_question'), message_type="needs_followup")
+                        # Get plan_approval_exists_flg from state
+                        plan_approval_exists_flg = state.get('plan_approval_exists_flg', False)
+                        # Pass the flag to add_assistant_message
+                        add_assistant_message(
+                            state.get('sql_followup_question'), 
+                            message_type="needs_followup",
+                            plan_approval_exists_flg=plan_approval_exists_flg
+                        )
                         return
                     if state.get('requires_dataset_clarification') and state.get('dataset_followup_question'):
                         hide_spinner()
@@ -1672,15 +1679,21 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
         # if show_feedback:
         #     render_feedback_section(f"Drillthrough: {title}", sql_query, data, display_content)
 
-def add_assistant_message(content, message_type="standard"):
+def add_assistant_message(content, message_type="standard", plan_approval_exists_flg=False):
     """
     Add assistant message to chat history - used for both real-time and preserved history
+    
+    Args:
+        content: Message content
+        message_type: Type of message (standard, needs_followup, etc.)
+        plan_approval_exists_flg: Flag indicating if this is a plan approval message
     """
     message = {
         "role": "assistant",
         "content": content,
         "message_type": message_type,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "plan_approval_exists_flg": plan_approval_exists_flg
     }
     
     st.session_state.messages.append(message)
@@ -4324,8 +4337,8 @@ def render_chat_message_enhanced(message, message_idx):
 
         # Handle needs_followup messages with special formatting
         if message_type == "needs_followup":
-            # Check if this is a plan_approval (detected by content pattern)
-            is_plan_approval = content and ('📋 SQL Plan Summary' in content or '🎯 Intent:' in content)
+            # Check if this is a plan_approval using the flag from state
+            is_plan_approval = message.get('plan_approval_exists_flg', False)
 
             if is_plan_approval:
                 # Plan approval - Orange/Amber styling to distinguish from regular followups
@@ -4347,41 +4360,50 @@ def render_chat_message_enhanced(message, message_idx):
                 if not is_historical:
                     approval_key = f"plan_approval_{message_idx}"
                     show_other_input = st.session_state.get(f"{approval_key}_show_other", False)
+                    button_submitted = st.session_state.get(f"{approval_key}_submitted", False)
 
-                    if not show_other_input:
-                        # Show approval buttons
-                        col1, col2, col3 = st.columns([1, 1, 2])
-                        with col1:
-                            if st.button("✅ Yes, Approve", key=f"{approval_key}_approve", type="primary"):
-                                st.session_state.pending_user_input = "approve"
-                                st.session_state.plan_approval_submitted = True
-                                st.rerun()
-                        with col2:
-                            if st.button("✏️ Other", key=f"{approval_key}_other", type="secondary"):
-                                st.session_state[f"{approval_key}_show_other"] = True
-                                st.rerun()
-                    else:
-                        # Show text input for custom response
-                        with st.form(key=f"{approval_key}_form"):
-                            custom_response = st.text_area(
-                                "Provide your feedback or modifications:",
-                                placeholder="e.g., 'change to claims dataset' or 'add carrier filter' or 'modify time range to Q1-Q2'",
-                                height=80
-                            )
-                            form_col1, form_col2 = st.columns([1, 1])
-                            with form_col1:
-                                if st.form_submit_button("Submit", type="primary"):
-                                    if custom_response.strip():
-                                        st.session_state.pending_user_input = custom_response.strip()
-                                        st.session_state.plan_approval_submitted = True
+                    # Only show buttons if not yet submitted
+                    if not button_submitted:
+                        if not show_other_input:
+                            # Show approval buttons with left margin to align with message content
+                            st.markdown('<div style="margin-left: 40px; margin-top: 12px;">', unsafe_allow_html=True)
+                            col1, col2, col3 = st.columns([1, 1, 2])
+                            with col1:
+                                if st.button("✅ Yes, Approve", key=f"{approval_key}_approve", type="primary"):
+                                    st.session_state.pending_user_input = "approve"
+                                    st.session_state.plan_approval_submitted = True
+                                    st.session_state[f"{approval_key}_submitted"] = True
+                                    st.rerun()
+                            with col2:
+                                if st.button("✏️ Modify Or Change Dataset", key=f"{approval_key}_other", type="secondary"):
+                                    st.session_state[f"{approval_key}_show_other"] = True
+                                    st.rerun()
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        else:
+                            # Show text input for custom response
+                            st.markdown('<div style="margin-left: 40px; margin-top: 12px;">', unsafe_allow_html=True)
+                            with st.form(key=f"{approval_key}_form"):
+                                custom_response = st.text_area(
+                                    "Provide your feedback or modifications:",
+                                    placeholder="e.g., 'change to claims dataset' or 'add carrier filter' or 'modify time range to Q1-Q2'",
+                                    height=80
+                                )
+                                form_col1, form_col2 = st.columns([1, 1])
+                                with form_col1:
+                                    if st.form_submit_button("Submit", type="primary"):
+                                        if custom_response.strip():
+                                            st.session_state.pending_user_input = custom_response.strip()
+                                            st.session_state.plan_approval_submitted = True
+                                            st.session_state[f"{approval_key}_show_other"] = False
+                                            st.session_state[f"{approval_key}_submitted"] = True
+                                            st.rerun()
+                                        else:
+                                            st.warning("Please enter your feedback")
+                                with form_col2:
+                                    if st.form_submit_button("Cancel"):
                                         st.session_state[f"{approval_key}_show_other"] = False
                                         st.rerun()
-                                    else:
-                                        st.warning("Please enter your feedback")
-                            with form_col2:
-                                if st.form_submit_button("Cancel"):
-                                    st.session_state[f"{approval_key}_show_other"] = False
-                                    st.rerun()
+                            st.markdown('</div>', unsafe_allow_html=True)
             else:
                 # Regular SQL followup - existing orange styling
                 formatted_content = format_sql_followup_question(content)

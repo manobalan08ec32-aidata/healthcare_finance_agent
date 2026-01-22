@@ -96,6 +96,7 @@ class AgentState(TypedDict):
     topic_drift: Optional[bool]                    # Default: False
     missing_dataset_items: Optional[bool]          # Default: False
     phi_found: Optional[bool]                      # Default: False, indicates PHI/PII detected
+    plan_approval_exists_flg: Optional[bool]       # Default: False, indicates SQL plan approval content exists
     
     # ============ SQL GENERATION FIELDS ============
     

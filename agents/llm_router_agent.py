@@ -975,7 +975,7 @@ class LLMRouterAgent:
             d['functional_name'] for d in available_datasets
             if d['functional_name'] not in selected_functional_names
         ]
-
+        print("other_datasets",other_datasets)
         dataset_context = f"""
 SELECTED DATASET: {', '.join(selected_functional_names) if selected_functional_names else 'None'}
 
@@ -1001,7 +1001,8 @@ Use history to validate filter column choices. Never use history for time values
             history_hint=history_hint,
             dataset_metadata=dataset_metadata,
             mandatory_columns_text=mandatory_columns_text,
-            dataset_context=dataset_context
+            dataset_context=dataset_context,
+            other_available_datasets=', '.join(other_datasets) if other_datasets else 'None'
         )
 
         return prompt
@@ -1036,7 +1037,7 @@ Use history to validate filter column choices. Never use history for time values
         return prompt
 
 
-    def _extract_context_and_followup(self, response: str) -> tuple[str, bool, str]:
+    def _extract_context_and_followup(self, response: str, state: Dict) -> tuple[str, bool, str]:
         """Extract context block and check for followup or plan_approval
 
         Returns:
@@ -1058,6 +1059,9 @@ Use history to validate filter column choices. Never use history for time values
 
         # Determine if needs followup (followup OR plan_approval)
         needs_followup = bool(followup_match) or bool(plan_approval_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
+
+        # Set plan approval flag in state
+        state['plan_approval_exists_flg'] = bool(plan_approval_match)
 
         # Get the text to display (followup takes priority if both exist)
         if followup_match:
@@ -1225,7 +1229,7 @@ Use history to validate filter column choices. Never use history for time values
             try:
                 planner_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": planner_prompt}],
-                    max_tokens=10000,
+                    max_tokens=5000,
                     temperature=0.0,
                     top_p=0.1,
                     system_prompt="You are a SQL query planning assistant for an internal enterprise business intelligence system. Your role is to validate and map business questions to database schemas for authorized analytics reporting. Output ONLY <context> block, optionally followed by <followup> or <plan_approval>. No other text."
@@ -1236,8 +1240,8 @@ Use history to validate filter column choices. Never use history for time values
                 self._log('info', "LLM response received from SQL planner prompt", state,
                          llm_response=planner_response,
                          attempt=attempt + 1)          
-                # Extract context and check followup
-                context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response)
+                # Extract context and check followup (state is updated with plan_approval_exists_flg inside function)
+                context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response, state)
                 
                 if needs_followup:
                     print(f"❓ Followup needed: {followup_text[:150]}...")
@@ -1443,6 +1447,9 @@ Use history to validate filter column choices. Never use history for time values
         other_available_datasets = ', '.join(other_datasets) if other_datasets else 'None'
 
         # Use imported prompt template
+        # Remove "follow-up" from sql_followup_answer if it exists (case-insensitive)
+        cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', sql_followup_answer).strip()
+
         followup_sql_prompt = SQL_FOLLOWUP_PROMPT.format(
             current_question=current_question,
             dataset_metadata=dataset_metadata,
@@ -1452,7 +1459,7 @@ Use history to validate filter column choices. Never use history for time values
             filter_metadata_results=filter_metadata_results,
             history_section=history_section,
             sql_followup_question=sql_followup_question,
-            sql_followup_answer=sql_followup_answer,
+            sql_followup_answer=cleaned_sql_followup_answer,
             selected_dataset_name=selected_dataset_name,
             other_available_datasets=other_available_datasets
         )
@@ -1697,6 +1704,8 @@ Use history to validate filter column choices. Never use history for time values
 
         # Use comprehensive SQL_DATASET_CHANGE_PROMPT template
         # This is a copy of SQL_WRITER_PROMPT but without context_output field
+        cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', state.get('current_question', '')).strip()
+
         sql_generation_prompt = SQL_DATASET_CHANGE_PROMPT.format(
             current_question=current_question,
             dataset_metadata=dataset_metadata,
@@ -1704,7 +1713,7 @@ Use history to validate filter column choices. Never use history for time values
             filter_metadata_results=filter_metadata_results,
             history_section=history_section,
             sql_followup_question=state.get('sql_followup_question', ''),
-            sql_followup_answer=state.get('current_question', '')
+            sql_followup_answer=cleaned_sql_followup_answer
         )
 
         # Retry logic for SQL generation

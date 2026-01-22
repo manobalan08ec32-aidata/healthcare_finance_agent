@@ -85,6 +85,7 @@ class AgentState(TypedDict):
     history_question_match:Optional[str]
     matched_table_name:Optional[str]
     history_sql_used:Optional[bool]
+    reasoning_context:Optional[str]
 
     # ============ LEGACY/COMPATIBILITY FIELDS ============
     

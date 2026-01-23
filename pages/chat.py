@@ -1466,6 +1466,114 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         st.markdown(report_card_html, unsafe_allow_html=True)
 
 
+def preprocess_chart_data(df: pd.DataFrame, chart_spec: Dict) -> tuple[pd.DataFrame, Dict, str]:
+    """
+    Intelligently preprocess DataFrame for charting using LLM-provided filtering instructions.
+    
+    PRIMARY: Use LLM's filter_column and exclude_values (intelligent, context-aware)
+    FALLBACK: Pattern matching for edge cases LLM might miss
+    
+    Returns:
+        tuple: (filtered_df, updated_chart_spec, warning_message)
+    """
+    if df is None or df.empty:
+        return df, chart_spec, ""
+    
+    warning_parts = []
+    filtered_df = df.copy()
+    updated_spec = chart_spec.copy()
+    
+    # ============ PRIMARY: LLM-DRIVEN FILTERING ============
+    # Trust the LLM's intelligent analysis of the data
+    filter_column = chart_spec.get('filter_column')
+    exclude_values = chart_spec.get('exclude_values')
+    chart_note = chart_spec.get('chart_note')
+    
+    if filter_column and exclude_values and filter_column in filtered_df.columns:
+        print(f"📊 LLM-driven filtering: column='{filter_column}', exclude={exclude_values}")
+        
+        original_len = len(filtered_df)
+        
+        # Normalize values for comparison (case-insensitive)
+        col_values = filtered_df[filter_column].astype(str).str.strip()
+        exclude_normalized = [str(v).strip().lower() for v in exclude_values]
+        
+        # Create mask for rows to keep
+        exclude_mask = col_values.str.lower().isin(exclude_normalized)
+        filtered_df = filtered_df[~exclude_mask]
+        
+        rows_removed = original_len - len(filtered_df)
+        if rows_removed > 0:
+            print(f"✅ LLM filtering: Removed {rows_removed} rows (kept {len(filtered_df)})")
+            if chart_note:
+                warning_parts.append(chart_note)
+            else:
+                warning_parts.append(f"Filtered {rows_removed} row(s) for clearer visualization")
+    
+    # ============ FALLBACK: Pattern matching (if LLM didn't provide instructions) ============
+    # Only run if LLM didn't provide filtering AND we still have potential issues
+    if not filter_column and not exclude_values:
+        # Check for common total patterns that LLM might have missed
+        total_patterns = [
+            'overall_total', 'overall total', 'grand_total', 'grand total',
+            'subtotal', 'sub_total', 'all_total', 'summary', 'aggregate', 'combined'
+        ]
+        exact_total_patterns = ['total', 'all']
+        
+        total_rows_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
+        
+        for col in filtered_df.select_dtypes(include=['object', 'string']).columns:
+            col_values = filtered_df[col].astype(str).str.lower().str.strip()
+            
+            for pattern in total_patterns:
+                matches = col_values.str.contains(pattern, case=False, na=False)
+                if matches.any():
+                    total_rows_mask = total_rows_mask | matches
+                    print(f"📊 Fallback: Found total pattern '{pattern}' in column '{col}'")
+            
+            for pattern in exact_total_patterns:
+                matches = (col_values == pattern)
+                if matches.any():
+                    total_rows_mask = total_rows_mask | matches
+        
+        total_row_count = total_rows_mask.sum()
+        component_row_count = len(filtered_df) - total_row_count
+        
+        if total_row_count > 0 and component_row_count > 2:
+            filtered_df = filtered_df[~total_rows_mask]
+            warning_parts.append(f"Auto-filtered {total_row_count} total/summary row(s)")
+            print(f"✅ Fallback filtering: Removed {total_row_count} total rows")
+    
+    # ============ VALIDATION: Ensure we still have enough data ============
+    if len(filtered_df) < 2:
+        updated_spec['render'] = False
+        updated_spec['reason'] = "After filtering, insufficient data for visualization"
+        warning_parts.append("Chart skipped: Not enough data points after filtering")
+        print(f"⚠️ Chart disabled: Only {len(filtered_df)} rows remain after filtering")
+    
+    # ============ SAFETY CHECK: Verify column types match expectations ============
+    y_col = chart_spec.get('y_column')
+    if y_col and isinstance(y_col, str) and y_col in filtered_df.columns:
+        # Try to convert y_column to numeric
+        test_numeric = pd.to_numeric(
+            filtered_df[y_col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
+            errors='coerce'
+        )
+        if test_numeric.isna().all():
+            # y_column has no numeric data - LLM might have swapped columns
+            print(f"⚠️ Safety check: y_column '{y_col}' has no numeric data")
+            updated_spec['render'] = False
+            updated_spec['reason'] = f"Column '{y_col}' contains no numeric values for charting"
+            warning_parts.append(f"Chart skipped: '{y_col}' is not numeric")
+    
+    # Build warning message
+    warning_message = ""
+    if warning_parts:
+        warning_message = "📊 **Chart Note:** " + " | ".join(warning_parts)
+    
+    return filtered_df, updated_spec, warning_message
+
+
 def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
     """
     Render a Plotly chart based on LLM-generated specification.
@@ -1495,6 +1603,20 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
     if df is None or df.empty:
         print("ℹ️ Chart skipped: DataFrame is empty or None")
         return
+
+    # ============ SMART PREPROCESSING: Filter totals, handle hierarchy ============
+    df, chart_spec, chart_warning = preprocess_chart_data(df, chart_spec)
+    
+    # Check if preprocessing disabled the chart
+    if not chart_spec.get('render', False):
+        print(f"ℹ️ Chart skipped after preprocessing: {chart_spec.get('reason', 'Unknown')}")
+        if chart_warning:
+            st.markdown(f"<div style='color: #666; font-size: 0.85rem; padding: 8px; background: #f5f5f5; border-radius: 4px; margin: 8px 0;'>{chart_warning}</div>", unsafe_allow_html=True)
+        return
+    
+    # Display chart warning/note if any
+    if chart_warning:
+        st.markdown(f"<div style='color: #666; font-size: 0.85rem; padding: 8px; background: #FFF8E7; border-left: 3px solid #FFA726; border-radius: 4px; margin: 8px 0;'>{chart_warning}</div>", unsafe_allow_html=True)
 
     if len(df) < 2:
         print(f"ℹ️ Chart skipped: Only {len(df)} row(s) - not enough data to visualize")

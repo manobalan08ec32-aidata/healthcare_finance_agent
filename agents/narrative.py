@@ -3,42 +3,126 @@ import pandas as pd
 import json
 import asyncio
 import re
+import os
 from datetime import datetime
 from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
+from core.logger import setup_logger, log_with_user_context
+
+# Initialize logger for this module
+logger = setup_logger(__name__)
 
 class NarrativeAgent:
     """Narrative synthesis agent: generates intelligent narratives from SQL results"""
     
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
+        self.powerbi_metadata_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'powerbi_report_metadata.json')
+        
+        # Report name to URL mapping
+        self.report_url_mapping = {
+            "Snapshot": "https://app.powerbi.com/groups/me/apps/84236afb-d260-4b84-84df-aace54fdf6f5/reports/f1228200-f00a-4c39-8604-f6240b896309/35206c2d6dd05a569e8e?experience=power-bi",
+            "Oracle Client LOB": "https://app.powerbi.com/groups/me/apps/84236afb-d260-4b84-84df-aace54fdf6f5/reports/f1228200-f00a-4c39-8604-f6240b896309/505fa5d9534fad70e718?experience=power-bi",
+            "Oracle Client Trend": "https://app.powerbi.com/groups/me/apps/84236afb-d260-4b84-84df-aace54fdf6f5/reports/f1228200-f00a-4c39-8604-f6240b896309/7fa55631de2387f4d1e3?experience=power-bi",
+            "Trend": "https://app.powerbi.com/groups/me/apps/84236afb-d260-4b84-84df-aace54fdf6f5/reports/f1228200-f00a-4c39-8604-f6240b896309/be2aa0dd0c87ee944bda?experience=power-bi",
+            "LOB": "https://app.powerbi.com/groups/me/apps/84236afb-d260-4b84-84df-aace54fdf6f5/reports/f1228200-f00a-4c39-8604-f6240b896309/9d1c3701b2eae5e54414?experience=power-bi"
+
+        }
+    
+    def _log(self, level: str, message: str, state: AgentState = None, **extra):
+        """Helper method to log with user context from state"""
+        user_email = state.get('user_email') if state else None
+        session_id = state.get('session_id') if state else None
+        log_with_user_context(logger, level, f"[Narrative] {message}", user_email, session_id, **extra)
     
     async def synthesize_narrative(self, state: AgentState) -> Dict[str, Any]:
-        """Generate narrative from SQL results"""
+        """Generate narrative from SQL results and find matching Power BI reports in parallel"""
         
-        print(f"\n📝 Narrative Agent: Synthesizing narrative from SQL results")
+        self._log('info', "Starting narrative synthesis from SQL results", state)
         
         try:
             # Get SQL results from state
             sql_result = state.get('sql_result', {})
             current_question = state.get('rewritten_question', '')
+            selected_dataset = state.get('selected_dataset', [])  # Get selected table/dataset
             
             if not sql_result or not sql_result.get('success', False):
+                self._log('warning', "No valid SQL results found for narrative", state)
                 return {
                     'success': False,
                     'error': 'No valid SQL results found for narrative synthesis'
                 }
             
-            # Check if single or multiple SQL results
+            # Extract SQL queries for Power BI matching
+            sql_queries = []
+            if sql_result.get('multiple_results', False):
+                query_results = sql_result.get('query_results', [])
+                sql_queries = [qr.get('sql_query', '') for qr in query_results]
+            else:
+                sql_queries = [sql_result.get('sql_query', '')]
+            
+            # Check if SQL results have data (0 records = skip Power BI matching)
+            has_data = False
+            if sql_result.get('multiple_results', False):
+                query_results = sql_result.get('query_results', [])
+                has_data = any(len(qr.get('data', [])) > 0 for qr in query_results)
+            else:
+                data = sql_result.get('query_results', [])
+                has_data = len(data) > 0
+            
+            print(f"📊 SQL results has_data: {has_data}")
+            
+            # Run narrative synthesis and Power BI matching in parallel
+            print(f"🚀 Running narrative synthesis and Power BI matching in parallel")
+            
+            narrative_task = None
+            powerbi_task = None
+            
+            # Check if single or multiple SQL results for narrative
             if sql_result.get('multiple_results', False):
                 # Handle multiple SQL queries
                 query_results = sql_result.get('query_results', [])
-                narrative_result = await self._synthesize_multiple_narratives_async(query_results, current_question)
+                narrative_task = self._synthesize_multiple_narratives_async(query_results, current_question)
             else:
                 # Handle single SQL query
                 sql_query = sql_result.get('sql_query', '')
                 data = sql_result.get('query_results', [])
-                narrative_result = await self._synthesize_single_narrative_async(data, current_question, sql_query)
+                
+                # Get current conversation memory from state
+                conversation_memory = state.get('conversation_memory', {
+                    'dimensions': {},
+                    'analysis_context': {
+                        'current_analysis_type': None,
+                        'analysis_history': []
+                    }
+                })
+                
+                narrative_task = self._synthesize_single_narrative_async(data, current_question, sql_query, conversation_memory)
+            
+            # Create Power BI matching task ONLY if SQL results have data
+            if has_data:
+                print(f"✅ SQL results have data - creating Power BI matching task")
+                powerbi_task = self._match_powerbi_report_async(sql_queries[0] if sql_queries else '', selected_dataset)
+            else:
+                print(f"⏭️ SQL results have 0 records - skipping Power BI matching")
+                # Create a dummy coroutine that returns no match
+                async def no_powerbi_match():
+                    return {
+                        'report_found': False,
+                        'report_name': None,
+                        'report_url': None,
+                        'match_type': 'none',
+                        'reason': 'No data in SQL results',
+                        'filters_to_apply': None
+                    }
+                powerbi_task = no_powerbi_match()
+            
+            # Execute both tasks in parallel
+            narrative_result, powerbi_result = await asyncio.gather(narrative_task, powerbi_task)
+            
+            print(f"✅ Parallel execution complete")
+            print(f"   Narrative: {'Success' if narrative_result.get('success') else 'Failed'}")
+            print(f"   Power BI: {'Match found' if powerbi_result.get('report_found') else 'No match'}")
             
             if narrative_result['success']:
                 # Update state with narrative results
@@ -59,7 +143,7 @@ class NarrativeAgent:
                     # Update single result with narrative
                     state['sql_result']['narrative'] = narrative_result.get('narrative', '')
                     
-                    # 🆕 UPDATE CONVERSATION MEMORY
+                    # 🆕 UPDATE CONVERSATION MEMORY (Programmatic merge)
                     if narrative_result.get('memory'):
                         current_memory = state.get('conversation_memory', {
                             'dimensions': {},
@@ -69,22 +153,30 @@ class NarrativeAgent:
                             }
                         })
                         
-                        new_memory = narrative_result['memory']
-                        
-                        # Merge memory intelligently
-                        updated_memory = self._merge_memory(current_memory, new_memory)
-                        state['conversation_memory'] = updated_memory
-                        
-                        print(f"✅ Conversation memory updated")
+                        # Merge LLM memory with existing memory
+                        merged_memory = self._merge_memory_intelligently(current_memory, narrative_result['memory'])
+                        state['conversation_memory'] = merged_memory
+                        print(f"✅ Conversation memory updated with {len(merged_memory.get('dimensions', {}))} dimensions")
                 
+                # Merge Power BI results into return output
                 return {
                     'success': True,
-                    'narrative_complete': True
+                    'narrative_complete': True,
+                    'report_found': powerbi_result.get('report_found', False),
+                    'report_url': powerbi_result.get('report_url'),
+                    'report_filter': powerbi_result.get('filters_to_apply'),
+                    'report_name': powerbi_result.get('report_name'),
+                    'tab_name': None,  # No longer returned by LLM
+                    'match_type': powerbi_result.get('match_type'),
+                    'report_reason': powerbi_result.get('reason'),
+                    'unsupported_filters': None,  # No longer returned by LLM
+                    'report_warnings': []  # No longer returned by LLM
                 }
             else:
                 return {
                     'success': False,
-                    'error': narrative_result.get('error', 'Narrative synthesis failed')
+                    'error': narrative_result.get('error', 'Narrative synthesis failed'),
+                    'report_found': False
                 }
                 
         except Exception as e:
@@ -92,8 +184,342 @@ class NarrativeAgent:
             print(f"❌ {error_msg}")
             return {
                 'success': False,
-                'error': error_msg
+                'error': error_msg,
+                'report_found': False
             }
+    
+    async def _match_powerbi_report_async(self, sql_query: str, selected_dataset: List[str]) -> Dict[str, Any]:
+        """Match SQL query to Power BI report with retries
+        
+        Args:
+            sql_query: SQL query string to match
+            selected_dataset: List of selected table names from state - used ONLY to filter metadata, not passed to LLM
+        """
+        
+        print(f"\n🔍 Power BI Report Matcher: Analyzing SQL query")
+        print(f"   Selected dataset (for metadata filtering): {selected_dataset}")
+        
+        if not sql_query or sql_query.strip() == '':
+            print("⚠️ Empty SQL query, skipping Power BI matching")
+            return {
+                'report_found': False,
+                'report_name': None,
+                'report_url': None,
+                'match_type': 'none',
+                'reason': 'No SQL query provided',
+                'filters_to_apply': None
+            }
+        
+        try:
+            # Load full Power BI metadata
+            with open(self.powerbi_metadata_path, 'r') as f:
+                full_metadata = json.load(f)
+            
+            print(f"✅ Loaded Power BI metadata from {self.powerbi_metadata_path}")
+            
+            # Filter metadata to only the selected dataset's table (if dataset specified)
+            # This reduces the metadata sent to LLM, but we don't mention the dataset name in the prompt
+            filtered_metadata = {}
+            if selected_dataset and len(selected_dataset) > 0:
+                # Extract table name from selected_dataset (handle list format)
+                dataset_name = selected_dataset[0] if isinstance(selected_dataset, list) else selected_dataset
+                
+                print(f"🔍 Filtering metadata for dataset: {dataset_name}")
+                
+                # Search for matching table in metadata
+                for table_key, table_data in full_metadata.items():
+                    # Check if the dataset name appears in the table key
+                    # e.g., "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast" contains "ledger_actual_vs_forecast"
+                    if dataset_name.lower() in table_key.lower():
+                        filtered_metadata[table_key] = table_data
+                        print(f"✅ Found matching table: {table_key}")
+                        break
+                
+                if not filtered_metadata:
+                    print(f"⚠️ Dataset '{dataset_name}' not found in Power BI metadata - skipping Power BI matching")
+                    return {
+                        'report_found': False,
+                        'report_name': None,
+                        'report_url': None,
+                        'match_type': 'none',
+                        'reason': f'Dataset {dataset_name} not available in Power BI reports',
+                        'filters_to_apply': None
+                    }
+            else:
+                # No dataset specified, use full metadata
+                print("ℹ️ No dataset specified, using full metadata")
+                filtered_metadata = full_metadata
+            
+        except Exception as e:
+            print(f"❌ Failed to load Power BI metadata: {str(e)}")
+            return {
+                'report_found': False,
+                'report_name': None,
+                'report_url': None,
+                'match_type': 'none',
+                'reason': f'Metadata load failed: {str(e)}',
+                'filters_to_apply': None
+            }
+        
+        # Build matching prompt with filtered metadata
+        # NOTE: We send both SQL query AND filtered metadata to LLM, but NOT the dataset name
+        matching_prompt = f"""You are a Power BI Tab Matcher. Your job is to analyze a SQL query and determine which Power BI report tab(s) can answer the same question.
+
+---
+
+METADATA STRUCTURE:
+
+The metadata contains:
+- common.measures: All available metrics (shared across all tabs)
+- common.synonyms: Maps SQL column/value names to Power BI slicer names
+- report.report_name: The Power BI report name
+- report.tabs[]: List of tabs, each containing:
+  - tab_name: Name of the tab
+  - slicer_mode: "comparison" (actuals vs forecast side-by-side) OR "single_view" (one metric over time)
+  - granularity: "product_lob" (product level) OR "client_lob" (client level)
+  - tab_description: What the tab shows and its limitations
+  - slicers: Available filters with their possible values
+  - use_when: When this tab is the right choice
+  - do_not_use_when: When to avoid this tab
+---
+INSTRUCTIONS (Follow these steps in order):
+
+STEP 1: PARSE SQL
+Extract from the SQL query:
+- Columns in SELECT (what is being retrieved)
+- Aggregations used (SUM, COUNT, AVG)
+- Filters in WHERE clause (column = value pairs)
+- Columns in GROUP BY (how data is grouped) - SAVE THESE for filters_to_apply
+- ORDER BY presence (indicates trend/time-series)
+
+STEP 2: MAP USING SYNONYMS
+Translate SQL column and value names to Power BI slicer names:
+- Use common.synonyms to map column names (e.g., client_id → Oracle Customer ID, line_of_business → customer (Line of Business))
+- Use common.synonyms to map values (e.g., HDP → Home Delivery)
+- Map GROUP BY columns to slicer names if they exist in Power BI slicers
+- Keep track of mapped filters AND mapped GROUP BY columns for output
+
+STEP 3: DETERMINE INTENT
+Identify two key characteristics:
+
+A) COMPARISON vs SINGLE VIEW:
+
+COMPARISON indicators (slicer_mode = "comparison"):
+- SQL SELECT has both actuals AND forecast columns
+- SQL has columns like: actuals, forecast_5_7, variance, gaap_revenue, forecast_revenue
+- SQL WHERE has multiple ledger values: ledger IN ('GAAP', '5+7')
+- SQL compares two forecast versions: forecast_5_7, forecast_9_3
+- Question asks about "variance", "vs", "compare", "against"
+
+SINGLE VIEW indicators (slicer_mode = "single_view"):
+- SQL SELECT has only actuals OR only one forecast version
+- SQL WHERE filters to single ledger: ledger = 'GAAP'
+- SQL has time-series pattern: GROUP BY month ORDER BY month
+- Question asks about "trend", "over time", "monthly", "pattern", "historical"
+
+B) CLIENT vs PRODUCT level:
+
+CLIENT level (granularity = "client_lob"):
+- SQL has client_id, oracle_cust_id, or client in SELECT, WHERE, or GROUP BY
+- Question mentions specific client names or asks "which clients"
+
+PRODUCT level (granularity = "product_lob"):
+- SQL has product_category, product_cd in SELECT, WHERE, or GROUP BY
+- SQL has NO client columns
+- Question mentions Home Delivery, Specialty, PBM
+
+STEP 4: FILTER TABS BY MODE AND GRANULARITY
+Based on Step 3, narrow down candidate tabs:
+- If COMPARISON + CLIENT → look for slicer_mode="comparison" AND granularity="client_lob"
+- If COMPARISON + PRODUCT → look for slicer_mode="comparison" AND granularity="product_lob"
+- If SINGLE VIEW + CLIENT → look for slicer_mode="single_view" AND granularity="client_lob"
+- If SINGLE VIEW + PRODUCT → look for slicer_mode="single_view" AND granularity="product_lob"
+
+STEP 5: VALIDATE AGAINST use_when AND do_not_use_when
+For each candidate tab:
+- Read use_when: Does the SQL intent match?
+- Read do_not_use_when: Is there any exclusion that applies?
+- Eliminate tabs where do_not_use_when matches
+
+STEP 6: CHECK SLICER COVERAGE
+For each remaining candidate tab:
+- Check if each SQL WHERE filter has a matching slicer in the tab
+- Check if the filter VALUE exists in the slicer's possible values
+- Flag any filters that cannot be applied (unsupported)
+- Prefer tabs with higher slicer coverage
+
+STEP 7: SELECT BEST TAB(S)
+- Rank tabs by: slicer coverage > use_when fit > description match
+- Return best matching tab(s)
+- If multiple tabs are equally relevant, return all
+- If no tab matches well, return closest match with explanation
+
+---
+
+SPECIAL CASES:
+
+Snapshot vs LOB (both are product-level comparison):
+- Snapshot: Has forecast 1 + forecast 2 → use when comparing TWO forecast versions
+- LOB: Has Ledger 1 + Ledger 2 → use when comparing actuals vs ONE forecast
+
+Oracle Client LOB vs Oracle Client Trend (both are client-level):
+- Oracle Client LOB: Has Ledger 1 + Ledger 2 → use for client actuals vs forecast comparison
+- Oracle Client Trend: Has only Ledger 1 (GAAP) → use for client trend WITHOUT forecast comparison
+
+---
+
+SQL QUERY:
+```sql
+{sql_query}
+```
+
+AVAILABLE POWER BI REPORTS:
+```json
+{json.dumps(filtered_metadata, indent=2)}
+```
+
+OUTPUT FORMAT (return ONLY valid JSON, no markdown):
+CRITICAL: Return ONLY the JSON output. Do NOT include any analysis, explanation, or step-by-step reasoning in your response. Your response must start with {{ and end with }}. No text before or after the JSON.
+
+
+{{
+  "report_found": true,
+  "report_name": "Actual Report Name",
+  "tab_name": ["Tab Name 1", "Tab Name 2"]
+  "match_type": "exact" or "partial" or "none",
+  "reason": "One sentence explaining why this tab was selected based on SQL intent and slicer match",
+  "filters_to_apply": "slicer1 - value1, slicer2 - value2" or null,
+  "unsupported_filters": "slicer1 - value1" or null
+}}
+
+RULES FOR tab_name:
+- Return list of matching tab names from metadata
+- Order by relevance (best match first)
+- Include partial matches
+- Return empty list [] if no tabs match
+
+RULES FOR filters_to_apply:
+- Extract filters from SQL WHERE clause
+- ALSO extract GROUP BY columns (if they exist in Power BI slicers)
+- Map to Power BI slicer names using synonyms
+- Format for WHERE filters: "slicer_name - value, slicer_name - value"
+- Format for GROUP BY columns: "group_by - slicer_name" (e.g., "group_by - customer (Line of Business)")
+- Use friendly date format with RANGES when multiple consecutive months/years:
+  * Single month: "Month - Jul"
+  * Multiple consecutive months: "Month - Jul to Oct" (NOT "Month - Jul, Month - Aug, Month - Sep, Month - Oct")
+  * Multiple non-consecutive months: "Month - Jan,Mar,May"
+  * Single year: "Year - 2025"
+  * Multiple consecutive years: "Year - 2024 to 2025" (NOT "Year - 2024, Year - 2025")
+- Only include filters that ARE supported by matched tab(s)
+- Example with GROUP BY: "Year - 2025, Month - Jul to Oct, ledger - GAAP, group_by - customer (Line of Business)"
+
+RULES FOR unsupported_filters:
+- Include filters from SQL that matched tabs do NOT support
+- Use Power BI slicer names (mapped via synonyms)
+- Set to null if all filters are supported
+
+RULES FOR reason:
+- Keep concise, one sentence
+- Mention what matched: slicer_mode, granularity, key slicers
+- If partial match, explain what is missing
+
+
+"""
+        
+        # Retry logic (3 attempts)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"🔄 Power BI matching attempt {attempt + 1}/{max_retries}")
+                
+                llm_response = await self.db_client.call_claude_api_endpoint_async(
+                    messages=[{"role": "user", "content": matching_prompt}],
+                    max_tokens=1000,
+                    temperature=0.0,
+                    top_p=0.1,
+                    system_prompt="You are a Power BI tab matching system. Analyze SQL queries and match them to the most appropriate Power BI report tabs. Return ONLY valid JSON output - no explanations, no analysis steps, no markdown. Your response must be pure JSON starting with { and ending with }."
+                )
+                
+                print(f"📥 Power BI matcher response received",llm_response)
+                
+                # Log LLM output - actual response truncated to 500 chars (no state in this internal method)
+                self._log('info', "LLM response received from Power BI matcher", None,
+                         llm_response=llm_response,
+                         attempt=attempt + 1)
+                
+                # Parse JSON response
+                # Remove markdown code blocks if present
+                cleaned_response = llm_response.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[7:]
+                if cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[3:]
+                if cleaned_response.endswith("```"):
+                    cleaned_response = cleaned_response[:-3]
+                cleaned_response = cleaned_response.strip()
+                
+                result = json.loads(cleaned_response)
+                
+                # Validate required fields
+                if 'report_found' not in result:
+                    raise ValueError("Response missing 'report_found' field")
+                
+                report_found = result.get('report_found', False)
+                base_report_name = result.get('report_name')  # e.g., "OptumRX Financial Reporting Hub"
+                tab_names = result.get('tab_name', [])  # e.g., ["Snapshot", "Oracle Client LOB"]
+                
+                print(f"✅ Power BI matching successful (attempt {attempt + 1})")
+                print(f"   Report found: {report_found}")
+                print(f"   Base report name from LLM: {base_report_name}")
+                print(f"   Tab names from LLM: {tab_names}")
+                
+                # Process report name and URL mapping
+                final_report_name = None
+                report_url = None
+                
+                if report_found and base_report_name and tab_names and len(tab_names) > 0:
+                    # Take the first (best) tab match
+                    first_tab_name = tab_names[0]
+                    
+                    # Use tab_name to find URL from mapping
+                    report_url = self.report_url_mapping.get(first_tab_name)
+                    
+                    # Concatenate report_name + " - " + tab_name for display
+                    final_report_name = f"{base_report_name} - {first_tab_name}"
+                    
+                    if not report_url:
+                        print(f"⚠️ No URL mapping found for tab: {first_tab_name}")
+                        print(f"   Available mappings: {list(self.report_url_mapping.keys())}")
+                    else:
+                        print(f"✅ Concatenated report name: {final_report_name}")
+                        print(f"✅ Mapped tab '{first_tab_name}' to URL: {report_url}")
+                
+                # Return formatted result (tab_name NOT included - only used internally for URL lookup)
+                return {
+                    'report_found': report_found,
+                    'report_name': final_report_name,  # Concatenated: "OptumRX Financial Reporting Hub - Snapshot"
+                    'report_url': report_url,
+                    'match_type': result.get('match_type', 'none'),
+                    'reason': result.get('reason', ''),
+                    'filters_to_apply': result.get('filters_to_apply')
+                }
+                
+            except Exception as e:
+                print(f"⚠️ Power BI matching attempt {attempt + 1} failed: {str(e)}")
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                else:
+                    print(f"❌ All Power BI matching attempts failed")
+                    return {
+                        'report_found': False,
+                        'report_name': None,
+                        'report_url': None,
+                        'match_type': 'none',
+                        'reason': f'Matching failed after {max_retries} attempts: {str(e)}',
+                        'filters_to_apply': None
+                    }
     
     async def _synthesize_multiple_narratives_async(self, query_results: List[Dict], question: str) -> Dict[str, Any]:
         """Generate narratives for multiple SQL queries"""
@@ -121,21 +547,93 @@ class NarrativeAgent:
             'narratives': narratives
         }
     
-    async def _synthesize_single_narrative_async(self, sql_data: List[Dict], question: str, sql_query: str) -> Dict[str, Any]:
-        """Generate narrative for a single SQL query result with memory extraction"""
+    def _merge_memory_intelligently(self, current_memory: Dict, llm_memory: Dict) -> Dict:
+        """
+        Programmatically merge LLM's new memory with existing memory
+        Maintains FIFO logic for last 5 dimensions
+        """
+        
+        # Initialize result with existing memory structure
+        merged = {
+            'dimensions': {},
+            'analysis_context': llm_memory.get('analysis_context', current_memory.get('analysis_context', {
+                'current_analysis_type': None,
+                'analysis_history': []
+            }))
+        }
+        
+        current_dimensions = current_memory.get('dimensions', {})
+        llm_dimensions = llm_memory.get('dimensions', {})
+        
+        print(f"🔄 Merging memory:")
+        print(f"   Current dimensions keys: {list(current_dimensions.keys())}")
+        print(f"   Current dimensions values: {current_dimensions}")
+        print(f"   LLM dimensions keys: {list(llm_dimensions.keys())}")
+        print(f"   LLM dimensions values: {llm_dimensions}")
+        
+        # Step 1: Start with current dimensions (preserve order and ALL dimensions)
+        for dim_key, dim_values in current_dimensions.items():
+            merged['dimensions'][dim_key] = dim_values.copy() if isinstance(dim_values, list) else [dim_values]
+            print(f"   → Preserved existing dimension: {dim_key} with {len(merged['dimensions'][dim_key])} values")
+        
+        # Step 2: Process LLM dimensions
+        for llm_dim_key, llm_dim_values in llm_dimensions.items():
+            
+            if llm_dim_key in merged['dimensions']:
+                # RULE B: Dimension exists - MERGE values (new first, then old, top 5)
+                existing_values = merged['dimensions'][llm_dim_key]
+                new_values = llm_dim_values if isinstance(llm_dim_values, list) else [llm_dim_values]
+                
+                # Merge: new values first, then old values (avoiding duplicates)
+                merged_values = new_values.copy()
+                for val in existing_values:
+                    if val not in merged_values:
+                        merged_values.append(val)
+                    if len(merged_values) >= 5:
+                        break
+                
+                merged['dimensions'][llm_dim_key] = merged_values[:5]
+                print(f"   ✓ Merged {llm_dim_key}: {len(new_values)} new + {len(existing_values)} old → {len(merged['dimensions'][llm_dim_key])} total")
+                print(f"     Final values for {llm_dim_key}: {merged['dimensions'][llm_dim_key]}")
+            
+            else:
+                # RULE C: New dimension - Add at end, apply FIFO if needed
+                total_dims = len(merged['dimensions'])
+                
+                if total_dims < 5:
+                    # Just add the new dimension
+                    merged['dimensions'][llm_dim_key] = llm_dim_values if isinstance(llm_dim_values, list) else [llm_dim_values]
+                    print(f"   ✓ Added new dimension {llm_dim_key} (now {total_dims + 1} dimensions)")
+                    print(f"     Values for {llm_dim_key}: {merged['dimensions'][llm_dim_key]}")
+                
+                else:
+                    # FIFO: Delete oldest (first), add new (last)
+                    oldest_key = list(merged['dimensions'].keys())[0]
+                    del merged['dimensions'][oldest_key]
+                    merged['dimensions'][llm_dim_key] = llm_dim_values if isinstance(llm_dim_values, list) else [llm_dim_values]
+                    print(f"   ✓ FIFO: Deleted {oldest_key}, added {llm_dim_key} (maintained 5 dimensions)")
+                    print(f"     Values for {llm_dim_key}: {merged['dimensions'][llm_dim_key]}")
+        
+        print(f"   📋 Final merged dimensions: {list(merged['dimensions'].keys())}")
+        print(f"   📋 Final merged memory: {merged}")
+        return merged
+    
+    async def _synthesize_single_narrative_async(self, sql_data: List[Dict], question: str, sql_query: str, conversation_memory: Dict = None) -> Dict[str, Any]:
+        """Generate narrative for a single SQL query result with LLM-managed memory"""
+        
+        print(f"🚀 _synthesize_single_narrative_async CALLED with {len(sql_data) if sql_data else 0} data rows")
         
         if not sql_data:
             return {
                 'success': True,
                 'narrative': "No data was found matching your query criteria.",
-                'memory': {
+                'memory': conversation_memory or {
                     'dimensions': {},
                     'analysis_context': {
                         'current_analysis_type': None,
                         'analysis_history': []
                     }
-                },
-                'chart': {'render': False, 'reason': 'No data available'}
+                }
             }
         
         try:
@@ -146,164 +644,115 @@ class NarrativeAgent:
                 return {
                     'success': True,
                     'narrative': "No data was found matching your query criteria.",
-                    'memory': {
+                    'memory': conversation_memory or {
                         'dimensions': {},
                         'analysis_context': {
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    },
-                    'chart': {'render': False, 'reason': 'No data available'}
+                    }
                 }
 
             row_count = len(df)
             columns = list(df.columns)
             column_count = len(columns)
+            print('total count',row_count)
+            print('column_count',column_count)
             total_count = row_count * column_count
-
-            if total_count > 5000:
+            print('total count',total_count)
+            if total_count > 10000:
                 return {
                     'success': True,
                     'narrative': "Too many records to synthesize.",
-                    'memory': {
+                    'memory': conversation_memory or {
                         'dimensions': {},
                         'analysis_context': {
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    },
-                    'chart': {'render': False, 'reason': 'Too many records for visualization'}
+                    }
                 }
 
-            has_multiple_records = row_count > 1
-            has_date_columns = any('date' in col.lower() or 'month' in col.lower() or 'year' in col.lower() or 'quarter' in col.lower() for col in columns)
-            has_numeric_columns = False
-            
-            # Check for numeric columns in DataFrame
-            for col in df.columns:
-                if df[col].dtype in ['int64', 'float64'] or df[col].astype(str).str.contains(r'^\d+\.?\d*$', na=False).any():
-                    has_numeric_columns = True
-                    break
+            # Convert conversation memory to formatted string for LLM
+            memory_context = json.dumps(conversation_memory, indent=2)
 
             # Convert DataFrame to clean string representation for LLM
-            df_string = df.to_string(index=False, max_rows=2000)
+            df_string = df.to_string(index=False, max_rows=5000)
 
             synthesis_prompt = f"""
-You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results AND determine if a chart would be valuable.
+You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results.
 
 USER QUESTION: "{question}"
 DATA: {row_count} rows, {', '.join(columns)}
-**Query Output**:
+**Query Output**: 
 {df_string}
 
-**ANALYSIS RULES**:
-- Limited data (1-2 rows): Report facts only, no trend analysis
-- Adequate data (3+ rows): Identify trends, patterns, top performers, outliers
+**ADAPTIVE ANALYSIS RULES**:
 
-**STYLE**:
-- Professional business language, concise but informative
-- Bold key metrics and values for scannability
-- Focus on TOP 5-6 most significant entities when discussing dimensions
-- Avoid generic statements, provide actionable insights
+**FOR LIMITED DATA (1-2 rows OR insufficient data for patterns)**:
+- Report only factual data points and direct answers to the question
+- NO forced analysis categories when data doesn't support them
+- Keep insights concise and practical
+
+**FOR RICH DATA (3+ rows with meaningful patterns)**:
+- Apply relevant analysis types: TREND, PATTERN, ANOMALY, DRIVER, COMPARATIVE
+- Only include analysis types that the data actually supports
+- Prioritize business significance
+
+**FOR DATASETS WITH 10+ RECORDS AND NOTABLE FINDINGS**:
+- If you identify significant anomalies, outliers, or bright spots in the data
+- Leverage your broad knowledge to provide contextual interpretation
+- Add "Information from Web Knowledge:" section with 2-3 lines of relevant real-world context
+- Only include this if you can provide meaningful context from your training data
+- Examples: industry trends, known factors affecting the metric, regulatory changes, seasonal patterns
+- If no relevant context available, omit this section entirely
+
+**OUTPUT GUIDELINES**:
+- Bullets: ≤20 words each, focus on business value
+- Use exact data names, auto-scale: ≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK
+- CRITICAL: Use canonical business names for readability while maintaining context
+    • Use "Drug MOUNJARO" instead of "drug_name MOUNJARO" 
+    • Use "Client MDOVA" instead of "client_name MDOVA"
+    • Use "revenue per script" instead of "revenue_per_script"
+    • First mention: include attribute context (e.g., "Drug MOUNJARO"), subsequent mentions in same bullet: just value ("MOUNJARO")
+- Use ONLY names/values present in the dataset - never invent or modify names
+- Maintain attribute context for query generation while improving readability
+- Summary: 1-2 sentences for limited data, 2-3 lines for rich data
+- Skip empty or obvious statements
 
 **OUTPUT FORMAT**:
 <insights>
-[Your narrative - focus on TOP 5-6 most significant entities mentioned here]
+• Key finding 1 (only include meaningful insights)
+• Key finding 2 (if data supports additional insights)
+• Additional insights only if data is rich enough
+
+Information from Web Knowledge:
+[Only include if 10+ records AND you have relevant real-world context about the findings. Otherwise omit this line entirely. 2-3 lines maximum explaining relevant industry context, trends, or factors that help interpret the anomalies/patterns found in the data.]
 </insights>
 
-<memory>
-{{
-  "dimensions": {{"column_name": ["val1", "val2", "val3", "val4", "val5"]}},
-  "analysis_context": {{"current_analysis_type": "metric_name", "analysis_history": []}}
-}}
-</memory>
-
-<chart>
-{{
-  "render": true|false,
-  "chart_type": "bar_horizontal"|"bar_vertical"|"bar_grouped"|"bar_variance"|"line"|"line_multi"|"pie"|"scatter"|"area"|"none",
-  "title": "[Clear title - max 60 chars]",
-  "x_column": "[exact column name from DataFrame]",
-  "y_column": "[exact column name]" or ["col1", "col2"] for multi-series,
-  "x_label": "[axis label]",
-  "y_label": "[axis label]",
-  "sort_by": "value_desc"|"value_asc"|"label_asc"|"none",
-  "show_values": true|false,
-  "color_by_sign": true|false,
-  "reason": "[1-2 sentences why this chart type or why no chart]"
-}}
-</chart>
-
-**CHART GENERATION RULES**:
-
-STEP 1 - DECIDE WHETHER TO VISUALIZE:
-
-ROW COUNT INTELLIGENCE (use judgment, not strict rules):
-| Rows | Default Decision | Exceptions |
-|------|------------------|------------|
-| 0-1 | NO chart | Never chart a single value |
-| 2-3 | YES if meaningful | e.g., 3 LOBs for pie, 2 years comparison |
-| 4-30 | YES (ideal range) | Most chart types work well |
-| 31-50 | MAYBE | Bar charts get cluttered; Line/Area still OK |
-| 50+ | Depends on chart type | Line/Area for time series = OK; Bar = skip |
-
-Return render=false if:
-- Data has 0-1 rows (nothing to visualize)
-- No numeric columns exist
-- Question is lookup/definitional ("what is X", "what is the code for Y")
-- All values are nearly identical (no variation to show)
-- Too many categories for bar chart (>30) AND not a time-based question
-
-Return render=true if:
-- Data has 2+ rows with at least one numeric column
-- Question implies comparison ("top", "compare", "breakdown by", "vs")
-- Question implies trends ("trend", "over time", "monthly", "yearly")
-- Clear categorical vs. numeric relationship
-- Time series data (even 100+ rows for line charts is OK)
-
-STEP 2 - SELECT CHART TYPE:
-
-| Data Pattern | Chart Type | When to Use |
-|--------------|------------|-------------|
-| Categories (3-15) + 1 metric | bar_horizontal | Rankings, top N |
-| Categories (2-5) + 1 metric | bar_vertical | Small comparisons |
-| Time dimension + 1 metric | line | Trends over time |
-| Time dimension + 2+ metrics | line_multi | Multiple trends (actual vs forecast) |
-| Categories + 2 metrics comparison | bar_grouped | Actuals vs forecast, budget vs actual |
-| Variance/growth data (pos/neg values) | bar_variance | MoM change, % variance (red/green coloring) |
-| Parts of whole (2-7 items) | pie | Percentage breakdowns |
-| 2 numeric columns | scatter | Correlation |
-| Time + cumulative metric | area | Volume trends |
-
-COMPARISON CHART RULES:
-- If question contains "vs", "compare", "actual", "forecast", "budget":
-  - Time-based comparison → use line_multi (two lines overlaid)
-  - Category-based comparison → use bar_grouped (side-by-side bars)
-
-VARIANCE/GROWTH CHART RULES:
-- If column contains "variance", "growth", "change", "delta", or has positive AND negative values:
-  - Use bar_variance with color_by_sign: true
-  - Red for negative values, green for positive values
-
-COLUMN VALIDATION:
-- x_column and y_column MUST be exact column names from: {columns}
-- For multi-series (line_multi, bar_grouped), y_column is a list: ["col1", "col2"]
-
-
-Return ONLY the XML with <insights> and <chart> tags, nothing else.
+Return ONLY the XML with <insights> tags, nothing else.
 """
 
             # Call LLM with retries
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response_text = await self.db_client.generate_text_async(
-                        prompt=synthesis_prompt,
-                        max_tokens=2000,
-                        temperature=0.3,
-                        system_prompt="You are a healthcare finance analyst. Generate insights and extract memory in the specified XML format."
-                    )
+                    # print('synthesis_prompt',synthesis_prompt)
+                    response_text = await self.db_client.call_claude_api_endpoint_async([
+                    {"role": "user", "content": synthesis_prompt}
+                    ])
+        
+                    print('LLM response received', response_text)
                     
+                    # Log LLM output - actual response truncated to 500 chars (no state in this internal method)
+                    self._log('info', "LLM response received from narrative synthesizer", None,
+                             llm_response=response_text,
+                             attempt=attempt + 1)
+                    
+                    # Process the response
+                    if not response_text:
+                        raise ValueError("Empty response from LLM")
+
                     # Extract insights
                     insights_match = re.search(r'<insights>(.*?)</insights>', response_text, re.DOTALL)
                     insights = insights_match.group(1).strip() if insights_match else ""
@@ -311,95 +760,17 @@ Return ONLY the XML with <insights> and <chart> tags, nothing else.
                     if not insights or len(insights) < 10:
                         raise ValueError("Empty or insufficient insights in XML response")
                     
-                    # Extract memory
-                    memory_match = re.search(r'<memory>(.*?)</memory>', response_text, re.DOTALL)
-                    memory_data = None
-                    
-                    if memory_match:
-                        try:
-                            memory_json_str = memory_match.group(1).strip()
-                            # Clean up potential formatting issues
-                            memory_json_str = memory_json_str.replace('```json', '').replace('```', '').strip()
-                            memory_data = json.loads(memory_json_str)
-                            
-                            # Validate and ensure top 5 limit per dimension
-                            if 'dimensions' in memory_data:
-                                for dim_key, values in memory_data['dimensions'].items():
-                                    if isinstance(values, list) and len(values) > 5:
-                                        memory_data['dimensions'][dim_key] = values[:5]
-                                        print(f"⚠️ Trimmed {dim_key} to top 5 values")
-                            
-                            print(f"✅ Memory extracted: {len(memory_data.get('dimensions', {}))} dimensions, metric: {memory_data.get('analysis_context', {}).get('current_analysis_type')}")
-                        except Exception as e:
-                            print(f"⚠️ Memory extraction failed: {e}")
-                            memory_data = {
-                                'dimensions': {},
-                                'analysis_context': {
-                                    'current_analysis_type': None,
-                                    'analysis_history': []
-                                }
-                            }
-                    else:
-                        memory_data = {
+                    # Return insights only (no memory extraction needed)
+                    return {
+                        'success': True,
+                        'narrative': insights,
+                        'memory': conversation_memory or {
                             'dimensions': {},
                             'analysis_context': {
                                 'current_analysis_type': None,
                                 'analysis_history': []
                             }
                         }
-
-                    # Extract chart specification
-                    chart_match = re.search(r'<chart>(.*?)</chart>', response_text, re.DOTALL)
-                    chart_data = {'render': False, 'reason': 'No chart specification in response'}
-
-                    if chart_match:
-                        try:
-                            chart_json_str = chart_match.group(1).strip()
-                            # Clean up potential formatting issues
-                            chart_json_str = chart_json_str.replace('```json', '').replace('```', '').strip()
-                            chart_data = json.loads(chart_json_str)
-
-                            # Validate chart specification if render is true
-                            if chart_data.get('render', False):
-                                x_col = chart_data.get('x_column')
-                                y_col = chart_data.get('y_column')
-                                valid_cols = list(df.columns)
-
-                                # Validate x_column
-                                if x_col and x_col not in valid_cols:
-                                    print(f"⚠️ Invalid x_column '{x_col}'. Available: {valid_cols}")
-                                    chart_data['render'] = False
-                                    chart_data['reason'] = f"Invalid x_column: {x_col}"
-
-                                # Validate y_column (can be string or list for multi-series)
-                                elif y_col:
-                                    if isinstance(y_col, str):
-                                        if y_col not in valid_cols:
-                                            print(f"⚠️ Invalid y_column '{y_col}'. Available: {valid_cols}")
-                                            chart_data['render'] = False
-                                            chart_data['reason'] = f"Invalid y_column: {y_col}"
-                                    elif isinstance(y_col, list):
-                                        invalid_cols = [c for c in y_col if c not in valid_cols]
-                                        if invalid_cols:
-                                            print(f"⚠️ Invalid y_columns: {invalid_cols}. Available: {valid_cols}")
-                                            chart_data['render'] = False
-                                            chart_data['reason'] = f"Invalid y_columns: {invalid_cols}"
-
-                                if chart_data.get('render', False):
-                                    print(f"✅ Chart: render=True, type={chart_data.get('chart_type')}, x={x_col}, y={y_col}")
-                            else:
-                                print(f"ℹ️ Chart: render=False, reason={chart_data.get('reason', 'Not specified')}")
-                        except Exception as e:
-                            print(f"⚠️ Chart extraction failed: {e}")
-                            chart_data = {'render': False, 'reason': f'Chart parsing error: {str(e)}'}
-                    else:
-                        print("ℹ️ No <chart> block found in LLM response")
-
-                    return {
-                        'success': True,
-                        'narrative': insights,
-                        'memory': memory_data,
-                        'chart': chart_data
                     }
 
                 except Exception as e:
@@ -421,74 +792,6 @@ Return ONLY the XML with <insights> and <chart> tags, nothing else.
                 'success': False,
                 'error': error_msg
             }
-    
-    def _merge_memory(self, current: Dict, new: Dict) -> Dict:
-        """
-        Merge new memory with existing memory
-        
-        DIMENSIONS: Accumulate (merge new + existing, keep top 10 per dimension)
-        ANALYSIS_TYPE: Replace current and track history (last 5)
-        """
-        
-        merged = {
-            'dimensions': {},
-            'analysis_context': {
-                'current_analysis_type': None,
-                'analysis_history': []
-            }
-        }
-        
-        # ========================================
-        # DIMENSIONS: ACCUMULATE (never clear)
-        # ========================================
-        all_dim_keys = set(list(current.get('dimensions', {}).keys()) + 
-                           list(new.get('dimensions', {}).keys()))
-        
-        for dim_key in all_dim_keys:
-            current_values = current.get('dimensions', {}).get(dim_key, [])
-            new_values = new.get('dimensions', {}).get(dim_key, [])
-            
-            # Merge: new values first (most recent), then existing
-            # Deduplicate case-insensitively
-            combined = []
-            seen = set()
-            
-            for value in new_values + current_values:
-                value_upper = str(value).upper()
-                if value_upper not in seen:
-                    seen.add(value_upper)
-                    combined.append(value)
-            
-            # Limit to top 10 values per dimension
-            merged['dimensions'][dim_key] = combined[:10]
-        
-        # ========================================
-        # ANALYSIS TYPE: REPLACE + TRACK HISTORY
-        # ========================================
-        current_history = current.get('analysis_context', {}).get('analysis_history', [])
-        old_analysis_type = current.get('analysis_context', {}).get('current_analysis_type')
-        new_analysis_type = new.get('analysis_context', {}).get('current_analysis_type')
-        
-        if new_analysis_type:
-            # Set new as current
-            merged['analysis_context']['current_analysis_type'] = new_analysis_type
-            
-            # Add old current to history (if it exists and is different)
-            if old_analysis_type and old_analysis_type != new_analysis_type:
-                # Avoid consecutive duplicates in history
-                if not current_history or current_history[-1] != old_analysis_type:
-                    current_history.append(old_analysis_type)
-            
-            # Keep last 5 in history
-            merged['analysis_context']['analysis_history'] = current_history[-5:]
-        else:
-            # If new analysis type is null/empty, keep existing
-            merged['analysis_context']['current_analysis_type'] = old_analysis_type
-            merged['analysis_context']['analysis_history'] = current_history
-        
-        print(f"📊 Memory merged - Dimensions: {list(merged['dimensions'].keys())}, Current metric: {merged['analysis_context']['current_analysis_type']}, History: {merged['analysis_context']['analysis_history']}")
-        
-        return merged
     
     def _json_to_dataframe(self, json_data) -> pd.DataFrame:
         """Convert JSON response to pandas DataFrame with proper numeric formatting"""

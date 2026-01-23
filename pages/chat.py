@@ -10,7 +10,11 @@ import traceback
 import html
 import threading
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+
+# Chart visualization imports
+import plotly.express as px
+import plotly.graph_objects as go
 
 # CRITICAL: Import config FIRST to set up Application Insights connection string
 import sys
@@ -1243,7 +1247,9 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
     sql_generation_story = sql_result.get('sql_generation_story', '')
     # Get table_name for feedback tracking (technical name)
     table_name = sql_result.get('selected_dataset')
-    
+    # Get chart_spec for visualization
+    chart_spec = sql_result.get('chart_spec', None)
+
     # Determine if this is historical (inverse of show_feedback)
     is_historical = not show_feedback
     
@@ -1267,11 +1273,11 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
             data = result.get('data', [])
             narrative = result.get('narrative', '')
             
-            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data, but NO sql_story (already shown once)
+            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data AND chart_spec, but NO sql_story (already shown once)
             render_single_sql_result(
-                title, sql_query, data, narrative, 
-                user_question, show_feedback, message_idx, 
-                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None
+                title, sql_query, data, narrative,
+                user_question, show_feedback, message_idx,
+                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None, chart_spec=chart_spec
             )
     else:
         # Single result - use rewritten_question if available, otherwise default
@@ -1280,22 +1286,23 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
         data = sql_result.get('query_results', [])
         narrative = sql_result.get('narrative', '')
         
-        # ⭐ No sub_index needed for single result, but pass is_historical, functional_names, table_name, powerbi_data, and sql_story
+        # ⭐ No sub_index needed for single result, but pass is_historical, functional_names, table_name, powerbi_data, sql_story, and chart_spec
         render_single_sql_result(
-            title, sql_query, data, narrative, 
-            user_question, show_feedback, message_idx, 
-            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story
+            title, sql_query, data, narrative,
+            user_question, show_feedback, message_idx,
+            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story, chart_spec=chart_spec
         )
 
 
-def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None):
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None, chart_spec=None):
     """Render a single SQL result with warm gold background for title and narrative
-    
+
     Args:
         functional_names: User-friendly dataset names for display (e.g., "PBM Claims")
         table_name: Technical table name for feedback tracking (e.g., "pbm_claims")
         powerbi_data: Power BI report matching data from narrative agent
         sql_story: Business-friendly explanation of SQL generation (2-3 lines)
+        chart_spec: LLM-generated chart specification for visualization
     """
     
     # Title with custom narrative-content styling
@@ -1379,7 +1386,17 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
             )
         else:
             st.info("No data to display")
-        
+
+        # Display chart visualization (after data table, before narrative)
+        if chart_spec and chart_spec.get('render', False):
+            try:
+                # Convert data to DataFrame for chart (use raw data, not formatted)
+                chart_df = pd.DataFrame(data) if isinstance(data, list) else data
+                if not chart_df.empty:
+                    render_chart_from_spec(chart_spec, chart_df)
+            except Exception as e:
+                print(f"❌ Chart display error: {e}")
+
         # Add feedback buttons after narrative (only for current session)
         if show_feedback:
             # ⭐ Pass sub_index and table_name to render_feedback_section
@@ -1447,6 +1464,272 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         '''
         
         st.markdown(report_card_html, unsafe_allow_html=True)
+
+
+def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
+    """
+    Render a Plotly chart based on LLM-generated specification.
+
+    SAFETY: If anything goes wrong, we silently skip the chart rather than
+    showing wrong data or breaking the UI. Better no chart than a wrong chart.
+
+    Args:
+        chart_spec: Dictionary with chart configuration from LLM
+        df: DataFrame with the data to visualize
+    """
+    # ============ EDGE CASE 1: Invalid/missing chart_spec ============
+    if not chart_spec or not isinstance(chart_spec, dict):
+        print("ℹ️ Chart skipped: No valid chart_spec provided")
+        return
+
+    if not chart_spec.get('render', False):
+        print(f"ℹ️ Chart skipped: render=False, reason={chart_spec.get('reason', 'Not specified')}")
+        return
+
+    chart_type = chart_spec.get('chart_type', 'none')
+    if chart_type == 'none' or not chart_type:
+        print("ℹ️ Chart skipped: chart_type is 'none' or empty")
+        return
+
+    # ============ EDGE CASE 2: Empty or invalid DataFrame ============
+    if df is None or df.empty:
+        print("ℹ️ Chart skipped: DataFrame is empty or None")
+        return
+
+    if len(df) < 2:
+        print(f"ℹ️ Chart skipped: Only {len(df)} row(s) - not enough data to visualize")
+        return
+
+    try:
+        title = chart_spec.get('title', 'Data Visualization')
+        x_col = chart_spec.get('x_column')
+        y_col = chart_spec.get('y_column')
+
+        # ============ EDGE CASE 3: Missing or invalid columns ============
+        if not x_col:
+            print("⚠️ Chart skipped: x_column not specified")
+            return
+
+        if not y_col:
+            print("⚠️ Chart skipped: y_column not specified")
+            return
+
+        # Validate x_column exists
+        if x_col not in df.columns:
+            print(f"⚠️ Chart skipped: x_column '{x_col}' not found in DataFrame. Available: {list(df.columns)}")
+            return
+
+        # Validate y_column(s) exist
+        if isinstance(y_col, str):
+            if y_col not in df.columns:
+                print(f"⚠️ Chart skipped: y_column '{y_col}' not found in DataFrame. Available: {list(df.columns)}")
+                return
+        elif isinstance(y_col, list):
+            missing_cols = [c for c in y_col if c not in df.columns]
+            if missing_cols:
+                print(f"⚠️ Chart skipped: y_columns {missing_cols} not found in DataFrame. Available: {list(df.columns)}")
+                return
+            if len(y_col) == 0:
+                print("⚠️ Chart skipped: y_column list is empty")
+                return
+
+        x_label = chart_spec.get('x_label', x_col)
+        y_label = chart_spec.get('y_label', y_col if isinstance(y_col, str) else 'Value')
+        sort_by = chart_spec.get('sort_by', 'none')
+        show_values = chart_spec.get('show_values', False)
+
+        # Optum-inspired color palette
+        colors = ['#FF612B', '#2D8CFF', '#4CAF50', '#FFA726', '#7E57C2',
+                  '#26A69A', '#EF5350', '#5C6BC0', '#66BB6A', '#FFCA28']
+
+        # Create a copy of dataframe for plotting (don't modify original)
+        plot_df = df.copy()
+
+        # ============ EDGE CASE 4: Non-numeric data in y_column ============
+        # Convert numeric columns to proper numeric type for sorting/plotting
+        # This handles cases where numbers have commas (e.g., "1,500,000") or are strings
+        if isinstance(y_col, str) and y_col in plot_df.columns:
+            plot_df[y_col] = pd.to_numeric(
+                plot_df[y_col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
+                errors='coerce'
+            )
+            # Check if conversion resulted in all NaN (no valid numeric data)
+            if plot_df[y_col].isna().all():
+                print(f"⚠️ Chart skipped: y_column '{y_col}' has no valid numeric data after conversion")
+                return
+        elif isinstance(y_col, list):
+            for col in y_col:
+                if col in plot_df.columns:
+                    plot_df[col] = pd.to_numeric(
+                        plot_df[col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
+                        errors='coerce'
+                    )
+
+        # ============ EDGE CASE 5: Drop rows with NaN in key columns ============
+        # For charts to work correctly, we need valid data
+        cols_to_check = [x_col] + (y_col if isinstance(y_col, list) else [y_col])
+        original_len = len(plot_df)
+        plot_df = plot_df.dropna(subset=cols_to_check)
+        if len(plot_df) < original_len:
+            print(f"ℹ️ Chart: Dropped {original_len - len(plot_df)} rows with NaN values")
+
+        if plot_df.empty or len(plot_df) < 2:
+            print(f"⚠️ Chart skipped: After cleaning, only {len(plot_df)} valid row(s) remain")
+            return
+
+        if sort_by == 'value_desc' and isinstance(y_col, str):
+            plot_df = plot_df.sort_values(by=y_col, ascending=False)
+        elif sort_by == 'value_asc' and isinstance(y_col, str):
+            plot_df = plot_df.sort_values(by=y_col, ascending=True)
+        elif sort_by == 'label_asc':
+            plot_df = plot_df.sort_values(by=x_col, ascending=True)
+
+        fig = None
+
+        if chart_type == 'bar_horizontal':
+            fig = px.bar(
+                plot_df,
+                x=y_col,
+                y=x_col,
+                orientation='h',
+                title=title,
+                color_discrete_sequence=colors,
+                text=y_col if show_values else None
+            )
+            fig.update_layout(
+                xaxis_title=y_label,
+                yaxis_title=x_label,
+                yaxis={'categoryorder': 'total ascending'}
+            )
+
+        elif chart_type == 'bar_vertical':
+            fig = px.bar(
+                plot_df,
+                x=x_col,
+                y=y_col,
+                title=title,
+                color_discrete_sequence=colors,
+                text=y_col if show_values else None
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'bar_grouped':
+            # Multi-metric grouped bar (Actuals vs Forecast)
+            fig = go.Figure()
+            if isinstance(y_col, list):
+                for i, col in enumerate(y_col):
+                    fig.add_trace(go.Bar(
+                        x=plot_df[x_col],
+                        y=plot_df[col],
+                        name=col,
+                        marker_color=colors[i % len(colors)]
+                    ))
+            fig.update_layout(barmode='group', title=title, xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'bar_variance':
+            # Variance chart with red/green coloring
+            color_by_sign = chart_spec.get('color_by_sign', True)
+            if color_by_sign and isinstance(y_col, str):
+                bar_colors = ['#4CAF50' if v >= 0 else '#EF5350' for v in plot_df[y_col].fillna(0)]
+            else:
+                bar_colors = colors[0]
+            fig = go.Figure(go.Bar(
+                x=plot_df[x_col],
+                y=plot_df[y_col],
+                marker_color=bar_colors
+            ))
+            fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'line':
+            fig = px.line(
+                plot_df,
+                x=x_col,
+                y=y_col,
+                title=title,
+                markers=True,
+                color_discrete_sequence=colors
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'line_multi':
+            # Multi-series line (Actuals vs Forecast over time)
+            fig = go.Figure()
+            if isinstance(y_col, list):
+                for i, col in enumerate(y_col):
+                    fig.add_trace(go.Scatter(
+                        x=plot_df[x_col],
+                        y=plot_df[col],
+                        mode='lines+markers',
+                        name=col,
+                        line=dict(color=colors[i % len(colors)])
+                    ))
+            fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'pie':
+            fig = px.pie(
+                plot_df,
+                values=y_col,
+                names=x_col,
+                title=title,
+                color_discrete_sequence=colors
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+
+        elif chart_type == 'scatter':
+            color_col = chart_spec.get('color_column')
+            fig = px.scatter(
+                plot_df,
+                x=x_col,
+                y=y_col,
+                title=title,
+                color=color_col if color_col else None,
+                color_discrete_sequence=colors
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+
+        elif chart_type == 'area':
+            fig = px.area(
+                plot_df,
+                x=x_col,
+                y=y_col,
+                title=title,
+                color_discrete_sequence=colors
+            )
+            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+
+        if fig:
+            # Apply consistent styling
+            fig.update_layout(
+                template='plotly_white',
+                font=dict(family='Inter, sans-serif', size=12),
+                title_font_size=14,
+                title_x=0.5,  # Center title
+                margin=dict(l=40, r=40, t=60, b=40),
+                legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
+            )
+
+            # Render in Streamlit with Optum-styled container
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
+                        border: 1px solid #EDE8E0; border-radius: 8px; padding: 12px; margin: 10px 0;">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 1rem; margin-right: 8px;">📊</span>
+                    <span style="color: #2a2a2a; font-weight: 600; font-size: 0.9rem;">Data Visualization</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        # ============ EDGE CASE 6: Any unexpected error ============
+        # SAFETY: Never break the UI - skip chart silently
+        # Better to show no chart than crash the page or show wrong data
+        import traceback
+        print(f"❌ Chart rendering error: {e}")
+        print(f"   Chart spec: {chart_spec}")
+        print(f"   Traceback: {traceback.format_exc()}")
+        # Do NOT re-raise - just skip the chart
+
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):
     """Render strategic analysis response with reasoning and multiple strategic queries"""

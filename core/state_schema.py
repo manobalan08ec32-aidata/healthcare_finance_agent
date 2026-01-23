@@ -115,6 +115,9 @@ class AgentState(TypedDict):
     # Narrative generation status
     narrative_complete: Optional[bool]             # Flag indicating narrative generation completion
     narrative_error_msg: Optional[str]             # Narrative-specific errors
+
+    # Chart generation results (from narrative agent)
+    chart_spec: Optional[Dict[str, Any]]           # Chart specification for visualization
     
     # Power BI Report Matching (from narrative agent)
     report_found: Optional[bool]                   # Whether a matching Power BI report was found

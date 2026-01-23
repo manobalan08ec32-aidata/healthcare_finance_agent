@@ -162,6 +162,7 @@ class NarrativeAgent:
                 return {
                     'success': True,
                     'narrative_complete': True,
+                    'chart': narrative_result.get('chart', {'render': False, 'reason': 'No chart data'}),
                     'report_found': powerbi_result.get('report_found', False),
                     'report_url': powerbi_result.get('report_url'),
                     'report_filter': powerbi_result.get('filters_to_apply'),
@@ -729,7 +730,7 @@ DATA: {row_count} rows, {', '.join(columns)}
 • Key finding 2 (if data supports additional insights)
 • Additional insights only if data is rich enough
 
-Information from Web Knowledge:
+Information from LLM's Knowledge:
 [Only include if 10+ records AND you have relevant real-world context about the findings. Otherwise omit this line entirely. 2-3 lines maximum explaining relevant industry context, trends, or factors that help interpret the anomalies/patterns found in the data.]
 </insights>
 
@@ -738,16 +739,41 @@ Information from Web Knowledge:
   "render": true|false,
   "chart_type": "bar_horizontal"|"bar_vertical"|"bar_grouped"|"bar_variance"|"line"|"line_multi"|"pie"|"scatter"|"area"|"none",
   "title": "[Clear title - max 60 chars]",
-  "x_column": "[exact column name from DataFrame]",
-  "y_column": "[exact column name]" or ["col1", "col2"] for multi-series,
-  "x_label": "[axis label]",
-  "y_label": "[axis label]",
+  "x_column": "[CATEGORY/LABEL column - exact column name from DataFrame]",
+  "y_column": "[NUMERIC VALUE column - exact column name]" or ["col1", "col2"] for multi-series,
+  "x_label": "[axis label for categories]",
+  "y_label": "[axis label for values]",
   "sort_by": "value_desc"|"value_asc"|"label_asc"|"none",
   "show_values": true|false,
   "color_by_sign": true|false,
+  "filter_column": "[column name containing hierarchy/totals to filter]" or null,
+  "exclude_values": ["value1", "value2"] or null,
+  "chart_note": "[explain what was filtered, e.g., 'Excluded OVERALL_TOTAL rows to show component breakdown']" or null,
   "reason": "[1-2 sentences why this chart type or why no chart]"
 }}
 </chart>
+
+CRITICAL COLUMN ASSIGNMENT RULES:
+- x_column = ALWAYS the CATEGORY/LABEL column (e.g., drug_name, client_name, month, year)
+- y_column = ALWAYS the NUMERIC VALUE column (e.g., total_revenue, claim_count, variance)
+- This applies to ALL chart types including bar_horizontal
+- For bar_horizontal: x_column is still the category (shown on Y-axis visually), y_column is the value (shown on X-axis visually)
+- Example for "Top 10 Drugs by Revenue": x_column="drug_name", y_column="total_revenue"
+
+**CHART DATA FILTERING (CRITICAL FOR CLEAN VISUALIZATION)**:
+
+STEP 0 - ANALYZE DATA FOR HIERARCHY/TOTALS:
+Before deciding on chart type, scan the data for:
+1. TOTAL/SUMMARY ROWS: Look for values like "OVERALL_TOTAL", "Total", "Grand Total", "All", "Combined", "Summary" in ANY column
+2. HIERARCHY MIXING: Data that has both individual components AND their totals (e.g., "Network: $10B" + "Admin Fees: $200M" + "OVERALL_TOTAL: $7.7B")
+3. SCALE DISTORTION: Negative values (like discounts) that are much larger than positive values
+
+If you detect ANY of these patterns:
+- Set "filter_column" to the column name containing the hierarchy (e.g., "product_category")
+- Set "exclude_values" to a list of values to REMOVE before charting (e.g., ["OVERALL_TOTAL", "Grand Total"])
+- Set "chart_note" explaining what was filtered and why
+
+IMPORTANT: When totals and components are mixed, ALWAYS filter out the totals - they will dwarf the individual components and make the chart unreadable.
 
 **CHART GENERATION RULES**:
 
@@ -800,9 +826,11 @@ VARIANCE/GROWTH CHART RULES:
   - Use bar_variance with color_by_sign: true
   - Red for negative values, green for positive values
 
-COLUMN VALIDATION:
-- x_column and y_column MUST be exact column names from: {columns}
-- For multi-series (line_multi, bar_grouped), y_column is a list: ["col1", "col2"]
+COLUMN ASSIGNMENT REMINDER:
+- x_column = CATEGORY column (drug_name, client, month) - MUST be exact column name from: {columns}
+- y_column = NUMERIC column (revenue, count, variance) - MUST be exact column name from: {columns}
+- For multi-series (line_multi, bar_grouped), y_column is a list of NUMERIC columns: ["col1", "col2"]
+- NEVER swap x_column and y_column based on chart orientation - always follow category=x, value=y
 
 Return ONLY the XML with <insights> and <chart> tags, nothing else.
 """

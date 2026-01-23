@@ -134,7 +134,8 @@ class NarrativeAgent:
                         'current_analysis_type': None,
                         'analysis_history': []
                     }
-                }
+                },
+                'chart': {'render': False, 'reason': 'No data available'}
             }
         
         try:
@@ -151,7 +152,8 @@ class NarrativeAgent:
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    }
+                    },
+                    'chart': {'render': False, 'reason': 'No data available'}
                 }
 
             row_count = len(df)
@@ -169,7 +171,8 @@ class NarrativeAgent:
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    }
+                    },
+                    'chart': {'render': False, 'reason': 'Too many records for visualization'}
                 }
 
             has_multiple_records = row_count > 1
@@ -186,11 +189,11 @@ class NarrativeAgent:
             df_string = df.to_string(index=False, max_rows=2000)
 
             synthesis_prompt = f"""
-You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results.
+You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results AND determine if a chart would be valuable.
 
 USER QUESTION: "{question}"
 DATA: {row_count} rows, {', '.join(columns)}
-**Query Output**: 
+**Query Output**:
 {df_string}
 
 **ANALYSIS RULES**:
@@ -215,65 +218,79 @@ DATA: {row_count} rows, {', '.join(columns)}
 }}
 </memory>
 
-**IMPORTANT**: 
-- No metric in question → set current_analysis_type to null
-- No dimensional columns → return empty dimensions: {{"dimensions": {{}}, "analysis_context": {{"current_analysis_type": null, "analysis_history": []}}}}
-- ALWAYS limit to TOP 5 values per dimension (insights-mentioned first)
+<chart>
+{{
+  "render": true|false,
+  "chart_type": "bar_horizontal"|"bar_vertical"|"bar_grouped"|"bar_variance"|"line"|"line_multi"|"pie"|"scatter"|"area"|"none",
+  "title": "[Clear title - max 60 chars]",
+  "x_column": "[exact column name from DataFrame]",
+  "y_column": "[exact column name]" or ["col1", "col2"] for multi-series,
+  "x_label": "[axis label]",
+  "y_label": "[axis label]",
+  "sort_by": "value_desc"|"value_asc"|"label_asc"|"none",
+  "show_values": true|false,
+  "color_by_sign": true|false,
+  "reason": "[1-2 sentences why this chart type or why no chart]"
+}}
+</chart>
 
-Return ONLY the XML with <insights> and <memory> tags.
+**CHART GENERATION RULES**:
 
-**MEMORY EXTRACTION RULES**:
+STEP 1 - DECIDE WHETHER TO VISUALIZE:
 
-**CORE PRINCIPLE**: Memory preserves what users SEE in insights. Users drill down based on entities mentioned in your narrative.
+ROW COUNT INTELLIGENCE (use judgment, not strict rules):
+| Rows | Default Decision | Exceptions |
+|------|------------------|------------|
+| 0-1 | NO chart | Never chart a single value |
+| 2-3 | YES if meaningful | e.g., 3 LOBs for pie, 2 years comparison |
+| 4-30 | YES (ideal range) | Most chart types work well |
+| 31-50 | MAYBE | Bar charts get cluttered; Line/Area still OK |
+| 50+ | Depends on chart type | Line/Area for time series = OK; Bar = skip |
 
-**IMPORTANT**: When writing insights, reference entities by their ID codes (e.g., "BCBS", "MDOVA") that exist in the ID columns. This ensures what users read matches what's stored in memory for seamless follow-up questions.
+Return render=false if:
+- Data has 0-1 rows (nothing to visualize)
+- No numeric columns exist
+- Question is lookup/definitional ("what is X", "what is the code for Y")
+- All values are nearly identical (no variation to show)
+- Too many categories for bar chart (>30) AND not a time-based question
 
-1. **DIMENSIONS (Extract Top 5 Values)**:
-   - Identify categorical/string columns (client names, carriers, therapy classes, drug names, LOBs, etc.)
-   - IGNORE numeric/metric columns (revenue, counts, amounts, percentages)
-   
-   **Column Selection**:
-   - If both "id" and "name" columns exist (e.g., client_id AND client_name) → Use "id" column (compact codes)
-   - JSON key MUST match exact DataFrame column name
-   - Extract values FROM that same column
-   - Examples: client_id vs client_name → use client_id | carrier_id vs carrier_name → use carrier_id
-   
-   **Value Priority**:
-   - PRIMARY: Values MENTIONED in your insights (users reference what they read)
-   - SECONDARY: If < 5 mentioned, fill remainder with top values from data
-   - TERTIARY: If < 5 total exist, store all available
+Return render=true if:
+- Data has 2+ rows with at least one numeric column
+- Question implies comparison ("top", "compare", "breakdown by", "vs")
+- Question implies trends ("trend", "over time", "monthly", "yearly")
+- Clear categorical vs. numeric relationship
+- Time series data (even 100+ rows for line charts is OK)
 
-2. **ANALYSIS TYPE (Metric from Question)**:
-   - Extract PRIMARY METRIC from user question only (not data columns)
-   - Common metrics: revenue, script_count, claim_count, awp_amount, membership_count, variance, gdr, utilization, cost
-   - Return metric name as-is (e.g., "revenue", "script_count")
-   - Leave analysis_history empty (managed externally)
-   - If no clear metric, set to null
+STEP 2 - SELECT CHART TYPE:
 
-**EXAMPLES**:
+| Data Pattern | Chart Type | When to Use |
+|--------------|------------|-------------|
+| Categories (3-15) + 1 metric | bar_horizontal | Rankings, top N |
+| Categories (2-5) + 1 metric | bar_vertical | Small comparisons |
+| Time dimension + 1 metric | line | Trends over time |
+| Time dimension + 2+ metrics | line_multi | Multiple trends (actual vs forecast) |
+| Categories + 2 metrics comparison | bar_grouped | Actuals vs forecast, budget vs actual |
+| Variance/growth data (pos/neg values) | bar_variance | MoM change, % variance (red/green coloring) |
+| Parts of whole (2-7 items) | pie | Percentage breakdowns |
+| 2 numeric columns | scatter | Correlation |
+| Time + cumulative metric | area | Volume trends |
 
-Example 1 - Single Dimension with Insights-First Priority:
-Question: "Show total revenue by client"
-DataFrame columns: client_id, client_name, total_revenue
-DataFrame has 10 clients total
-Decision: Use client_id column (compact codes, easier for SQL matching)
-Your insights narrative says: "**BCBS leads with $5.2M**, followed by **MDOVA at $3.1M** and **XYZ at $2.8M**..."
-→ dimensions: {{"client_id": ["BCBS", "MDOVA", "XYZ", "HW72", "UHCC"]}}
-→ current_analysis_type: "revenue"
-→ Note: First 3 from insights (what user reads), last 2 from data (fill to 5). Key "client_id" matches DataFrame column, values FROM client_id column.
+COMPARISON CHART RULES:
+- If question contains "vs", "compare", "actual", "forecast", "budget":
+  - Time-based comparison → use line_multi (two lines overlaid)
+  - Category-based comparison → use bar_grouped (side-by-side bars)
 
-Example 2 - Multiple Dimensions:
-Question: "Membership count by LOB and client"
-DataFrame columns: lob, client_id, client_name, membership_count
-Your insights: "**COMMERCIAL LOB** dominates with 450K members, **MEDICARE** has 280K. Top client **BCBS** contributes 150K, followed by **MDOVA**..."
-→ dimensions: {{
-     "lob": ["COMMERCIAL", "MEDICARE", "MEDICAID"],
-     "client_id": ["BCBS", "MDOVA", "XYZ", "HW72", "UHCC"]
-   }}
-→ current_analysis_type: "membership_count"
-→ Note: LOB has 3 total (all stored). client_id: 2 from insights + 3 from data. Used client_id not client_name.
+VARIANCE/GROWTH CHART RULES:
+- If column contains "variance", "growth", "change", "delta", or has positive AND negative values:
+  - Use bar_variance with color_by_sign: true
+  - Red for negative values, green for positive values
 
-Return ONLY the XML with <insights> and <memory> tags, nothing else.
+COLUMN VALIDATION:
+- x_column and y_column MUST be exact column names from: {columns}
+- For multi-series (line_multi, bar_grouped), y_column is a list: ["col1", "col2"]
+
+
+Return ONLY the XML with <insights> and <chart> tags, nothing else.
 """
 
             # Call LLM with retries
@@ -330,11 +347,59 @@ Return ONLY the XML with <insights> and <memory> tags, nothing else.
                                 'analysis_history': []
                             }
                         }
-                    
+
+                    # Extract chart specification
+                    chart_match = re.search(r'<chart>(.*?)</chart>', response_text, re.DOTALL)
+                    chart_data = {'render': False, 'reason': 'No chart specification in response'}
+
+                    if chart_match:
+                        try:
+                            chart_json_str = chart_match.group(1).strip()
+                            # Clean up potential formatting issues
+                            chart_json_str = chart_json_str.replace('```json', '').replace('```', '').strip()
+                            chart_data = json.loads(chart_json_str)
+
+                            # Validate chart specification if render is true
+                            if chart_data.get('render', False):
+                                x_col = chart_data.get('x_column')
+                                y_col = chart_data.get('y_column')
+                                valid_cols = list(df.columns)
+
+                                # Validate x_column
+                                if x_col and x_col not in valid_cols:
+                                    print(f"⚠️ Invalid x_column '{x_col}'. Available: {valid_cols}")
+                                    chart_data['render'] = False
+                                    chart_data['reason'] = f"Invalid x_column: {x_col}"
+
+                                # Validate y_column (can be string or list for multi-series)
+                                elif y_col:
+                                    if isinstance(y_col, str):
+                                        if y_col not in valid_cols:
+                                            print(f"⚠️ Invalid y_column '{y_col}'. Available: {valid_cols}")
+                                            chart_data['render'] = False
+                                            chart_data['reason'] = f"Invalid y_column: {y_col}"
+                                    elif isinstance(y_col, list):
+                                        invalid_cols = [c for c in y_col if c not in valid_cols]
+                                        if invalid_cols:
+                                            print(f"⚠️ Invalid y_columns: {invalid_cols}. Available: {valid_cols}")
+                                            chart_data['render'] = False
+                                            chart_data['reason'] = f"Invalid y_columns: {invalid_cols}"
+
+                                if chart_data.get('render', False):
+                                    print(f"✅ Chart: render=True, type={chart_data.get('chart_type')}, x={x_col}, y={y_col}")
+                            else:
+                                print(f"ℹ️ Chart: render=False, reason={chart_data.get('reason', 'Not specified')}")
+                        except Exception as e:
+                            print(f"⚠️ Chart extraction failed: {e}")
+                            chart_data = {'render': False, 'reason': f'Chart parsing error: {str(e)}'}
+                    else:
+                        print("ℹ️ No <chart> block found in LLM response")
+
                     return {
                         'success': True,
                         'narrative': insights,
-                        'memory': memory_data
+                        'memory': memory_data,
+                        'chart': chart_data
                     }
 
                 except Exception as e:

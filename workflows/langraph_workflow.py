@@ -608,7 +608,18 @@ class AsyncHealthcareFinanceWorkflow:
                 sql_result = state.get('sql_result', {})
                 self._update_narrative_history(state, sql_result)
 
-                
+                # Store chart specification in sql_result for UI rendering
+                chart_spec = narrative_output.get('chart', {'render': False, 'reason': 'No chart specification'})
+                if sql_result:
+                    sql_result['chart_spec'] = chart_spec
+                    state['sql_result'] = sql_result
+                state['chart_spec'] = chart_spec
+
+                if chart_spec.get('render', False):
+                    print(f"  📊 Chart: {chart_spec.get('chart_type')} - {chart_spec.get('title', 'No title')}")
+                else:
+                    print(f"  ℹ️ No chart: {chart_spec.get('reason', 'Not specified')}")
+
                 print(f"  ✅ Narrative synthesis completed successfully")
                 
                 # Store narrative end timestamp in CST

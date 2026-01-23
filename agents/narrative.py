@@ -633,7 +633,8 @@ RULES FOR reason:
                         'current_analysis_type': None,
                         'analysis_history': []
                     }
-                }
+                },
+                'chart': {'render': False, 'reason': 'No data available'}
             }
         
         try:
@@ -650,7 +651,8 @@ RULES FOR reason:
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    }
+                    },
+                    'chart': {'render': False, 'reason': 'No data available'}
                 }
 
             row_count = len(df)
@@ -670,7 +672,8 @@ RULES FOR reason:
                             'current_analysis_type': None,
                             'analysis_history': []
                         }
-                    }
+                    },
+                    'chart': {'render': False, 'reason': 'Too many records for visualization'}
                 }
 
             # Convert conversation memory to formatted string for LLM
@@ -680,11 +683,11 @@ RULES FOR reason:
             df_string = df.to_string(index=False, max_rows=5000)
 
             synthesis_prompt = f"""
-You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results.
+You are a Healthcare Finance Data Analyst. Create concise, meaningful insights from SQL results AND determine if a chart would be valuable.
 
 USER QUESTION: "{question}"
 DATA: {row_count} rows, {', '.join(columns)}
-**Query Output**: 
+**Query Output**:
 {df_string}
 
 **ADAPTIVE ANALYSIS RULES**:
@@ -711,7 +714,7 @@ DATA: {row_count} rows, {', '.join(columns)}
 - Bullets: ≤20 words each, focus on business value
 - Use exact data names, auto-scale: ≥1B→x.xB, ≥1M→x.xM, ≥1K→x.xK
 - CRITICAL: Use canonical business names for readability while maintaining context
-    • Use "Drug MOUNJARO" instead of "drug_name MOUNJARO" 
+    • Use "Drug MOUNJARO" instead of "drug_name MOUNJARO"
     • Use "Client MDOVA" instead of "client_name MDOVA"
     • Use "revenue per script" instead of "revenue_per_script"
     • First mention: include attribute context (e.g., "Drug MOUNJARO"), subsequent mentions in same bullet: just value ("MOUNJARO")
@@ -730,7 +733,78 @@ Information from Web Knowledge:
 [Only include if 10+ records AND you have relevant real-world context about the findings. Otherwise omit this line entirely. 2-3 lines maximum explaining relevant industry context, trends, or factors that help interpret the anomalies/patterns found in the data.]
 </insights>
 
-Return ONLY the XML with <insights> tags, nothing else.
+<chart>
+{{
+  "render": true|false,
+  "chart_type": "bar_horizontal"|"bar_vertical"|"bar_grouped"|"bar_variance"|"line"|"line_multi"|"pie"|"scatter"|"area"|"none",
+  "title": "[Clear title - max 60 chars]",
+  "x_column": "[exact column name from DataFrame]",
+  "y_column": "[exact column name]" or ["col1", "col2"] for multi-series,
+  "x_label": "[axis label]",
+  "y_label": "[axis label]",
+  "sort_by": "value_desc"|"value_asc"|"label_asc"|"none",
+  "show_values": true|false,
+  "color_by_sign": true|false,
+  "reason": "[1-2 sentences why this chart type or why no chart]"
+}}
+</chart>
+
+**CHART GENERATION RULES**:
+
+STEP 1 - DECIDE WHETHER TO VISUALIZE:
+
+ROW COUNT INTELLIGENCE (use judgment, not strict rules):
+| Rows | Default Decision | Exceptions |
+|------|------------------|------------|
+| 0-1 | NO chart | Never chart a single value |
+| 2-3 | YES if meaningful | e.g., 3 LOBs for pie, 2 years comparison |
+| 4-30 | YES (ideal range) | Most chart types work well |
+| 31-50 | MAYBE | Bar charts get cluttered; Line/Area still OK |
+| 50+ | Depends on chart type | Line/Area for time series = OK; Bar = skip |
+
+Return render=false if:
+- Data has 0-1 rows (nothing to visualize)
+- No numeric columns exist
+- Question is lookup/definitional ("what is X", "what is the code for Y")
+- All values are nearly identical (no variation to show)
+- Too many categories for bar chart (>30) AND not a time-based question
+
+Return render=true if:
+- Data has 2+ rows with at least one numeric column
+- Question implies comparison ("top", "compare", "breakdown by", "vs")
+- Question implies trends ("trend", "over time", "monthly", "yearly")
+- Clear categorical vs. numeric relationship
+- Time series data (even 100+ rows for line charts is OK)
+
+STEP 2 - SELECT CHART TYPE:
+
+| Data Pattern | Chart Type | When to Use |
+|--------------|------------|-------------|
+| Categories (3-15) + 1 metric | bar_horizontal | Rankings, top N |
+| Categories (2-5) + 1 metric | bar_vertical | Small comparisons |
+| Time dimension + 1 metric | line | Trends over time |
+| Time dimension + 2+ metrics | line_multi | Multiple trends (actual vs forecast) |
+| Categories + 2 metrics comparison | bar_grouped | Actuals vs forecast, budget vs actual |
+| Variance/growth data (pos/neg values) | bar_variance | MoM change, % variance (red/green coloring) |
+| Parts of whole (2-7 items) | pie | Percentage breakdowns |
+| 2 numeric columns | scatter | Correlation |
+| Time + cumulative metric | area | Volume trends |
+
+COMPARISON CHART RULES:
+- If question contains "vs", "compare", "actual", "forecast", "budget":
+  - Time-based comparison → use line_multi (two lines overlaid)
+  - Category-based comparison → use bar_grouped (side-by-side bars)
+
+VARIANCE/GROWTH CHART RULES:
+- If column contains "variance", "growth", "change", "delta", or has positive AND negative values:
+  - Use bar_variance with color_by_sign: true
+  - Red for negative values, green for positive values
+
+COLUMN VALIDATION:
+- x_column and y_column MUST be exact column names from: {columns}
+- For multi-series (line_multi, bar_grouped), y_column is a list: ["col1", "col2"]
+
+Return ONLY the XML with <insights> and <chart> tags, nothing else.
 """
 
             # Call LLM with retries
@@ -756,11 +830,58 @@ Return ONLY the XML with <insights> tags, nothing else.
                     # Extract insights
                     insights_match = re.search(r'<insights>(.*?)</insights>', response_text, re.DOTALL)
                     insights = insights_match.group(1).strip() if insights_match else ""
-                    
+
                     if not insights or len(insights) < 10:
                         raise ValueError("Empty or insufficient insights in XML response")
-                    
-                    # Return insights only (no memory extraction needed)
+
+                    # Extract chart specification
+                    chart_match = re.search(r'<chart>(.*?)</chart>', response_text, re.DOTALL)
+                    chart_data = {'render': False, 'reason': 'No chart specification in response'}
+
+                    if chart_match:
+                        try:
+                            chart_json_str = chart_match.group(1).strip()
+                            # Clean up potential formatting issues
+                            chart_json_str = chart_json_str.replace('```json', '').replace('```', '').strip()
+                            chart_data = json.loads(chart_json_str)
+
+                            # Validate chart specification if render is true
+                            if chart_data.get('render', False):
+                                x_col = chart_data.get('x_column')
+                                y_col = chart_data.get('y_column')
+                                valid_cols = list(df.columns)
+
+                                # Validate x_column
+                                if x_col and x_col not in valid_cols:
+                                    print(f"⚠️ Invalid x_column '{x_col}'. Available: {valid_cols}")
+                                    chart_data['render'] = False
+                                    chart_data['reason'] = f"Invalid x_column: {x_col}"
+
+                                # Validate y_column (can be string or list for multi-series)
+                                elif y_col:
+                                    if isinstance(y_col, str):
+                                        if y_col not in valid_cols:
+                                            print(f"⚠️ Invalid y_column '{y_col}'. Available: {valid_cols}")
+                                            chart_data['render'] = False
+                                            chart_data['reason'] = f"Invalid y_column: {y_col}"
+                                    elif isinstance(y_col, list):
+                                        invalid_cols = [c for c in y_col if c not in valid_cols]
+                                        if invalid_cols:
+                                            print(f"⚠️ Invalid y_columns: {invalid_cols}. Available: {valid_cols}")
+                                            chart_data['render'] = False
+                                            chart_data['reason'] = f"Invalid y_columns: {invalid_cols}"
+
+                                if chart_data.get('render', False):
+                                    print(f"✅ Chart: render=True, type={chart_data.get('chart_type')}, x={x_col}, y={y_col}")
+                            else:
+                                print(f"ℹ️ Chart: render=False, reason={chart_data.get('reason', 'Not specified')}")
+                        except Exception as e:
+                            print(f"⚠️ Chart extraction failed: {e}")
+                            chart_data = {'render': False, 'reason': f'Chart parsing error: {str(e)}'}
+                    else:
+                        print("ℹ️ No <chart> block found in LLM response")
+
+                    # Return insights with chart data
                     return {
                         'success': True,
                         'narrative': insights,
@@ -770,7 +891,8 @@ Return ONLY the XML with <insights> tags, nothing else.
                                 'current_analysis_type': None,
                                 'analysis_history': []
                             }
-                        }
+                        },
+                        'chart': chart_data
                     }
 
                 except Exception as e:

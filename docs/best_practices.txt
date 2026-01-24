@@ -1,0 +1,36 @@
+The current agent supports Pharmacy and PBM teams by answering "what" and "drill-through" questions using two foundational datasets built for Specialty, Home Delivery, and PBM segments.
+---
+### 1. Actuals vs Forecast Analysis Dataset
+
+Provides financial insights for analyzing actuals, forecasts, and budgets across time and business segments. Supports trend, mix, and variance analysis.
+
+**Attributes:**  
+Financial Ledger Type, Metric Category, Business Segment, Product Category, Product Subcategory Level 1, Product Subcategory Level 2, Transaction Date
+
+**Metrics:**  
+Financial or Volume Value
+
+**Details:**  
+- Financial Ledger Type: Includes GAAP (Actuals), BUDGET, and forecast types like 8+4, 2+10, 5+7. Used to distinguish financial perspectives for variance analysis.  
+- Metric Category: Covers Unadjusted Scripts, Adjusted Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, Total Membership. Always group by this field for accurate aggregations.  
+- Financial or Volume Value: Raw values tied to each metric type. Must be filtered or grouped appropriately to avoid misaggregation.
+---
+### 2. Pharmacy Claim Transaction Dataset
+
+Provides claim-level granularity for utilization and financial analysis at the drug, pharmacy, and client level. Supports detailed breakdowns and derived metrics.
+
+**Attributes:**  
+Product Category, Claim Number, Claim Sequence, Claim Status, Business Segment, Business Segment Description, Carrier ID, Account ID, Group ID, Claim Submission Date, Pharmacy Name, Pharmacy NPI, Client ID, Client Name, Drug Name, Therapy Class, Brand/Generic Indicator, Drug Classification Code, Drug Manufacturer, State Code, Member Date of Birth, Member Gender, Client Type, Pharmacy Type
+
+**Metrics:**  
+Unadjusted Script Count, 90-Day Script Count, 30-Day Script Count, Adjusted Script Count, Revenue Amount, Expense Amount, Wholesale Acquisition Cost, Average Wholesale Price, Revenue per Script, Generic Dispense Rate
+
+**Details:**  
+- Claim Status: Use Paid and Reversed to reflect net activity.  
+- Therapy Class: Includes categories like GLP-1 Receptor Agonists, Oncology, SGLT-2 Inhibitors. Use LIKE operator for broader class queries (e.g., GLP-1).  
+- Revenue per Script: Derived as Revenue Amount ÷ Unadjusted Script Count.  
+- Generic Dispense Rate: Percentage of generic scripts based on Brand/Generic Indicator.
+---
+### Important Note
+
+The agent’s knowledge is limited to the above datasets, attributes, and metrics. For additional data needs or to expand its capabilities, please contact the FDMTeam.

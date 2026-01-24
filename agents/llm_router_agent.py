@@ -82,12 +82,13 @@ class LLMRouterAgent:
         functional_names = []
         filter_metadata_results = []  # Initialize to prevent UnboundLocalError
 
-        # Load available datasets for the domain and cache in state
+        # Load available datasets for the domain (simple approach - no caching needed)
         domain_selection = state.get('domain_selection', '')
-        if domain_selection and not state.get('available_datasets'):
+        
+        if domain_selection:
             available_datasets = self._load_available_datasets(domain_selection)
             state['available_datasets'] = available_datasets
-            print(f"📊 Cached {len(available_datasets)} available datasets in state")
+            print(f"📊 Loaded {len(available_datasets)} available datasets for {domain_selection}")
 
         # Priority 1: Check if this is a dataset clarification follow-up
         if state.get('requires_dataset_clarification', False) and not state.get('is_sql_followup', False):
@@ -720,7 +721,7 @@ class LLMRouterAgent:
         
         while retry_count < max_retries:
             try:
-                # print('dataset follow up prompt',combined_prompt)
+                print('dataset follow up prompt',combined_prompt)
                 llm_response = await self.db_client.call_claude_api_endpoint_async([
                     {"role": "user", "content": combined_prompt}
                 ])
@@ -1288,7 +1289,7 @@ Use history to validate filter column choices. Never use history for time values
         
         for attempt in range(self.max_retries):
             try:
-                print("writer prompt",writer_prompt[:5000])
+                print("writer prompt",writer_prompt[:7000])
                 writer_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": writer_prompt}],
                     max_tokens=2500,
@@ -1450,7 +1451,7 @@ Use history to validate filter column choices. Never use history for time values
         for attempt in range(self.max_retries):
             try:
                 print(f"🔍 Step 1: Validating follow-up response (attempt {attempt + 1})...")
-                print(f"📝 Validation prompt: {validation_prompt[:500]}...")
+                print(f"📝 Validation prompt: {validation_prompt[:7000]}...")
 
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": validation_prompt}],
@@ -1567,7 +1568,7 @@ Use history to validate filter column choices. Never use history for time values
         for attempt in range(self.max_retries):
             try:
                 print(f"🔨 Step 2a: Generating SQL for simple approval (attempt {attempt + 1})...")
-                print(f"📝 Simple approval prompt: {simple_approval_prompt[:1000]}...")
+                print(f"📝 Simple approval prompt: {simple_approval_prompt[:5000]}...")
 
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": simple_approval_prompt}],
@@ -1915,7 +1916,7 @@ Use history to validate filter column choices. Never use history for time values
         for attempt in range(self.max_retries):
             try:
                 print(f'🔨 Full follow-up SQL generation (attempt {attempt + 1})...')
-                print(f'follow up sql prompt: {followup_sql_prompt[:3000]}...')
+                print(f'follow up sql prompt: {followup_sql_prompt[:7000]}...')
 
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": followup_sql_prompt}],
@@ -2085,7 +2086,7 @@ Use history to validate filter column choices. Never use history for time values
         # Retry logic for SQL generation
         for attempt in range(self.max_retries):
             try:
-                print(f'Dataset change SQL prompt: {sql_generation_prompt[:5000]}')
+                print(f'Dataset change SQL prompt: {sql_generation_prompt[:7000]}')
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": sql_generation_prompt}],
                     max_tokens=3000,

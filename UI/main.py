@@ -379,64 +379,6 @@ st.markdown("""
         box-shadow: none !important;
     }
     
-    /* Feature Cards */
-    .feature-cards {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
-        margin-top: 24px;
-    }
-    
-    .feature-card {
-        background: #FFFFFF;
-        border: 1px solid #EDE8E0;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-        transition: all 0.2s ease;
-    }
-    
-    .feature-card:hover {
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-        transform: translateY(-2px);
-    }
-    
-    .feature-icon {
-        width: 40px;
-        height: 40px;
-        margin: 0 auto 12px;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 20px;
-    }
-    
-    .feature-icon.cyan {
-        background: #D9F6FA;
-    }
-    
-    .feature-icon.orange {
-        background: #FFD1AB;
-    }
-    
-    .feature-icon.gray {
-        background: #EDE8E0;
-    }
-    
-    .feature-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #2D3748;
-        margin-bottom: 4px;
-    }
-    
-    .feature-desc {
-        font-size: 12px;
-        color: #718096;
-        line-height: 1.4;
-    }
-    
     /* Footer */
     .footer {
         text-align: center;
@@ -600,7 +542,7 @@ def main():
     st.markdown('<p class="resources-title">Resources</p>', unsafe_allow_html=True)
     
     # Create horizontal layout for hyperlinks
-    link_col1, link_col2, link_col3 = st.columns([1, 1, 2])
+    link_col1, link_col2, link_col3, link_col4 = st.columns([1, 1, 1, 1])
     
     with link_col1:
         st.markdown('<div class="hyperlink-button">', unsafe_allow_html=True)
@@ -614,30 +556,19 @@ def main():
     
     with link_col2:
         st.markdown('<div class="hyperlink-button">', unsafe_allow_html=True)
+        if st.button("📝 Metadata Request", key="metadata_request"):
+            if st.session_state.selected_team:
+                st.session_state.domain_selection = [st.session_state.selected_team]
+            st.session_state.authenticated_user = user_info.get('email', 'Unknown User')
+            st.session_state.authenticated_user_name = user_info.get('name', 'Unknown User')
+            st.switch_page("pages/metadata_request.py")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with link_col3:
+        st.markdown('<div class="hyperlink-button">', unsafe_allow_html=True)
         if st.button("❓ FAQ", key="view_faq"):
             st.switch_page("pages/faq.py")
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Feature Cards
-    st.markdown("""
-    <div class="feature-cards">
-        <div class="feature-card">
-            <div class="feature-icon cyan">📦</div>
-            <div class="feature-title">Multiple Datasets</div>
-            <div class="feature-desc">Claims, billing, ledger & more</div>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon orange">⭐</div>
-            <div class="feature-title">AI-Powered</div>
-            <div class="feature-desc">Natural language to SQL</div>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon gray">🔒</div>
-            <div class="feature-title">Secure</div>
-            <div class="feature-desc">Enterprise-grade security</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
     
     # Footer
     st.markdown("""

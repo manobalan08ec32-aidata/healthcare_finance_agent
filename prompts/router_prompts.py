@@ -426,7 +426,7 @@ When ANY info is missing or ambiguous:
 • Ambiguous column (multiple matches, cannot resolve)
 • Vague time reference ("recently", "lately", "a while ago")
 • Unclear metric or grouping intent
-→ Output: <followup>
+→ Output: <followup> only
 
 PATH B - SHOW_PLAN:
 When ALL info is available BUT complexity or risk exists:
@@ -445,7 +445,7 @@ RISK (ANY triggers SHOW_PLAN):
 • Filter value resolved but not fully clear (value has variations in data)
 
 HISTORY OVERRIDE: Similar pattern or calculation exists in history question or history SQL + filters match current question→ skip to PATH C
-→ Output:<plan_approval>
+→ Output:<plan_approval> + <context>
 
 PATH C - SQL_READY:
 When ALL info mapped successfully AND query is straightforward OR history confirms pattern
@@ -483,7 +483,7 @@ JOIN: [t1.key = t2.key LEFT JOIN] or [none]
 QUERY_2 (only if MULTI_TABLE): Same structure as QUERY_1
 </context>
 
-IF FOLLOWUP_REQUIRED, add after </context>:
+IF FOLLOWUP_REQUIRED:
 
 <followup>
 I need one clarification to generate accurate SQL:
@@ -631,7 +631,7 @@ TASK: Generate production-ready Databricks SQL based on the validated query plan
 
 CURRENT QUESTION: {current_question}
 
-PLANNED CONTEXT:
+PLANNED SQL CONTEXT:
 {context_output}
 {history_section}
 
@@ -1227,6 +1227,7 @@ Generate straightforward SQL based on context INTENT:
 - trend → GROUP BY time dimension, ORDER BY time
 
 OUTPUT FORMAT
+return ONLY the SQL query wrapped in XML tags. DO NOT output any reasoning, thinking steps, or explanatory text.
 
 For single SQL:
 <sql>

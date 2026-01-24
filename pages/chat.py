@@ -1364,7 +1364,7 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         st.markdown(f"""
         <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
             <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
-                View SQL Query
+                View SQL Query (Click to expand)
             </summary>
             <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
                 <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
@@ -1372,30 +1372,55 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table
+    # Data table - wrapped in expander with styled label
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
-        if row_count > 10000:
-            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-        elif not formatted_df.empty:
-            st.dataframe(
-                formatted_df,
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.info("No data to display")
+        
+        # Styled expander label using markdown
+        st.markdown("""
+        <style>
+        div[data-testid="stExpander"] {
+            border: 1px solid #EDE8E0;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        div[data-testid="stExpander"] details summary {
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            font-size: 0.95rem;
+            color: #495057;
+            padding: 8px 12px;
+        }
+        div[data-testid="stExpander"] details summary:hover {
+            background-color: #f8f9fa;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
+            if row_count > 10000:
+                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+            elif not formatted_df.empty:
+                st.dataframe(
+                    formatted_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No data to display")
 
-        # Display chart visualization (after data table, before narrative)
+        # Display chart visualization in separate expander (only if chart is available)
         if chart_spec and chart_spec.get('render', False):
-            try:
-                # Convert data to DataFrame for chart (use raw data, not formatted)
-                chart_df = pd.DataFrame(data) if isinstance(data, list) else data
-                if not chart_df.empty:
-                    render_chart_from_spec(chart_spec, chart_df)
-            except Exception as e:
-                print(f"❌ Chart display error: {e}")
+            with st.expander("📈 View Visual (Click to expand)", expanded=False):
+                try:
+                    # Convert data to DataFrame for chart (use raw data, not formatted)
+                    chart_df = pd.DataFrame(data) if isinstance(data, list) else data
+                    if not chart_df.empty:
+                        render_chart_from_spec(chart_spec, chart_df)
+                except Exception as e:
+                    st.error(f"❌ Chart display error: {e}")
+                    print(f"❌ Chart display error: {e}")
 
         # Add feedback buttons after narrative (only for current session)
         if show_feedback:
@@ -1820,20 +1845,22 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table
+    # Data table - wrapped in expander with styled label
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
-        if row_count > 10000:
-            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-        elif not formatted_df.empty:
-            st.dataframe(
-                formatted_df,
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.info("No data to display")
+        
+        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
+            if row_count > 10000:
+                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+            elif not formatted_df.empty:
+                st.dataframe(
+                    formatted_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No data to display")
     
     # Strategic narrative
     if narrative:
@@ -1924,20 +1951,22 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table
+    # Data table - wrapped in expander with styled label
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
-        if row_count > 10000:
-            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-        elif not formatted_df.empty:
-            st.dataframe(
-                formatted_df,
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.info("No data to display")
+        
+        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
+            if row_count > 10000:
+                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+            elif not formatted_df.empty:
+                st.dataframe(
+                    formatted_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No data to display")
     
     # Drillthrough narrative and causational insights
     if narrative or causational_insights:

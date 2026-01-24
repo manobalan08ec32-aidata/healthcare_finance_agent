@@ -18,6 +18,9 @@ def get_azure_user_info():
         # Azure App Service injects user info in these headers when authentication is enabled
         headers = st.context.headers if hasattr(st.context, 'headers') else {}
         
+        # DEBUG: Print all available headers
+        print(f"🔍 DEBUG: Available headers: {list(headers.keys()) if headers else 'None'}")
+        
         # Try different header names that Azure App Service uses
         user_email = None
         user_name = None
@@ -38,33 +41,46 @@ def get_azure_user_info():
         for header in possible_email_headers:
             if header in headers:
                 user_email = headers[header]
+                print(f"✅ Found email in header '{header}': {user_email}")
                 break
         
         # Try to get name from headers
         for header in possible_name_headers:
             if header in headers:
                 user_name = headers[header]
+                print(f"✅ Found name in header '{header}': {user_name}")
                 break
         
         # Fallback: try Streamlit's request headers directly
         if not user_email:
-            import streamlit.web.server.server as server
-            session = server.Server.get_current()._get_session_info()
-            if session and hasattr(session, 'request'):
-                request_headers = session.request.headers
-                for header in possible_email_headers:
-                    if header in request_headers:
-                        user_email = request_headers[header]
-                        break
+            print("⚠️ Email not found in st.context.headers, trying server request headers...")
+            try:
+                import streamlit.web.server.server as server
+                session = server.Server.get_current()._get_session_info()
+                if session and hasattr(session, 'request'):
+                    request_headers = session.request.headers
+                    print(f"🔍 DEBUG: Request headers: {list(request_headers.keys()) if request_headers else 'None'}")
+                    for header in possible_email_headers:
+                        if header in request_headers:
+                            user_email = request_headers[header]
+                            print(f"✅ Found email in request header '{header}': {user_email}")
+                            break
+            except Exception as e:
+                print(f"⚠️ Could not access server request headers: {e}")
         
-        return {
+        result = {
             'email': user_email or 'Unknown User',
             'name': user_name or user_email or 'Unknown User',
             'authenticated': user_email is not None
         }
         
+        print(f"🔍 DEBUG: Final user_info result: {result}")
+        return result
+        
     except Exception as e:
-        print(f"Error getting Azure user info: {e}")
+        print(f"❌ Error getting Azure user info: {e}")
+        import traceback
+        print(f"🔍 Full traceback: {traceback.format_exc()}")
         return {
             'email': 'Unknown User',
             'name': 'Unknown User', 
@@ -382,7 +398,7 @@ def main():
             Welcome to Finance Data Mart Analytics Assistant 
         </div>
         <div class="welcome-subtitle">
-            Your AI-powered assistant for healthcare finance data analysis and insights
+            Your DANA-powered assistant for healthcare finance data analysis and insights
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -442,6 +458,9 @@ def main():
                     # Pass user info to chat page
                     st.session_state.authenticated_user = user_info.get('email', 'Unknown User')
                     st.session_state.authenticated_user_name = user_info.get('name', 'Unknown User')
+                    # DEBUG: Log what we're storing
+                    print(f"🔍 DEBUG: Setting session_state.authenticated_user to: {st.session_state.authenticated_user}")
+                    print(f"🔍 DEBUG: Setting session_state.authenticated_user_name to: {st.session_state.authenticated_user_name}")
                     st.switch_page("pages/chat.py")
                 st.markdown('</div>', unsafe_allow_html=True)
             else:
@@ -461,6 +480,9 @@ def main():
                     # Pass user info to metadata page
                     st.session_state.authenticated_user = user_info.get('email', 'Unknown User')
                     st.session_state.authenticated_user_name = user_info.get('name', 'Unknown User')
+                    # DEBUG: Log what we're storing
+                    print(f"🔍 DEBUG: Setting session_state.authenticated_user to: {st.session_state.authenticated_user}")
+                    print(f"🔍 DEBUG: Setting session_state.authenticated_user_name to: {st.session_state.authenticated_user_name}")
                     st.switch_page("pages/metadata.py")
                 st.markdown('</div>', unsafe_allow_html=True)
             else:

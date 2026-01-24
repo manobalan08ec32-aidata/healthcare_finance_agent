@@ -1468,115 +1468,73 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
 
 def preprocess_chart_data(df: pd.DataFrame, chart_spec: Dict) -> tuple[pd.DataFrame, Dict, str]:
     """
-    Intelligently preprocess DataFrame for charting using LLM-provided filtering instructions.
-    
-    PRIMARY: Use LLM's filter_column and exclude_values (intelligent, context-aware)
-    FALLBACK: Pattern matching for edge cases LLM might miss
-    
+    Simplified preprocessing for chart data.
+
+    Only handles top_n truncation - LLM now makes all complex decisions.
+
     Returns:
         tuple: (filtered_df, updated_chart_spec, warning_message)
     """
     if df is None or df.empty:
         return df, chart_spec, ""
-    
+
     warning_parts = []
     filtered_df = df.copy()
     updated_spec = chart_spec.copy()
-    
-    # ============ PRIMARY: LLM-DRIVEN FILTERING ============
-    # Trust the LLM's intelligent analysis of the data
-    filter_column = chart_spec.get('filter_column')
-    exclude_values = chart_spec.get('exclude_values')
-    chart_note = chart_spec.get('chart_note')
-    
-    if filter_column and exclude_values and filter_column in filtered_df.columns:
-        print(f"📊 LLM-driven filtering: column='{filter_column}', exclude={exclude_values}")
-        
+
+    # ============ TOP_N TRUNCATION ============
+    # If LLM specified top_n, sort by y_column and take top N
+    top_n = chart_spec.get('top_n')
+    y_col = chart_spec.get('y_column')
+
+    if top_n and y_col and isinstance(y_col, str) and y_col in filtered_df.columns:
         original_len = len(filtered_df)
-        
-        # Normalize values for comparison (case-insensitive)
-        col_values = filtered_df[filter_column].astype(str).str.strip()
-        exclude_normalized = [str(v).strip().lower() for v in exclude_values]
-        
-        # Create mask for rows to keep
-        exclude_mask = col_values.str.lower().isin(exclude_normalized)
-        filtered_df = filtered_df[~exclude_mask]
-        
-        rows_removed = original_len - len(filtered_df)
-        if rows_removed > 0:
-            print(f"✅ LLM filtering: Removed {rows_removed} rows (kept {len(filtered_df)})")
-            if chart_note:
-                warning_parts.append(chart_note)
-            else:
-                warning_parts.append(f"Filtered {rows_removed} row(s) for clearer visualization")
-    
-    # ============ FALLBACK: Pattern matching (if LLM didn't provide instructions) ============
-    # Only run if LLM didn't provide filtering AND we still have potential issues
-    if not filter_column and not exclude_values:
-        # Check for common total patterns that LLM might have missed
-        total_patterns = [
-            'overall_total', 'overall total', 'grand_total', 'grand total',
-            'subtotal', 'sub_total', 'all_total', 'summary', 'aggregate', 'combined'
-        ]
-        exact_total_patterns = ['total', 'all']
-        
-        total_rows_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
-        
-        for col in filtered_df.select_dtypes(include=['object', 'string']).columns:
-            col_values = filtered_df[col].astype(str).str.lower().str.strip()
-            
-            for pattern in total_patterns:
-                matches = col_values.str.contains(pattern, case=False, na=False)
-                if matches.any():
-                    total_rows_mask = total_rows_mask | matches
-                    print(f"📊 Fallback: Found total pattern '{pattern}' in column '{col}'")
-            
-            for pattern in exact_total_patterns:
-                matches = (col_values == pattern)
-                if matches.any():
-                    total_rows_mask = total_rows_mask | matches
-        
-        total_row_count = total_rows_mask.sum()
-        component_row_count = len(filtered_df) - total_row_count
-        
-        if total_row_count > 0 and component_row_count > 2:
-            filtered_df = filtered_df[~total_rows_mask]
-            warning_parts.append(f"Auto-filtered {total_row_count} total/summary row(s)")
-            print(f"✅ Fallback filtering: Removed {total_row_count} total rows")
-    
-    # ============ VALIDATION: Ensure we still have enough data ============
+
+        # Convert y_col to numeric for sorting
+        filtered_df[y_col] = pd.to_numeric(
+            filtered_df[y_col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
+            errors='coerce'
+        )
+
+        # Sort by value descending and take top N
+        filtered_df = filtered_df.sort_values(by=y_col, ascending=False).head(top_n)
+
+        if len(filtered_df) < original_len:
+            print(f"✅ Top {top_n} filtering: Showing {len(filtered_df)} of {original_len} rows")
+            warning_parts.append(f"Showing top {len(filtered_df)} by {y_col}")
+
+    # ============ VALIDATION: Ensure we have enough data ============
     if len(filtered_df) < 2:
         updated_spec['render'] = False
-        updated_spec['reason'] = "After filtering, insufficient data for visualization"
-        warning_parts.append("Chart skipped: Not enough data points after filtering")
-        print(f"⚠️ Chart disabled: Only {len(filtered_df)} rows remain after filtering")
-    
-    # ============ SAFETY CHECK: Verify column types match expectations ============
-    y_col = chart_spec.get('y_column')
+        updated_spec['reason'] = "Insufficient data for visualization"
+        warning_parts.append("Chart skipped: Not enough data points")
+        print(f"⚠️ Chart disabled: Only {len(filtered_df)} rows")
+
+    # ============ SAFETY CHECK: Verify y_column is numeric ============
     if y_col and isinstance(y_col, str) and y_col in filtered_df.columns:
-        # Try to convert y_column to numeric
         test_numeric = pd.to_numeric(
             filtered_df[y_col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
             errors='coerce'
         )
         if test_numeric.isna().all():
-            # y_column has no numeric data - LLM might have swapped columns
             print(f"⚠️ Safety check: y_column '{y_col}' has no numeric data")
             updated_spec['render'] = False
-            updated_spec['reason'] = f"Column '{y_col}' contains no numeric values for charting"
+            updated_spec['reason'] = f"Column '{y_col}' contains no numeric values"
             warning_parts.append(f"Chart skipped: '{y_col}' is not numeric")
-    
+
     # Build warning message
     warning_message = ""
     if warning_parts:
         warning_message = "📊 **Chart Note:** " + " | ".join(warning_parts)
-    
+
     return filtered_df, updated_spec, warning_message
 
 
 def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
     """
     Render a Plotly chart based on LLM-generated specification.
+
+    SIMPLIFIED: Only supports 'line', 'bar', and 'bar_grouped' chart types.
 
     SAFETY: If anything goes wrong, we silently skip the chart rather than
     showing wrong data or breaking the UI. Better no chart than a wrong chart.
@@ -1585,7 +1543,7 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
         chart_spec: Dictionary with chart configuration from LLM
         df: DataFrame with the data to visualize
     """
-    # ============ EDGE CASE 1: Invalid/missing chart_spec ============
+    # ============ VALIDATION: Check chart_spec ============
     if not chart_spec or not isinstance(chart_spec, dict):
         print("ℹ️ Chart skipped: No valid chart_spec provided")
         return
@@ -1595,25 +1553,25 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
         return
 
     chart_type = chart_spec.get('chart_type', 'none')
-    if chart_type == 'none' or not chart_type:
-        print("ℹ️ Chart skipped: chart_type is 'none' or empty")
+    if chart_type not in ['line', 'bar', 'bar_grouped']:
+        print(f"ℹ️ Chart skipped: Unsupported chart_type '{chart_type}'. Only 'line', 'bar', and 'bar_grouped' supported.")
         return
 
-    # ============ EDGE CASE 2: Empty or invalid DataFrame ============
+    # ============ VALIDATION: Check DataFrame ============
     if df is None or df.empty:
         print("ℹ️ Chart skipped: DataFrame is empty or None")
         return
 
-    # ============ SMART PREPROCESSING: Filter totals, handle hierarchy ============
+    # ============ PREPROCESSING: Handle top_n truncation ============
     df, chart_spec, chart_warning = preprocess_chart_data(df, chart_spec)
-    
+
     # Check if preprocessing disabled the chart
     if not chart_spec.get('render', False):
         print(f"ℹ️ Chart skipped after preprocessing: {chart_spec.get('reason', 'Unknown')}")
         if chart_warning:
             st.markdown(f"<div style='color: #666; font-size: 0.85rem; padding: 8px; background: #f5f5f5; border-radius: 4px; margin: 8px 0;'>{chart_warning}</div>", unsafe_allow_html=True)
         return
-    
+
     # Display chart warning/note if any
     if chart_warning:
         st.markdown(f"<div style='color: #666; font-size: 0.85rem; padding: 8px; background: #FFF8E7; border-left: 3px solid #FFA726; border-radius: 4px; margin: 8px 0;'>{chart_warning}</div>", unsafe_allow_html=True)
@@ -1626,8 +1584,9 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
         title = chart_spec.get('title', 'Data Visualization')
         x_col = chart_spec.get('x_column')
         y_col = chart_spec.get('y_column')
+        group_col = chart_spec.get('group_column')  # For multi-line charts
 
-        # ============ EDGE CASE 3: Missing or invalid columns ============
+        # ============ VALIDATION: Check columns ============
         if not x_col:
             print("⚠️ Chart skipped: x_column not specified")
             return
@@ -1636,48 +1595,41 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
             print("⚠️ Chart skipped: y_column not specified")
             return
 
-        # Validate x_column exists
         if x_col not in df.columns:
-            print(f"⚠️ Chart skipped: x_column '{x_col}' not found in DataFrame. Available: {list(df.columns)}")
+            print(f"⚠️ Chart skipped: x_column '{x_col}' not found. Available: {list(df.columns)}")
             return
 
-        # Validate y_column(s) exist
+        # Validate y_column(s)
         if isinstance(y_col, str):
             if y_col not in df.columns:
-                print(f"⚠️ Chart skipped: y_column '{y_col}' not found in DataFrame. Available: {list(df.columns)}")
+                print(f"⚠️ Chart skipped: y_column '{y_col}' not found. Available: {list(df.columns)}")
                 return
         elif isinstance(y_col, list):
             missing_cols = [c for c in y_col if c not in df.columns]
             if missing_cols:
-                print(f"⚠️ Chart skipped: y_columns {missing_cols} not found in DataFrame. Available: {list(df.columns)}")
-                return
-            if len(y_col) == 0:
-                print("⚠️ Chart skipped: y_column list is empty")
+                print(f"⚠️ Chart skipped: y_columns {missing_cols} not found. Available: {list(df.columns)}")
                 return
 
-        x_label = chart_spec.get('x_label', x_col)
-        y_label = chart_spec.get('y_label', y_col if isinstance(y_col, str) else 'Value')
-        sort_by = chart_spec.get('sort_by', 'none')
-        show_values = chart_spec.get('show_values', False)
+        # Validate group_column if specified
+        if group_col and group_col not in df.columns:
+            print(f"⚠️ Chart skipped: group_column '{group_col}' not found. Available: {list(df.columns)}")
+            return
 
         # Optum-inspired color palette
         colors = ['#FF612B', '#2D8CFF', '#4CAF50', '#FFA726', '#7E57C2',
                   '#26A69A', '#EF5350', '#5C6BC0', '#66BB6A', '#FFCA28']
 
-        # Create a copy of dataframe for plotting (don't modify original)
+        # Create a copy of dataframe for plotting
         plot_df = df.copy()
 
-        # ============ EDGE CASE 4: Non-numeric data in y_column ============
-        # Convert numeric columns to proper numeric type for sorting/plotting
-        # This handles cases where numbers have commas (e.g., "1,500,000") or are strings
+        # ============ CONVERT y_column TO NUMERIC ============
         if isinstance(y_col, str) and y_col in plot_df.columns:
             plot_df[y_col] = pd.to_numeric(
                 plot_df[y_col].astype(str).str.replace(',', '').str.replace('$', '').str.replace('%', ''),
                 errors='coerce'
             )
-            # Check if conversion resulted in all NaN (no valid numeric data)
             if plot_df[y_col].isna().all():
-                print(f"⚠️ Chart skipped: y_column '{y_col}' has no valid numeric data after conversion")
+                print(f"⚠️ Chart skipped: y_column '{y_col}' has no valid numeric data")
                 return
         elif isinstance(y_col, list):
             for col in y_col:
@@ -1687,9 +1639,10 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
                         errors='coerce'
                     )
 
-        # ============ EDGE CASE 5: Drop rows with NaN in key columns ============
-        # For charts to work correctly, we need valid data
+        # ============ DROP NaN ROWS ============
         cols_to_check = [x_col] + (y_col if isinstance(y_col, list) else [y_col])
+        if group_col:
+            cols_to_check.append(group_col)
         original_len = len(plot_df)
         plot_df = plot_df.dropna(subset=cols_to_check)
         if len(plot_df) < original_len:
@@ -1699,46 +1652,56 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
             print(f"⚠️ Chart skipped: After cleaning, only {len(plot_df)} valid row(s) remain")
             return
 
-        if sort_by == 'value_desc' and isinstance(y_col, str):
-            plot_df = plot_df.sort_values(by=y_col, ascending=False)
-        elif sort_by == 'value_asc' and isinstance(y_col, str):
-            plot_df = plot_df.sort_values(by=y_col, ascending=True)
-        elif sort_by == 'label_asc':
-            plot_df = plot_df.sort_values(by=x_col, ascending=True)
-
         fig = None
 
-        if chart_type == 'bar_horizontal':
-            fig = px.bar(
-                plot_df,
-                x=y_col,
-                y=x_col,
-                orientation='h',
-                title=title,
-                color_discrete_sequence=colors,
-                text=y_col if show_values else None
-            )
-            fig.update_layout(
-                xaxis_title=y_label,
-                yaxis_title=x_label,
-                yaxis={'categoryorder': 'total ascending'}
-            )
+        # ============ LINE CHART ============
+        if chart_type == 'line':
+            if group_col:
+                # Multi-line chart with group_column as color/legend
+                fig = px.line(
+                    plot_df,
+                    x=x_col,
+                    y=y_col,
+                    color=group_col,
+                    title=title,
+                    markers=True,
+                    color_discrete_sequence=colors
+                )
+            else:
+                # Single line chart
+                fig = px.line(
+                    plot_df,
+                    x=x_col,
+                    y=y_col,
+                    title=title,
+                    markers=True,
+                    color_discrete_sequence=colors
+                )
+            fig.update_layout(xaxis_title=x_col, yaxis_title=y_col if isinstance(y_col, str) else 'Value')
 
-        elif chart_type == 'bar_vertical':
+        # ============ BAR CHART (Category Rankings - Top 10 drugs, etc.) ============
+        elif chart_type == 'bar':
+            # Sort by value descending for ranking charts (highest first)
+            if isinstance(y_col, str):
+                plot_df = plot_df.sort_values(by=y_col, ascending=False)
+
+            # Vertical bar chart
             fig = px.bar(
                 plot_df,
                 x=x_col,
                 y=y_col,
                 title=title,
-                color_discrete_sequence=colors,
-                text=y_col if show_values else None
+                color_discrete_sequence=colors
             )
-            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+            fig.update_layout(
+                xaxis_title=x_col,
+                yaxis_title=y_col if isinstance(y_col, str) else 'Value'
+            )
 
+        # ============ BAR_GROUPED CHART (Actuals vs Forecast) ============
         elif chart_type == 'bar_grouped':
-            # Multi-metric grouped bar (Actuals vs Forecast)
             fig = go.Figure()
-            if isinstance(y_col, list):
+            if isinstance(y_col, list) and len(y_col) >= 2:
                 for i, col in enumerate(y_col):
                     fig.add_trace(go.Bar(
                         x=plot_df[x_col],
@@ -1746,78 +1709,15 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
                         name=col,
                         marker_color=colors[i % len(colors)]
                     ))
-            fig.update_layout(barmode='group', title=title, xaxis_title=x_label, yaxis_title=y_label)
-
-        elif chart_type == 'bar_variance':
-            # Variance chart with red/green coloring
-            color_by_sign = chart_spec.get('color_by_sign', True)
-            if color_by_sign and isinstance(y_col, str):
-                bar_colors = ['#4CAF50' if v >= 0 else '#EF5350' for v in plot_df[y_col].fillna(0)]
+                fig.update_layout(
+                    barmode='group',
+                    title=title,
+                    xaxis_title=x_col,
+                    yaxis_title='Value'
+                )
             else:
-                bar_colors = colors[0]
-            fig = go.Figure(go.Bar(
-                x=plot_df[x_col],
-                y=plot_df[y_col],
-                marker_color=bar_colors
-            ))
-            fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label)
-
-        elif chart_type == 'line':
-            fig = px.line(
-                plot_df,
-                x=x_col,
-                y=y_col,
-                title=title,
-                markers=True,
-                color_discrete_sequence=colors
-            )
-            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
-
-        elif chart_type == 'line_multi':
-            # Multi-series line (Actuals vs Forecast over time)
-            fig = go.Figure()
-            if isinstance(y_col, list):
-                for i, col in enumerate(y_col):
-                    fig.add_trace(go.Scatter(
-                        x=plot_df[x_col],
-                        y=plot_df[col],
-                        mode='lines+markers',
-                        name=col,
-                        line=dict(color=colors[i % len(colors)])
-                    ))
-            fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label)
-
-        elif chart_type == 'pie':
-            fig = px.pie(
-                plot_df,
-                values=y_col,
-                names=x_col,
-                title=title,
-                color_discrete_sequence=colors
-            )
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-
-        elif chart_type == 'scatter':
-            color_col = chart_spec.get('color_column')
-            fig = px.scatter(
-                plot_df,
-                x=x_col,
-                y=y_col,
-                title=title,
-                color=color_col if color_col else None,
-                color_discrete_sequence=colors
-            )
-            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
-
-        elif chart_type == 'area':
-            fig = px.area(
-                plot_df,
-                x=x_col,
-                y=y_col,
-                title=title,
-                color_discrete_sequence=colors
-            )
-            fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+                print(f"⚠️ Chart skipped: bar_grouped requires y_column to be a list of 2+ columns")
+                return
 
         if fig:
             # Apply consistent styling
@@ -1825,12 +1725,12 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
                 template='plotly_white',
                 font=dict(family='Inter, sans-serif', size=12),
                 title_font_size=14,
-                title_x=0.5,  # Center title
+                title_x=0.5,
                 margin=dict(l=40, r=40, t=60, b=40),
                 legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
             )
 
-            # Render in Streamlit with Optum-styled container
+            # Render in Streamlit with styled container
             st.markdown("""
             <div style="background: linear-gradient(135deg, #FAF8F2 0%, #FFFFFF 100%);
                         border: 1px solid #EDE8E0; border-radius: 8px; padding: 12px; margin: 10px 0;">
@@ -1843,14 +1743,11 @@ def render_chart_from_spec(chart_spec: Dict, df: pd.DataFrame) -> None:
             st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        # ============ EDGE CASE 6: Any unexpected error ============
         # SAFETY: Never break the UI - skip chart silently
-        # Better to show no chart than crash the page or show wrong data
         import traceback
         print(f"❌ Chart rendering error: {e}")
         print(f"   Chart spec: {chart_spec}")
         print(f"   Traceback: {traceback.format_exc()}")
-        # Do NOT re-raise - just skip the chart
 
 
 def render_strategic_analysis(strategic_results, strategic_reasoning=None, show_feedback=True):

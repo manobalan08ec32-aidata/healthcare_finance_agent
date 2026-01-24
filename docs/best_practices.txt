@@ -1,36 +1,46 @@
-The current agent supports Pharmacy and PBM teams by answering "what" and "drill-through" questions using two foundational datasets built for Specialty, Home Delivery, and PBM segments.
----
-### 1. Actuals vs Forecast Analysis Dataset
+**Best Practices for Quality Prompts**
 
-Provides financial insights for analyzing actuals, forecasts, and budgets across time and business segments. Supports trend, mix, and variance analysis.
+### Time Periods - Be Specific
+- Avoid: "last 6 months", "previous quarter", "recent data"
+- Use: "January 2024 to June 2024", "Q1 2024", "2023 vs 2024 comparison"
+- Why: The chatbot interprets relative dates from today, not completed periods.
 
-**Attributes:**  
-Financial Ledger Type, Metric Category, Business Segment, Product Category, Product Subcategory Level 1, Product Subcategory Level 2, Transaction Date
+### Keywords - Use Exact Terms
+- Avoid: "XYZ carrier", "ABC pharmacy", "that product"
+- Use: "Carrier Humana", "LOB C&S", "External pharmacy", "Therapeutic class Diabetes"
 
-**Metrics:**  
-Financial or Volume Value
+### Forecast Scenarios - Be Clear
+- Avoid: "forecast data", "projected numbers"
+- Use: "8+4 forecast scenario", "2+10 forecast scenario", "BUDGET vs GAAP"
 
-**Details:**  
-- Financial Ledger Type: Includes GAAP (Actuals), BUDGET, and forecast types like 8+4, 2+10, 5+7. Used to distinguish financial perspectives for variance analysis.  
-- Metric Category: Covers Unadjusted Scripts, Adjusted Scripts, Revenues, COGS Post Reclass, SG&A Post Reclass, IOI, Total Membership. Always group by this field for accurate aggregations.  
-- Financial or Volume Value: Raw values tied to each metric type. Must be filtered or grouped appropriately to avoid misaggregation.
----
-### 2. Pharmacy Claim Transaction Dataset
+### Data Sources - Be Explicit
+- Avoid: "prescription data", "financial data"
+- Use: "PBM claims data", "Pharmacy transaction data", "Actuals vs Forecast analysis"
 
-Provides claim-level granularity for utilization and financial analysis at the drug, pharmacy, and client level. Supports detailed breakdowns and derived metrics.
+### Business Terms to Use
+- Lines of Business: C&S, Medicare, Medicaid
+- Pharmacy Types: External, Internal, Retail, Mail order
+- Claim Status: Paid, Reversed, Rejected
+- Financial Terms: AWP, WAC, COGS, GDR
 
-**Attributes:**  
-Product Category, Claim Number, Claim Sequence, Claim Status, Business Segment, Business Segment Description, Carrier ID, Account ID, Group ID, Claim Submission Date, Pharmacy Name, Pharmacy NPI, Client ID, Client Name, Drug Name, Therapy Class, Brand/Generic Indicator, Drug Classification Code, Drug Manufacturer, State Code, Member Date of Birth, Member Gender, Client Type, Pharmacy Type
+### Quick Tips
+- Break complex queries into focused requests
+- Specify output format: "show as table" or "provide summary"
+- Use exact field names from datasets
+- Mention specific therapeutic classes when relevant
+- Always specify which forecast scenario you're comparing
 
-**Metrics:**  
-Unadjusted Script Count, 90-Day Script Count, 30-Day Script Count, Adjusted Script Count, Revenue Amount, Expense Amount, Wholesale Acquisition Cost, Average Wholesale Price, Revenue per Script, Generic Dispense Rate
+### Common Mistakes
+- Using relative time periods without context
+- Mixing data sources without clarification
+- Using abbreviations without defining them first
+- Asking for data across different forecast scenarios without specifying
 
-**Details:**  
-- Claim Status: Use Paid and Reversed to reflect net activity.  
-- Therapy Class: Includes categories like GLP-1 Receptor Agonists, Oncology, SGLT-2 Inhibitors. Use LIKE operator for broader class queries (e.g., GLP-1).  
-- Revenue per Script: Derived as Revenue Amount ÷ Unadjusted Script Count.  
-- Generic Dispense Rate: Percentage of generic scripts based on Brand/Generic Indicator.
----
-### Important Note
+### Trigger Strategic Analysis
+Use these phrases for deeper insights:
+- "Strategic analysis of..."
+- "Root cause analysis for..."
+- "Variance analysis for..."
+- "Trend analysis showing..."
 
-The agent’s knowledge is limited to the above datasets, attributes, and metrics. For additional data needs or to expand its capabilities, please contact the FDMTeam.
+These prompts generate comprehensive responses with multiple data views and actionable insights.

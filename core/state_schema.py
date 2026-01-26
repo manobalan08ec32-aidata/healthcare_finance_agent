@@ -223,3 +223,6 @@ class AgentState(TypedDict):
     reflection_error_msg: Optional[str]               # Reflection-specific errors
     reflection_followup_retry_count: Optional[int]    # Track retries for topic drift in follow-up
     reflection_plan_approval_retry_count: Optional[int]  # Track retries for topic drift in plan approval
+    reflection_original_followup_question:Optional[str]
+    reflection_followup_retry_exceeded:Optional[bool]
+    reflection_followup_flg:Optional[bool]

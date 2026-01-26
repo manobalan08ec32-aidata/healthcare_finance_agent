@@ -4,7 +4,7 @@ Prompts package for the Agentic Text-to-SQL system.
 This package contains all hardcoded LLM prompts organized by agent:
 - navigation_prompts: Navigation controller prompts for question analysis and rewriting
 - router_prompts: Router agent prompts for dataset selection and SQL generation
-- reflection_prompts: Reflection agent prompts for post-execution analysis (to be added)
+- reflection_prompts: Reflection agent prompts for post-execution analysis
 """
 
 from .navigation_prompts import (
@@ -29,6 +29,16 @@ from .router_prompts import (
     SQL_FIX_PROMPT,
 )
 
+from .reflection_prompts import (
+    REFLECTION_DIAGNOSIS_SYSTEM_PROMPT,
+    REFLECTION_DIAGNOSIS_PROMPT,
+    REFLECTION_PLAN_SYSTEM_PROMPT,
+    REFLECTION_PLAN_PROMPT,
+    REFLECTION_FOLLOWUP_ANALYSIS_PROMPT,
+    REFLECTION_PLAN_APPROVAL_PROMPT,
+    format_available_datasets,
+)
+
 __all__ = [
     # Navigation prompts
     "NAVIGATION_SYSTEM_PROMPT",
@@ -48,4 +58,12 @@ __all__ = [
     "SQL_FOLLOWUP_VALIDATION_PROMPT",
     "SQL_FOLLOWUP_SIMPLE_APPROVAL_PROMPT",
     "SQL_FIX_PROMPT",
+    # Reflection prompts
+    "REFLECTION_DIAGNOSIS_SYSTEM_PROMPT",
+    "REFLECTION_DIAGNOSIS_PROMPT",
+    "REFLECTION_PLAN_SYSTEM_PROMPT",
+    "REFLECTION_PLAN_PROMPT",
+    "REFLECTION_FOLLOWUP_ANALYSIS_PROMPT",
+    "REFLECTION_PLAN_APPROVAL_PROMPT",
+    "format_available_datasets",
 ]

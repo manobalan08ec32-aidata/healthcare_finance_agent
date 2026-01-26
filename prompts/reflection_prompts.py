@@ -328,6 +328,58 @@ Response: "What's the revenue for Q3?"
 
 
 # ═
+# PROMPT 5: FILTER_FIX/STRUCTURE_FIX PLAN GENERATION
+# ═
+
+REFLECTION_FILTER_FIX_PLAN_PROMPT = """
+TASK: Generate a correction plan for a filter/structure fix based on user feedback.
+
+CONTEXT
+Original Question: {original_question}
+Previous SQL:
+{previous_sql}
+
+Dataset Used: {dataset_used}
+Dataset Metadata:
+{dataset_metadata}
+
+Mandatory Columns:
+{mandatory_columns}
+
+FOLLOW-UP CONVERSATION
+Follow-up Question Asked: {followup_question}
+User's Answer: {followup_answer}
+
+Correction Type: {correction_path}
+User's Correction Intent: {correction_details}
+
+TASK
+Generate a clear, concise correction plan that explains:
+1. What was wrong with the previous query
+2. What specific change will be made (filter/calculation/grouping)
+3. How the corrected query will address the user's feedback
+
+OUTPUT FORMAT
+Generate a user-friendly formatted plan using this structure (with emojis):
+
+📋 Correction Plan Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 What Was Wrong: [1 sentence explaining the issue with the previous query]
+
+📌 What Will Change:
+• [Change 1 - specific filter/calculation/grouping change]
+• [Change 2 - if applicable]
+
+📈 How We'll Fix It:
+• [Brief description of the correction approach]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Options: ✅ Approve | ✏️ Modify | ❌ Cancel
+"""
+
+
+# ═
 # HELPER: AVAILABLE DATASETS FORMATTER
 # ═
 

@@ -181,9 +181,45 @@ class AgentState(TypedDict):
     drillthrough_query_results: Optional[List[Dict[str, Any]]]  # List of drillthrough query result objects
     
     # ============ TIMESTAMP FIELD ============
-    
+
     # Workflow timing
     timestamp: Optional[str]                          # ISO timestamp for workflow start
     navigation_start_ts: Optional[str]                # ISO timestamp when navigation controller starts
     router_node_end_ts: Optional[str]                 # ISO timestamp when router node completes
     narrative_end_ts: Optional[str]                   # ISO timestamp when narrative agent node completes
+
+    # ============ REFLECTION AGENT FIELDS ============
+
+    # Reflection mode activation
+    is_reflection_mode: Optional[bool]                # True when in correction flow
+    is_reflection_handling: Optional[bool]            # True when handling reflection follow-up (routes directly to reflection_agent)
+    reflection_phase: Optional[str]                   # "diagnosis" | "input_collection" | "plan_review" | "execution"
+
+    # Previous context being corrected
+    previous_sql_for_correction: Optional[str]        # The SQL that was wrong
+    previous_question_for_correction: Optional[str]   # Original question that produced wrong answer
+    previous_table_used: Optional[List[str]]          # Table(s) that were used in wrong answer
+
+    # Diagnostic results
+    reflection_diagnosis: Optional[Dict[str, Any]]    # Full diagnosis output from LLM
+    identified_issue_type: Optional[str]              # "wrong_dataset" | "wrong_filter" | "wrong_calculation" | "missing_column"
+    correction_path: Optional[str]                    # "DATASET_CHANGE" | "FILTER_FIX" | "STRUCTURE_FIX" | "NEED_CLARIFICATION"
+
+    # User input collection
+    user_correction_feedback: Optional[str]           # User's original correction feedback (e.g., "that's wrong")
+    user_correction_intent: Optional[str]             # What user wants fixed (after clarification)
+    user_dataset_preference: Optional[str]            # If user specifies different dataset
+
+    # Available datasets for correction (loaded from metadata)
+    available_datasets_for_correction: Optional[List[Dict[str, Any]]]  # Datasets available for user to choose
+
+    # Plan review
+    reflection_plan: Optional[str]                    # Generated correction plan (human-readable)
+    reflection_plan_approved: Optional[bool]          # True if user approved the plan
+    reflection_follow_up_question: Optional[str]      # Question to ask user (diagnosis or clarification)
+
+    # Reflection execution results
+    reflection_corrected_sql: Optional[str]           # The corrected SQL after reflection
+    reflection_error_msg: Optional[str]               # Reflection-specific errors
+    reflection_followup_retry_count: Optional[int]    # Track retries for topic drift in follow-up
+    reflection_plan_approval_retry_count: Optional[int]  # Track retries for topic drift in plan approval

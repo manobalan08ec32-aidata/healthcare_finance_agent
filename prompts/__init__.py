@@ -37,6 +37,7 @@ from .reflection_prompts import (
     REFLECTION_PLAN_PROMPT,
     REFLECTION_FOLLOWUP_ANALYSIS_PROMPT,
     REFLECTION_PLAN_APPROVAL_PROMPT,
+    REFLECTION_FILTER_FIX_PLAN_PROMPT,
     format_available_datasets,
 )
 
@@ -66,5 +67,6 @@ __all__ = [
     "REFLECTION_PLAN_PROMPT",
     "REFLECTION_FOLLOWUP_ANALYSIS_PROMPT",
     "REFLECTION_PLAN_APPROVAL_PROMPT",
+    "REFLECTION_FILTER_FIX_PLAN_PROMPT",
     "format_available_datasets",
 ]

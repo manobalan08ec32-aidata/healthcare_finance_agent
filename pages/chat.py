@@ -447,7 +447,61 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         log_event('warning', "SQL returned no results")
                         add_assistant_message("No results available and please try different question.", message_type="error")
                         return
-                
+
+                elif name == 'reflection_agent':
+                    print(f"🔄 Reflection agent completed")
+
+                    # Check for reflection errors
+                    if state.get('reflection_error_msg'):
+                        hide_spinner()
+                        status_display.empty()
+                        add_assistant_message(state.get('reflection_error_msg'), message_type="error")
+                        return
+
+                    # Check if reflection is waiting for user input (follow-up or plan approval)
+                    is_reflection_handling = state.get('is_reflection_handling', False)
+                    reflection_phase = state.get('reflection_phase', '')
+
+                    if is_reflection_handling:
+                        hide_spinner()
+                        status_display.empty()
+
+                        # Get the follow-up question or plan for display
+                        reflection_message = state.get('reflection_follow_up_question', '') or state.get('user_friendly_message', '')
+
+                        if reflection_message:
+                            # Check if this is a plan approval (contains plan markers)
+                            is_plan_approval = reflection_phase == 'plan_review' or '📋' in reflection_message
+
+                            # Use the same message type and flag as SQL plan approval
+                            add_assistant_message(
+                                reflection_message,
+                                message_type="needs_followup",
+                                plan_approval_exists_flg=is_plan_approval
+                            )
+                        return
+
+                    # Check if reflection completed with SQL result
+                    sql_result = state.get('sql_result', {})
+                    if sql_result and sql_result.get('success'):
+                        hide_spinner()
+                        status_display.empty()
+
+                        functional_names = state.get('functional_names', [])
+                        history_sql_used = state.get('history_sql_used', False)
+
+                        add_sql_result_message(
+                            sql_result,
+                            with_chart=True,
+                            functional_names=functional_names,
+                            history_sql_used=history_sql_used
+                        )
+                        last_state = state
+
+                        st.session_state.sql_rendered = True
+                        st.session_state.followup_state = state
+                        break
+
                 elif name == 'strategy_planner_agent':
                     print(f"🧠 Strategic planner completed")
                     

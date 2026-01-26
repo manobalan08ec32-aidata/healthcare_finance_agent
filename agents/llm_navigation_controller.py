@@ -124,6 +124,7 @@ class LLMNavigationController:
                 )
 
                 print("Current Timestamp before classification call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print("classification prompt:", classification_prompt)
                 classification_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": classification_prompt}],
                     max_tokens=500,
@@ -185,7 +186,7 @@ class LLMNavigationController:
 
                 if input_type in ['greeting', 'dml_ddl', 'invalid']:
                     return {
-                        'rewritten_question': '',
+                        'rewritten_question': state.get('rewritten_question',''),
                         'question_type': 'what',
                         'next_agent': 'END',
                         'next_agent_disp': f'{input_type.replace("_", " ").title()} response',
@@ -211,7 +212,7 @@ class LLMNavigationController:
                     self._log('info', "REFLECTION detected - routing to reflection_agent", state,
                              detected_prefix=detected_prefix, clean_question=clean_question)
                     return {
-                        'rewritten_question': current_question,
+                        'rewritten_question':  state.get('rewritten_question',''),
                         'question_type': 'what',
                         'context_type': 'REFLECTION',
                         'next_agent': 'reflection_agent',
@@ -247,6 +248,8 @@ class LLMNavigationController:
                     )
 
                     print("Current Timestamp before rewrite call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    # print("classification prompt:", rewrite_prompt)
+
                     rewrite_response = await self.db_client.call_claude_api_endpoint_async(
                         messages=[{"role": "user", "content": rewrite_prompt}],
                         max_tokens=800,

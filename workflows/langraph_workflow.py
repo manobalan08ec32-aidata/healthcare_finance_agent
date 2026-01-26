@@ -90,15 +90,8 @@ class AsyncHealthcareFinanceWorkflow:
             }
         )
 
-        # Routing from reflection_agent
-        workflow.add_conditional_edges(
-            "reflection_agent",
-            self._route_from_reflection,
-            {
-                "reflection_agent": "reflection_agent",
-                "END": END
-            }
-        )
+        # Reflection agent always ends - no self-routing (simplified flow)
+        workflow.add_edge("reflection_agent", END)
 
         # Conditional routing from router_agent
         workflow.add_conditional_edges(
@@ -390,43 +383,8 @@ class AsyncHealthcareFinanceWorkflow:
             state['next_agent'] = 'END'
             return state
 
-    def _route_from_reflection(self, state: AgentState) -> str:
-        """Route from reflection_agent based on phase and next steps"""
-
-        next_agent = state.get('next_agent', 'END')
-        reflection_phase = state.get('reflection_phase', 'diagnosis')
-        reflection_error = state.get('reflection_error_msg')
-        reflection_followup = state.get('reflection_follow_up_question')
-
-        print(f"🔀 Reflection routing debug:")
-        print(f"  - next_agent: '{next_agent}'")
-        print(f"  - reflection_phase: '{reflection_phase}'")
-        print(f"  - reflection_error: {bool(reflection_error)}")
-        print(f"  - reflection_followup exists: {bool(reflection_followup)}")
-
-        # Priority 1: Error - end workflow
-        if reflection_error:
-            print(f"  🛑 Routing to: END (reflection error)")
-            return "END"
-
-        # Priority 2: Follow-up question - wait for user input
-        if reflection_followup and next_agent == 'END':
-            print(f"  🛑 Routing to: END (awaiting user follow-up response)")
-            return "END"
-
-        # Priority 3: Route based on next_agent
-        if next_agent == 'router_agent':
-            print(f"  ✅ Routing to: router_agent (executing corrected SQL)")
-            return "router_agent"
-        elif next_agent == 'reflection_agent':
-            print(f"  🔄 Routing to: reflection_agent (continuing reflection flow)")
-            return "reflection_agent"
-        elif next_agent == 'END':
-            print(f"  🛑 Routing to: END")
-            return "END"
-        else:
-            print(f"  ⚠️ Unknown next_agent '{next_agent}', defaulting to END")
-            return "END"
+    # NOTE: _route_from_reflection is no longer needed as we use workflow.add_edge("reflection_agent", END)
+    # The reflection agent now processes everything inline and always returns END
 
     def _route_from_navigation(self, state: AgentState) -> str:
         """Route from navigation based on clarification needs, greetings, question type, and REFLECTION"""

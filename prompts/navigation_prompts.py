@@ -3,33 +3,33 @@ Navigation Controller Prompts
 
 Contains all hardcoded prompts used by the LLMNavigationController.
 These are imported and formatted with dynamic values in the agent file.
-
-STRUCTURE:
-- CLASSIFICATION prompts: Lightweight prefix detection and input classification
-- REWRITE prompts: Full question rewriting with context inheritance
-- Reusable rule blocks: Shared rules between prompts
 """
 
-# ═
-# SYSTEM PROMPTS
-# ═
-
-# Original system prompt (kept for backward compatibility)
+# System prompt for navigation controller
 NAVIGATION_SYSTEM_PROMPT = "You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values."
 
-# Classification system prompt (lightweight)
-NAVIGATION_CLASSIFICATION_SYSTEM_PROMPT = """You are a healthcare finance question classifier. Your role is to quickly classify user input and detect special prefixes."""
+# Main combined prompt template for question analysis, rewriting, and filter extraction
+# Dynamic placeholders: {current_question}, {previous_question}, {history_context},
+# {current_month_name}, {current_year}, {current_month}, {previous_year},
+# {current_forecast_cycle}, {memory_context}
+NAVIGATION_COMBINED_PROMPT = """
+You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values.
 
-# Rewrite system prompt
-NAVIGATION_REWRITE_SYSTEM_PROMPT = """You are a healthcare finance question rewriter that applies context inheritance and filter extraction rules."""
+
+INPUTS
+
+Current Input: "{current_question}"
+Previous Question: "{previous_question}"
+History: {history_context}
+Current Date: {current_month_name} {current_year} (Month {current_month} of {current_year})
+Current Year: {current_year}
+Previous Year: {previous_year}
+Forecast Cycle: {current_forecast_cycle}
+Memory: {memory_context}
 
 
-# ═
-# REUSABLE RULE BLOCKS
-# These are extracted from the original combined prompt for reuse
-# ═
+CRITICAL: SMART YEAR ASSIGNMENT FOR PARTIAL DATES
 
-SMART_YEAR_RULES = """
 **WHEN USER MENTIONS ONLY MONTH/QUARTER WITHOUT YEAR:**
 
 **Rule:** Compare the mentioned month with current month ({current_month_name}):
@@ -39,20 +39,21 @@ SMART_YEAR_RULES = """
 **Month Ordering:** January(1) < February(2) < March(3) < April(4) < May(5) < June(6) < July(7) < August(8) < September(9) < October(10) < November(11) < December(12)
 
 **Examples (assuming current date is {current_month_name} {current_year}):**
-- User asks "December" → December (month 12) is {december_comparison} {current_month_name} (month {current_month}) → Use {december_year} ✓
-- User asks "January" → January (month 1) is {january_comparison} {current_month_name} (month {current_month}) → Use {january_year} ✓
+- User asks "December" → December (month 12) is "BEFORE" if 12 < {current_month} else "AFTER" if 12 > {current_month} else "SAME AS" {current_month_name} (month {current_month}) → Use {previous_year} if 12 > {current_month} else {current_year} ✓
+- User asks "January" → January (month 1) is "BEFORE" if 1 < {current_month} else "AFTER" if 1 > {current_month} else "SAME AS" {current_month_name} (month {current_month}) → Use {previous_year} if 1 > {current_month} else {current_year} ✓
 - User asks "{current_month_name}" → Same as {current_month} → Use {current_year} ✓
 
 **Quarter Handling:**
-- Q1 (Jan-Mar): Use {q1_year}
-- Q2 (Apr-Jun): Use {q2_year}
-- Q3 (Jul-Sep): Use {q3_year}
-- Q4 (Oct-Dec): Use {q4_year}
+- Q1 (Jan-Mar): Use {previous_year} if 3 < {current_month} else {current_year}
+- Q2 (Apr-Jun): Use {previous_year} if 6 < {current_month} else {current_year}
+- Q3 (Jul-Sep): Use {previous_year} if 9 < {current_month} else {current_year}
+- Q4 (Oct-Dec): Use {previous_year} if 12 < {current_month} else {current_year}
 
-**CRITICAL:** When user says just "December" in {current_month_name}, they mean the MOST RECENT December, which is December {most_recent_december_year}
-"""
+**CRITICAL:** When user says just "December" in {current_month_name}, they mean the MOST RECENT December, which is December {previous_year} if {current_month} < 12 else {current_year}
 
-FILTER_INHERITANCE_RULES = """
+
+CRITICAL: FILTER INHERITANCE & SUBSTITUTION RULES
+
 **DOMAIN FILTERS** (PBM, HDP, SP, Specialty, Mail, PBM Retail, Home Delivery):
 1. Current HAS domain + Previous HAS domain → REPLACE (use current only)
 2. Current HAS domain + Previous NO domain → USE current only
@@ -72,9 +73,60 @@ FILTER_INHERITANCE_RULES = """
 - Prev: "PBM" → Curr: "GLP-1" → Final: "PBM for GLP-1" (inherit domain)
 - Prev: "GLP-1" → Curr: "Wegovy" → Final: "Wegovy" (entity replacement)
 - Prev: "PBM for GLP-1" → Curr: "Ozempic" → Final: "PBM for Ozempic" (inherit domain, replace entity)
-"""
 
-COMPONENT_EXTRACTION_RULES = """
+
+PROCESSING RULES - APPLY SEQUENTIALLY
+
+**RULE 1: PREFIX DETECTION & STRIPPING**
+Check for and strip these prefixes:
+- "new question", "NEW:" → detected_prefix="new question", strip it
+- "follow-up", "followup", "FOLLOW-UP:" → detected_prefix="follow-up", strip it
+- "validation", "wrong", "fix", "incorrect" → detected_prefix="validation", strip it
+- None found → detected_prefix="none", clean_question=original
+
+**RULE 2: INPUT CLASSIFICATION**
+Classify clean_question into:
+
+A. GREETING: Hi, hello, what can you do, help
+   → Return: input_type="greeting", response_message="I help with healthcare analytics"
+
+B. DML/DDL: INSERT, UPDATE, DELETE, CREATE, DROP
+   → Return: input_type="dml_ddl", response_message="Data modification not supported"
+
+C. BUSINESS_QUESTION: Contains ANY healthcare/finance term:
+   - Metrics: revenue, claims, expenses, cost, scripts, forecast, actuals, billed amount
+   - Entities: drugs, therapies, carriers, clients, pharmacies, GLP-1, Wegovy
+   - Analysis: increase, decrease, variance, trend, breakdown, by, for
+   → Return: input_type="business_question", is_valid=true
+
+D. INVALID: Everything else
+   → Return: is_valid=false, response_message="Please ask about healthcare finance"
+
+**RULE 3: CONTEXT DECISION (Business Questions Only)**
+
+Priority Order (STOP at first match):
+1. IF detected_prefix="new question" → NEW
+2. IF detected_prefix="follow-up" → FOLLOW_UP
+3. IF detected_prefix="validation" → VALIDATION
+4. IF no previous_question → NEW
+5. IF has pronouns (that, it, this, those) → FOLLOW_UP
+6. IF missing component that previous had → FOLLOW_UP
+7. ELSE → NEW
+
+⚠️ **VALIDATION/CORRECTION CONTEXT ANALYSIS (CRITICAL)**:
+When detected_prefix="validation" OR user provides hints/corrections:
+- ALWAYS analyze BOTH previous_question AND current_question together
+- Previous question provides BASE CONTEXT (what was asked originally)
+- Current question provides CORRECTION/HINT/VALIDATION (what needs to change)
+- User hints include: "use table X", "show as side-by-side", "correct the SQL", "fix this", "wrong result"
+- User validations include: "no, I meant...", "actually...", "incorrect", "that's wrong"
+
+EXAMPLES OF VALIDATION/HINT PATTERNS:
+✓ Prev: "revenue for Q3" → Curr: "use Claims table instead of Ledger" → VALIDATION context
+✓ Prev: "revenue by month" → Curr: "show months side by side" → VALIDATION (SQL structure hint)
+✓ Prev: "cost for GLP-1" → Curr: "no, I meant specialty pharmacy only" → VALIDATION (filter correction)
+✓ Prev: "scripts for July" → Curr: "wrong, get from Billing table" → VALIDATION (table hint)
+
 **RULE 4: COMPONENT EXTRACTION**
 
 Extract from BOTH current and previous questions:
@@ -119,9 +171,7 @@ Extract components from BOTH current and previous, then apply:
 When current says "for each X", "by X", "breakdown by X" - this is ADDING an attribute, NOT replacing domain:
 - Prev: "revenue for PBM for July" → Curr: "for each LOB" → Final: "revenue for PBM for each LOB for July" ✓
 - INHERIT domain if missing from current (use case #3 from domain rules)
-"""
 
-METRIC_INHERITANCE_RULES = """
 **RULE 6: METRIC INHERITANCE (CRITICAL)**
 
 IF question contains growth/decline terms WITHOUT preceding metric:
@@ -130,9 +180,7 @@ IF question contains growth/decline terms WITHOUT preceding metric:
   * "revenue decline" → HAS metric ✓
   * "the decline" → NO metric ✗
 - Action: Inherit metric from previous question, place BEFORE the term
-"""
 
-FORECAST_CYCLE_RULES = """
 **RULE 7: FORECAST CYCLE RULES**
 
 Apply to rewritten question:
@@ -140,9 +188,7 @@ Apply to rewritten question:
 - "actuals vs forecast" → Add: "actuals vs forecast {current_forecast_cycle}"
 - Cycle alone (8+4) → Add: "forecast 8+4"
 - Both present → Keep as-is
-"""
 
-REWRITTEN_QUESTION_RULES = """
 **RULE 8: BUILD REWRITTEN QUESTION**
 
 Based on context_decision:
@@ -185,9 +231,7 @@ VALIDATION/Correction handling:
   * Prev: "What is revenue for GLP-1 drugs for July 2025"
   * Curr: "use Claims table instead of Ledger"
   * Result: "What is revenue for GLP-1 drugs for July 2025 - use Claims table instead of Ledger"
-"""
 
-FILTER_EXTRACTION_RULES = """
 **RULE 9: FILTER VALUE EXTRACTION**
 
 ⚠️ CRITICAL: Extract filter values from the FINAL REWRITTEN question (after all inheritance applied)
@@ -234,151 +278,52 @@ Pure standalone metrics: revenue, cost, expense, volume, scripts, claims (BUT KE
 Operators: by, for, breakdown, versus, vs
 Time: Q1-Q4, months, years
 Pure numbers without context
-"""
-
-
-# ═
-# PROMPT 1: CLASSIFICATION (Lightweight - ~150 tokens output)
-# ═
-
-NAVIGATION_CLASSIFICATION_PROMPT = """
-Classify the user input and detect any special prefixes.
-
-CURRENT INPUT: "{current_question}"
-PREVIOUS QUESTION: "{previous_question}"
-
-
-STEP 1: PREFIX DETECTION
-
-Check for and strip these prefixes (case-insensitive):
-- "new question", "NEW:" → detected_prefix="new_question"
-- "follow-up", "followup", "FOLLOW-UP:" → detected_prefix="followup"
-- "wrong", "incorrect", "fix", "correct this", "that's not right", "that's wrong", "the answer is wrong" → detected_prefix="reflection"
-- None found → detected_prefix="none"
-
-
-STEP 2: INPUT CLASSIFICATION
-
-Classify the clean_question (after prefix stripped) into:
-
-A. GREETING: Hi, hello, what can you do, help, hey
-   → input_type="greeting", response_message="I help with healthcare finance analytics. Ask me about revenue, claims, costs, or other financial metrics."
-
-B. DML_DDL: INSERT, UPDATE, DELETE, CREATE, DROP, ALTER
-   → input_type="dml_ddl", response_message="Data modification operations are not supported. Please ask analytical questions instead."
-
-C. BUSINESS_QUESTION: Contains ANY healthcare/finance term:
-   - Metrics: revenue, claims, expenses, cost, scripts, forecast, actuals, billed amount, margin
-   - Entities: drugs, therapies, carriers, clients, pharmacies, GLP-1, Wegovy, Ozempic
-   - Analysis: increase, decrease, variance, trend, breakdown, by, for, compare
-   → input_type="business_question", is_valid_business_question=true
-
-D. INVALID: Everything else
-   → input_type="invalid", is_valid_business_question=false, response_message="I specialize in healthcare finance analytics. Please ask about claims, revenue, costs, or other financial metrics."
-
-
-STEP 3: CONTEXT DECISION (Business Questions Only)
-
-Priority order (STOP at first match):
-1. IF detected_prefix="new_question" → NEW
-2. IF detected_prefix="reflection" → REFLECTION
-3. IF detected_prefix="followup" → FOLLOW_UP
-4. IF no previous_question or previous_question="None" → NEW
-5. IF has pronouns referring to previous (that, it, this, those, the) AND previous_question exists → FOLLOW_UP
-6. IF question seems incomplete without context AND previous_question exists → FOLLOW_UP
-7. ELSE → NEW
-
-
-OUTPUT (JSON only, no markdown, no code blocks):
-
-
-{{
-  "detected_prefix": "new_question|followup|reflection|none",
-  "clean_question": "question with prefix stripped",
-  "input_type": "greeting|dml_ddl|business_question|invalid",
-  "is_valid_business_question": true|false,
-  "context_decision": "NEW|FOLLOW_UP|REFLECTION",
-  "response_message": "only for non-business questions"
-}}
-"""
-
-
-# ═
-# PROMPT 2: REWRITE (Full question rewriting - ~500 tokens output)
-# Only called for valid business questions with context_decision = NEW or FOLLOW_UP
-# ═
-
-NAVIGATION_REWRITE_PROMPT = """
-Rewrite the business question with proper context and extract filters.
-
-
-INPUTS
-
-Current Question: "{current_question}"
-Previous Question: "{previous_question}"
-Context Decision: "{context_decision}"
-History: {history_context}
-Current Date: {current_month_name} {current_year} (Month {current_month} of {current_year})
-Current Year: {current_year}
-Previous Year: {previous_year}
-Forecast Cycle: {current_forecast_cycle}
-Memory: {memory_context}
-
-
-SMART YEAR ASSIGNMENT FOR PARTIAL DATES:
-
-{smart_year_rules}
-
-FILTER INHERITANCE & SUBSTITUTION RULES:
-
-{filter_inheritance_rules}
-
-COMPONENT EXTRACTION & INHERITANCE:
-
-{component_extraction_rules}
-
-METRIC INHERITANCE:
-
-{metric_inheritance_rules}
-
-FORECAST CYCLE RULES:
-
-{forecast_cycle_rules}
-
-BUILD REWRITTEN QUESTION:
-
-{rewritten_question_rules}
-
-FILTER VALUE EXTRACTION:
-
-{filter_extraction_rules}
-
-OUTPUT (JSON only, no markdown, no code blocks):
-
-
-{{
-  "rewritten_question": "complete question with all context applied",
-  "question_type": "what|why",
-  "user_message": "what was inherited/added from previous (empty string if nothing)",
-  "filter_values": ["ONLY", "ACTUAL", "VALUES", "NO", "LABELS"]
-}}
 
 QUICK REFERENCE EXAMPLES:
 
 NEW: "new question - What is PBM revenue Q3 2025?"
 → Strip prefix, components complete → "What is revenue for PBM for Q3 2025"
-→ filter_values: ["PBM"]
+→ Filters: ["PBM"]
 
 FOLLOW_UP + SUBSTITUTION: "what about HDP" (Prev: "PBM revenue Q3")
 → Intent: domain switch, inherit metric/time → "What is revenue for HDP for Q3 2025"
-→ filter_values: ["HDP"] (replaced PBM)
+→ Filters: ["HDP"] (replaced PBM)
 
 DRILL-DOWN: "specifically Wegovy" (Prev: "GLP-1 revenue")
 → Intent: drill-down, inherit metric → "What is revenue for Wegovy"
-→ filter_values: ["Wegovy"] (replaced GLP-1 with more specific)
+→ Filters: ["Wegovy"] (replaced GLP-1 with more specific)
 
 METRIC INHERITANCE: "show the decline" (Prev: "revenue for PBM")
 → No metric before "decline" → "show the revenue decline for PBM"
-→ filter_values: ["PBM"]
-"""
+→ Filters: ["PBM"]
 
+OUTPUT FORMAT
+
+**CRITICAL REQUIREMENTS:**
+1. Return ONLY valid JSON - no markdown, no code blocks, no extra text
+2. Do NOT wrap in ```json or ```
+
+{{
+  "analysis": {{
+    "detected_prefix": "new question|follow-up|validation|none",
+    "input_type": "greeting|dml_ddl|business_question",
+    "is_valid_business_question": true|false,
+    "response_message": "for non-business questions only",
+    "context_decision": "NEW|FOLLOW_UP|VALIDATION"
+  }},
+  "rewrite": {{
+    "rewritten_question": "complete question with context",
+    "question_type": "what|why",
+    "user_message": "what was inherited/added (empty if nothing)"
+  }},
+  "filters": {{
+    "filter_values": ["ONLY", "VALUES", "NO", "ATTRIBUTE", "NAMES"]
+  }}
+}}
+
+**WRONG FORMAT (DO NOT USE):**
+```json
+{{ ... }}
+```
+
+"""

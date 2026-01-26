@@ -65,18 +65,21 @@ class LLMReflectionAgent:
         """
         Main orchestrator for reflection flow.
 
-        Flow:
-        1. First call (no reflection_phase) → diagnose issue (single LLM call)
-        2. If needs_followup → return follow-up question, wait for user
-        3. User returns with response → process follow-up response
-        4. Generate plan (for DATASET_CHANGE) or prepare for auto-execute (FILTER_FIX)
-        5. If plan approved → trigger SQL execution through router_agent
+        Simplified flow - no self-routing. Each phase processes fully inline and returns END.
+
+        Phases:
+        - diagnosis: Analyze issue, optionally generate plan inline if feedback is clear
+        - input_collection: Process user's follow-up response, generate plan inline
+        - plan_review: Process user's plan approval, execute SQL inline when approved
+
+        All phases return next_agent='END'. The workflow routes BACK to reflection_agent
+        via entry_router when is_reflection_mode=True and user provides new input.
 
         Args:
             state: Agent state with reflection context
 
         Returns:
-            Updated state fields for reflection flow
+            Updated state fields for reflection flow (always with next_agent='END')
         """
         self._log('info', "Processing reflection request", state)
 
@@ -84,20 +87,18 @@ class LLMReflectionAgent:
 
         # Determine which phase we're in
         if reflection_phase == 'diagnosis':
-            # First call - diagnose the issue
+            # First call - diagnose the issue (may generate plan inline if feedback is clear)
             return await self._diagnose_issue(state)
 
         elif reflection_phase == 'input_collection':
-            # User responded to follow-up question
+            # User responded to follow-up question (generates plan inline)
             return await self._process_followup_response(state)
 
         elif reflection_phase == 'plan_review':
-            # User is reviewing the plan (approval/modification)
+            # User is reviewing the plan (executes SQL inline when approved)
             return await self._handle_plan_review(state)
 
-        elif reflection_phase == 'execution':
-            # Plan approved, prepare for SQL execution
-            return await self._prepare_for_execution(state)
+        # Note: 'execution' phase is no longer needed - SQL execution happens inline in plan_review
 
         else:
             self._log('warning', f"Unknown reflection phase: {reflection_phase}", state)
@@ -217,15 +218,34 @@ class LLMReflectionAgent:
                         'user_friendly_message': followup_question
                     })
                 else:
-                    # Issue is clear - ALWAYS go to plan_review for all correction types (mandatory plan)
+                    # Issue is clear - generate plan INLINE (no more self-routing)
                     if correction_path == 'DATASET_CHANGE':
                         if suggested_datasets:
-                            result.update({
-                                'reflection_phase': 'plan_review',
-                                'user_dataset_preference': ','.join(suggested_datasets),
-                                'next_agent': 'reflection_agent',  # Continue to plan generation
-                                'user_friendly_message': f"I'll prepare a correction plan for switching to: {', '.join(suggested_datasets)}"
-                            })
+                            # Update state with dataset preference for plan generation
+                            result['user_dataset_preference'] = ','.join(suggested_datasets)
+
+                            # Generate plan inline
+                            plan_result = await self._generate_correction_plan_inline(
+                                {**state, **result}  # Merge current result into state for plan generation
+                            )
+
+                            if plan_result.get('success'):
+                                result.update({
+                                    'is_reflection_handling': True,  # Wait for user approval
+                                    'reflection_phase': 'plan_review',
+                                    'reflection_plan': plan_result.get('plan'),
+                                    'reflection_follow_up_question': plan_result.get('plan_display'),
+                                    'reflection_plan_approval_retry_count': 0,
+                                    'next_agent': 'END',  # Always END - no self-routing
+                                    'user_friendly_message': plan_result.get('plan_display')
+                                })
+                            else:
+                                result.update({
+                                    'is_reflection_mode': False,
+                                    'is_reflection_handling': False,
+                                    'reflection_error_msg': plan_result.get('error', 'Plan generation failed'),
+                                    'next_agent': 'END'
+                                })
                         else:
                             # Need to ask for dataset selection
                             result.update({
@@ -237,14 +257,32 @@ class LLMReflectionAgent:
                                 'next_agent': 'END'
                             })
                     elif correction_path in ['FILTER_FIX', 'STRUCTURE_FIX']:
-                        # Now also goes to plan_review instead of direct execution (mandatory plan)
-                        result.update({
-                            'reflection_phase': 'plan_review',
-                            'user_correction_intent': diagnosis.get('suggested_fix', ''),
-                            'correction_details': diagnosis.get('suggested_fix', ''),
-                            'next_agent': 'reflection_agent',  # Continue to plan generation
-                            'user_friendly_message': f"I'll prepare a correction plan for: {diagnosis.get('suggested_fix', 'Applying fix')}"
-                        })
+                        # Update state with correction details for plan generation
+                        result['user_correction_intent'] = diagnosis.get('suggested_fix', '')
+                        result['correction_details'] = diagnosis.get('suggested_fix', '')
+
+                        # Generate plan inline (no more self-routing)
+                        plan_result = await self._generate_correction_plan_inline(
+                            {**state, **result}  # Merge current result into state for plan generation
+                        )
+
+                        if plan_result.get('success'):
+                            result.update({
+                                'is_reflection_handling': True,  # Wait for user approval
+                                'reflection_phase': 'plan_review',
+                                'reflection_plan': plan_result.get('plan'),
+                                'reflection_follow_up_question': plan_result.get('plan_display'),
+                                'reflection_plan_approval_retry_count': 0,
+                                'next_agent': 'END',  # Always END - no self-routing
+                                'user_friendly_message': plan_result.get('plan_display')
+                            })
+                        else:
+                            result.update({
+                                'is_reflection_mode': False,
+                                'is_reflection_handling': False,
+                                'reflection_error_msg': plan_result.get('error', 'Plan generation failed'),
+                                'next_agent': 'END'
+                            })
                     else:
                         # NEED_CLARIFICATION or unknown - ask for more details
                         result.update({
@@ -418,7 +456,7 @@ class LLMReflectionAgent:
 
             self._log('info', f"LLM parsed response: action={action}, issue_type={issue_type}, datasets={selected_datasets}", state)
 
-            # Build result - ALWAYS go to plan_review for valid corrections (mandatory plan)
+            # Build result - generate plan INLINE for valid corrections (no more self-routing)
             result = {
                 'is_reflection_mode': True,
                 'is_reflection_handling': True,
@@ -428,22 +466,59 @@ class LLMReflectionAgent:
             }
 
             if action == 'DATASET_CHANGE' and selected_datasets:
-                result.update({
-                    'reflection_phase': 'plan_review',
-                    'correction_path': 'DATASET_CHANGE',
-                    'user_dataset_preference': ','.join(selected_datasets),
-                    'plan_summary': plan_summary,
-                    'next_agent': 'reflection_agent'
-                })
+                # Update result with correction path and dataset preference
+                result['correction_path'] = 'DATASET_CHANGE'
+                result['user_dataset_preference'] = ','.join(selected_datasets)
+
+                # Generate plan inline (no more self-routing)
+                plan_result = await self._generate_correction_plan_inline(
+                    {**state, **result}  # Merge current result into state for plan generation
+                )
+
+                if plan_result.get('success'):
+                    result.update({
+                        'reflection_phase': 'plan_review',
+                        'reflection_plan': plan_result.get('plan'),
+                        'reflection_follow_up_question': plan_result.get('plan_display'),
+                        'reflection_plan_approval_retry_count': 0,
+                        'next_agent': 'END',  # Always END - no self-routing
+                        'user_friendly_message': plan_result.get('plan_display')
+                    })
+                else:
+                    result.update({
+                        'is_reflection_mode': False,
+                        'is_reflection_handling': False,
+                        'reflection_error_msg': plan_result.get('error', 'Plan generation failed'),
+                        'next_agent': 'END'
+                    })
+
             elif action in ['FILTER_FIX', 'STRUCTURE_FIX']:
-                # Now also goes to plan_review (mandatory plan for all corrections)
-                result.update({
-                    'reflection_phase': 'plan_review',
-                    'correction_path': action,
-                    'correction_details': correction_details,
-                    'plan_summary': plan_summary,
-                    'next_agent': 'reflection_agent'
-                })
+                # Update result with correction path and details
+                result['correction_path'] = action
+                result['correction_details'] = correction_details
+
+                # Generate plan inline (no more self-routing)
+                plan_result = await self._generate_correction_plan_inline(
+                    {**state, **result}  # Merge current result into state for plan generation
+                )
+
+                if plan_result.get('success'):
+                    result.update({
+                        'reflection_phase': 'plan_review',
+                        'reflection_plan': plan_result.get('plan'),
+                        'reflection_follow_up_question': plan_result.get('plan_display'),
+                        'reflection_plan_approval_retry_count': 0,
+                        'next_agent': 'END',  # Always END - no self-routing
+                        'user_friendly_message': plan_result.get('plan_display')
+                    })
+                else:
+                    result.update({
+                        'is_reflection_mode': False,
+                        'is_reflection_handling': False,
+                        'reflection_error_msg': plan_result.get('error', 'Plan generation failed'),
+                        'next_agent': 'END'
+                    })
+
             elif action == 'NEED_MORE_INFO':
                 # Still unclear - ask for more clarification
                 result.update({
@@ -453,12 +528,13 @@ class LLMReflectionAgent:
                     'user_friendly_message': "Could you please provide more details about what needs to be corrected?"
                 })
             else:
-                # Fallback to diagnosis
+                # Fallback - re-ask original follow-up question
+                original_followup = state.get('reflection_original_followup_question', followup_question)
                 result.update({
-                    'reflection_phase': 'diagnosis',
-                    'user_correction_feedback': user_response,
-                    'next_agent': 'reflection_agent',
-                    'user_friendly_message': "Let me analyze your feedback again."
+                    'reflection_phase': 'input_collection',
+                    'reflection_follow_up_question': original_followup,
+                    'next_agent': 'END',
+                    'user_friendly_message': f"I couldn't understand your response. Let me ask again:\n\n{original_followup}"
                 })
 
             return result
@@ -621,20 +697,36 @@ class LLMReflectionAgent:
             # Handle based on decision
             if decision == 'APPROVE':
                 self._log('info', "Plan approved by user", state)
+
                 # Include any additional context from user for SQL generation
-                result = {
-                    'is_reflection_mode': True,
-                    'is_reflection_handling': False,
-                    'reflection_plan_approved': True,
-                    'reflection_phase': 'execution',
-                    'next_agent': 'reflection_agent',  # Continue in reflection agent for execution
-                    'user_friendly_message': "Plan approved. Generating corrected SQL..."
-                }
                 if additional_context:
-                    # Pass additional context to SQL generation
                     current_intent = state.get('user_correction_intent', '')
-                    result['user_correction_intent'] = f"{current_intent}. Additional: {additional_context}"
-                return result
+                    state['user_correction_intent'] = f"{current_intent}. Additional: {additional_context}"
+
+                # Execute SQL inline - no more self-routing
+                correction_path = state.get('correction_path', 'DATASET_CHANGE')
+                selected_datasets_str = state.get('user_dataset_preference', '')
+                selected_datasets = [d.strip() for d in selected_datasets_str.split(',') if d.strip()]
+
+                self._log('info', f"Executing correction inline: path={correction_path}, datasets={selected_datasets}", state)
+
+                if correction_path == 'DATASET_CHANGE' and selected_datasets:
+                    # Execute dataset change inline
+                    execution_result = await self._execute_dataset_change(state, selected_datasets)
+                elif correction_path in ['FILTER_FIX', 'STRUCTURE_FIX']:
+                    # Execute filter/structure fix inline
+                    execution_result = await self._execute_filter_or_structure_fix(state)
+                else:
+                    # Fallback error
+                    execution_result = {
+                        'is_reflection_mode': False,
+                        'is_reflection_handling': False,
+                        'reflection_error_msg': f"Unknown correction path: {correction_path}",
+                        'next_agent': 'END'
+                    }
+
+                # The execution methods already return proper result dicts with next_agent: 'END'
+                return execution_result
 
             elif decision == 'REJECT':
                 self._log('info', "Plan rejected by user", state)
@@ -649,17 +741,34 @@ class LLMReflectionAgent:
 
             elif decision == 'MODIFY':
                 self._log('info', f"Plan modification requested: {modification_details}", state)
-                # User wants modifications - update the correction intent and regenerate plan
-                return {
-                    'is_reflection_mode': True,
-                    'is_reflection_handling': True,
-                    'reflection_phase': 'plan_review',
-                    'reflection_plan': None,  # Clear old plan to generate new one
-                    'user_correction_intent': modification_details if modification_details else user_response,
-                    'correction_details': modification_details if modification_details else user_response,
-                    'next_agent': 'reflection_agent',
-                    'user_friendly_message': f"I'll update the plan with your modifications: {modification_details or user_response}"
-                }
+                # User wants modifications - update the correction intent and regenerate plan inline
+                modification_text = modification_details if modification_details else user_response
+
+                # Update state with modification details
+                state['user_correction_intent'] = modification_text
+                state['correction_details'] = modification_text
+
+                # Regenerate plan inline with modification context
+                plan_result = await self._generate_correction_plan_inline(state)
+
+                if plan_result.get('success'):
+                    return {
+                        'is_reflection_mode': True,
+                        'is_reflection_handling': True,
+                        'reflection_phase': 'plan_review',
+                        'reflection_plan': plan_result.get('plan'),
+                        'reflection_follow_up_question': plan_result.get('plan_display'),
+                        'reflection_plan_approval_retry_count': 0,  # Reset retry count for new plan
+                        'next_agent': 'END',  # Always END - no self-routing
+                        'user_friendly_message': plan_result.get('plan_display')
+                    }
+                else:
+                    return {
+                        'is_reflection_mode': False,
+                        'is_reflection_handling': False,
+                        'reflection_error_msg': plan_result.get('error', 'Failed to regenerate plan'),
+                        'next_agent': 'END'
+                    }
 
             else:
                 # Unknown decision - treat as need more info
@@ -813,6 +922,84 @@ class LLMReflectionAgent:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Options: ✅ Approve | ✏️ Modify | ❌ Cancel"""
+
+    async def _generate_correction_plan_inline(self, state: AgentState) -> Dict[str, Any]:
+        """
+        Generate correction plan inline (called from _diagnose_issue or _process_followup_response).
+
+        This method generates a plan and returns a dict (not state updates) for use in inline processing.
+
+        Returns:
+            Dict with 'success', 'plan' (raw LLM response), 'plan_display' (formatted for user), 'error'
+        """
+        original_question = state.get('previous_question_for_correction', '')
+        previous_table_used = state.get('previous_table_used', ['Unknown'])[0] if state.get('previous_table_used') else 'Unknown'
+        issue_type = state.get('identified_issue_type', 'WRONG_DATASET')
+        correction_path = state.get('correction_path', 'DATASET_CHANGE')
+        selected_datasets = state.get('user_dataset_preference', '').split(',')
+        selected_datasets = [d.strip() for d in selected_datasets if d.strip()]
+
+        # For FILTER_FIX/STRUCTURE_FIX, get the correction details
+        correction_details = state.get('correction_details', state.get('user_correction_intent', ''))
+
+        # Load metadata for selected datasets (simplified - in real implementation, load from metadata.json)
+        if selected_datasets:
+            dataset_metadata = f"Selected datasets: {', '.join(selected_datasets)}"
+        else:
+            dataset_metadata = f"Using current dataset with correction: {correction_details}"
+
+        # Build mandatory columns information
+        mandatory_column_mapping = {
+            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": ["Ledger"],
+            "prd_optumrx_orxfdmprdsa.rag.pbm_claims": ["product_category='PBM'"]
+        }
+
+        mandatory_columns_info = []
+        for dataset in selected_datasets:
+            if dataset in mandatory_column_mapping:
+                for col in mandatory_column_mapping[dataset]:
+                    mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
+
+        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
+
+        prompt = REFLECTION_PLAN_PROMPT.format(
+            original_question=original_question,
+            previous_table_used=previous_table_used,
+            issue_type=issue_type,
+            correction_path=correction_path,
+            selected_datasets=', '.join(selected_datasets) if selected_datasets else correction_details,
+            dataset_metadata=dataset_metadata,
+            mandatory_columns=mandatory_columns_text
+        )
+
+        try:
+            print("Plan generation prompt (inline):", prompt[:500])
+            response = await self.db_client.call_claude_api_endpoint_async(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.1,
+                top_p=0.9,
+                system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
+            )
+            print("Plan generation response (inline):", response[:500])
+
+            self._log('info', "Plan generated inline", state, llm_response=response[:500])
+
+            # Parse and format the plan for display
+            plan_display = self._format_plan_for_display(response, selected_datasets if selected_datasets else [correction_details])
+
+            return {
+                'success': True,
+                'plan': response,
+                'plan_display': plan_display
+            }
+
+        except Exception as e:
+            self._log('error', f"Plan generation failed (inline): {str(e)}", state)
+            return {
+                'success': False,
+                'error': f"Failed to generate correction plan: {str(e)}"
+            }
 
     # ════════════════════════════════════════════════════════════════════════════════
     # PHASE 3: SQL EXECUTION

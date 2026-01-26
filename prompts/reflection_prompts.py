@@ -41,7 +41,7 @@ PREVIOUS CONTEXT
 
 AVAILABLE DATASETS FOR DOMAIN ({domain_selection})
 
-{available_datasets_formatted}
+{available_datasets}
 
 DIAGNOSIS STEPS
 
@@ -84,13 +84,13 @@ Format for follow-up question when needs_followup=true:
 
 I see you want to correct the previous answer. Let me help you fix it.
 
-**Previous Question:** [original_question]
-**Table Used:** [previous_table_used]
+**Previous Question:** Original Question
+**Table Used:** Table used for last question
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**AVAILABLE DATASETS:**
+**OTHER AVAILABLE DATASETS:**
 
-[List each dataset with number, marking the currently used one]
+Remaining available datasets
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 **WHAT TYPE OF ISSUE DID YOU NOTICE?**
@@ -100,35 +100,11 @@ I see you want to correct the previous answer. Let me help you fix it.
 3. Wrong calculation - Metric aggregation is incorrect
 4. Missing breakdown - Need additional grouping or columns
 
-Please select an option number OR specify a dataset name.
+Please provide your comments OR incase you want to pick different datasets.
 
 </followup_question>
 </diagnosis>
 
-
-EXAMPLES
-
-
-EXAMPLE 1: User specifies dataset (CLEAR - no follow-up)
-User feedback: "Use Claims table instead of Ledger"
-→ issue_type="WRONG_DATASET"
-→ correction_path="DATASET_CHANGE"
-→ suggested_datasets="Rx Claims"
-→ needs_followup=false
-
-EXAMPLE 2: User specifies filter issue (CLEAR - no follow-up)
-User feedback: "Wrong filter, should be on drug_name column"
-→ issue_type="WRONG_FILTER"
-→ correction_path="FILTER_FIX"
-→ suggested_fix="Change filter from therapy_class to drug_name column"
-→ needs_followup=false
-
-EXAMPLE 3: Vague feedback (UNCLEAR - needs follow-up)
-User feedback: "That's wrong" or "The answer is incorrect"
-→ issue_type="UNCLEAR"
-→ correction_path="NEED_CLARIFICATION"
-→ needs_followup=true
-→ followup_question=[Full formatted question with datasets and options]
 """
 
 

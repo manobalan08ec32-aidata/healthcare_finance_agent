@@ -95,7 +95,6 @@ class AsyncHealthcareFinanceWorkflow:
             "reflection_agent",
             self._route_from_reflection,
             {
-                "router_agent": "router_agent",
                 "reflection_agent": "reflection_agent",
                 "END": END
             }
@@ -161,6 +160,7 @@ class AsyncHealthcareFinanceWorkflow:
         """Entry router node to decide workflow entry point."""
 
         # Reset error messages
+        print("incoming state",state)
         state['nav_error_msg'] = None
         state['router_error_msg'] = None
         state['follow_up_error_msg'] = None
@@ -171,7 +171,7 @@ class AsyncHealthcareFinanceWorkflow:
 
         # Simple routing logic
         # Priority 1: Check for reflection handling (follow-up answer to reflection question)
-        if state.get("is_reflection_handling", False):
+        if state.get("is_reflection_mode", False):
             state['next_agent'] = ['reflection_agent']
             state['next_agent_disp'] = 'Reflection Agent'
             print("🔄 Entry router: Reflection handling active - routing to reflection_agent")
@@ -190,7 +190,7 @@ class AsyncHealthcareFinanceWorkflow:
     def _route_from_entry_router(self, state: AgentState) -> str:
         """Route from entry_router to the correct starting node."""
         # Priority 1: Check for reflection handling (follow-up answer to reflection question)
-        if state.get("is_reflection_handling", False):
+        if state.get("is_reflection_mode", False):
             print("🔄 Routing entry to: reflection_agent (reflection handling active)")
             return "reflection_agent"
         elif state.get("requires_dataset_clarification", False):
@@ -244,17 +244,16 @@ class AsyncHealthcareFinanceWorkflow:
             state['sql_generation_story']=None
             state['functional_names']=None
             state['reasoning_context']=None
-
+            state['reflection_followup_retry_exceeded']=False
+            state['reflection_followup_flg']=False
             # Add retry count tracking
             state['llm_retry_count'] = nav_result.get('llm_retry_count', 0)
 
             # Store reflection-related fields from navigation result
             if nav_result.get('is_reflection_mode'):
                 state['is_reflection_mode'] = nav_result.get('is_reflection_mode', False)
-                state['is_reflection_handling'] = nav_result.get('is_reflection_handling', False)
                 state['reflection_phase'] = nav_result.get('reflection_phase', 'diagnosis')
                 state['user_correction_feedback'] = nav_result.get('user_correction_feedback', '')
-                state['context_type'] = nav_result.get('context_type', 'REFLECTION')
 
             # Store pending business question for context preservation
             state['pending_business_question'] = nav_result.get('pending_business_question', '')
@@ -329,9 +328,9 @@ class AsyncHealthcareFinanceWorkflow:
         try:
             # Execute reflection agent - ASYNC CALL
             reflection_result = await self.reflection_agent.process_reflection(state)
-
+            # print(f"Reflection result: {reflection_result}")
             # Update state with reflection results
-            state['is_reflection_mode'] = reflection_result.get('is_reflection_mode', True)
+            state['is_reflection_mode'] = reflection_result.get('is_reflection_mode', False)
             state['reflection_phase'] = reflection_result.get('reflection_phase', 'diagnosis')
             state['reflection_diagnosis'] = reflection_result.get('reflection_diagnosis')
             state['identified_issue_type'] = reflection_result.get('identified_issue_type')
@@ -345,6 +344,9 @@ class AsyncHealthcareFinanceWorkflow:
             state['previous_sql_for_correction'] = reflection_result.get('previous_sql_for_correction')
             state['previous_question_for_correction'] = reflection_result.get('previous_question_for_correction')
             state['previous_table_used'] = reflection_result.get('previous_table_used')
+            state['reflection_followup_retry_count']=reflection_result.get('reflection_followup_retry_count', 0)
+            state['reflection_followup_retry_exceeded']=reflection_result.get('reflection_followup_retry_exceeded', False)
+            state['reflection_followup_flg']=reflection_result.get('reflection_followup_flg', False)
 
             # Set next agent from reflection result
             state['next_agent'] = reflection_result.get('next_agent', 'END')
@@ -376,7 +378,7 @@ class AsyncHealthcareFinanceWorkflow:
             print(f"     - Issue Type: {state.get('identified_issue_type')}")
             print(f"     - Correction Path: {state.get('correction_path')}")
             print(f"     - Next Agent: {state.get('next_agent')}")
-
+            print("reflection state",state)
             return state
 
         except Exception as e:
@@ -436,13 +438,11 @@ class AsyncHealthcareFinanceWorkflow:
         is_dml_ddl = state.get('is_dml_ddl', False)
         pending_business_question = state.get('pending_business_question', '')
         nav_error_msg = state.get('nav_error_msg')
-        context_type = state.get('context_type', '')
         is_reflection_mode = state.get('is_reflection_mode', False)
 
         print(f"🔀 Navigation routing debug:")
         print(f"  - requires_domain_clarification: {requires_clarification}")
         print(f"  - next_agent: '{next_agent}'")
-        print(f"  - context_type: '{context_type}'")
         print(f"  - is_reflection_mode: {is_reflection_mode}")
         print(f"  - domain_followup_question exists: {bool(domain_question and domain_question != 'None')}")
         print(f"  - greeting_response exists: {bool(greeting_response)}")
@@ -467,7 +467,7 @@ class AsyncHealthcareFinanceWorkflow:
             return "END"
 
         # Priority 4: REFLECTION context - route to reflection_agent
-        if context_type == 'REFLECTION' or next_agent == 'reflection_agent':
+        if is_reflection_mode:
             print(f"  🔄 Routing to: reflection_agent (REFLECTION detected)")
             return "reflection_agent"
 

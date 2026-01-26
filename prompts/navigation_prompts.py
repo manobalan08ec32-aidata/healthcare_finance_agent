@@ -3,15 +3,25 @@ Navigation Controller Prompts
 
 Contains all hardcoded prompts used by the LLMNavigationController.
 These are imported and formatted with dynamic values in the agent file.
+
+STRUCTURE:
+- Combined prompt: Single-step analysis, rewriting, and filter extraction with REFLECTION detection
+- Reusable rule blocks: Shared rules for reference
 """
+
+# ════════════════════════════════════════════════════════════════════════════════
+# SYSTEM PROMPTS
+# ════════════════════════════════════════════════════════════════════════════════
 
 # System prompt for navigation controller
 NAVIGATION_SYSTEM_PROMPT = "You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values."
 
-# Main combined prompt template for question analysis, rewriting, and filter extraction
-# Dynamic placeholders: {current_question}, {previous_question}, {history_context},
-# {current_month_name}, {current_year}, {current_month}, {previous_year},
-# {current_forecast_cycle}, {memory_context}
+
+# ════════════════════════════════════════════════════════════════════════════════
+# MAIN COMBINED PROMPT (Single-step: Analyze → Rewrite → Extract)
+# Includes REFLECTION detection for correction/fix requests
+# ════════════════════════════════════════════════════════════════════════════════
+
 NAVIGATION_COMBINED_PROMPT = """
 You are a healthcare finance analytics agent that analyzes questions, rewrites them with proper context, and extracts filter values.
 
@@ -78,10 +88,9 @@ CRITICAL: FILTER INHERITANCE & SUBSTITUTION RULES
 PROCESSING RULES - APPLY SEQUENTIALLY
 
 **RULE 1: PREFIX DETECTION & STRIPPING**
-Check for and strip these prefixes:
-- "new question", "NEW:" → detected_prefix="new question", strip it
-- "follow-up", "followup", "FOLLOW-UP:" → detected_prefix="follow-up", strip it
-- "validation", "wrong", "fix", "incorrect" → detected_prefix="validation", strip it
+Check for and strip these prefixes (case-insensitive):
+- "new question", "NEW:" → detected_prefix="new_question", strip it
+- "follow-up", "followup", "FOLLOW-UP:" → detected_prefix="followup", strip it
 - None found → detected_prefix="none", clean_question=original
 
 **RULE 2: INPUT CLASSIFICATION**
@@ -105,27 +114,34 @@ D. INVALID: Everything else
 **RULE 3: CONTEXT DECISION (Business Questions Only)**
 
 Priority Order (STOP at first match):
-1. IF detected_prefix="new question" → NEW
-2. IF detected_prefix="follow-up" → FOLLOW_UP
-3. IF detected_prefix="validation" → VALIDATION
+1. IF detected_prefix="new_question" → NEW
+2. IF detected_prefix="followup" AND clean_question contains correction intent → REFLECTION
+   - Correction words: wrong, fix, incorrect, correct, that's not right, wrong SQL, wrong answer, wrong result, that's wrong
+3. IF detected_prefix="followup" → FOLLOW_UP
 4. IF no previous_question → NEW
 5. IF has pronouns (that, it, this, those) → FOLLOW_UP
 6. IF missing component that previous had → FOLLOW_UP
 7. ELSE → NEW
 
+⚠️ **REFLECTION DETECTION (CRITICAL)**:
+When detected_prefix="followup" AND the user's message indicates the previous answer was wrong:
+- Look for correction keywords: "wrong", "fix", "incorrect", "correct", "that's not right", "wrong SQL", "wrong answer"
+- If found → context_decision="REFLECTION"
+- This indicates the user wants to correct/fix the previous SQL query result
+
+EXAMPLES OF REFLECTION PATTERNS:
+✓ Prev: "revenue for Q3" → Curr: "follow up - wrong SQL" → REFLECTION
+✓ Prev: "revenue by month" → Curr: "follow up - fix the query" → REFLECTION
+✓ Prev: "cost for GLP-1" → Curr: "follow up - that's incorrect" → REFLECTION
+✓ Prev: "scripts for July" → Curr: "follow up - wrong answer" → REFLECTION
+
 ⚠️ **VALIDATION/CORRECTION CONTEXT ANALYSIS (CRITICAL)**:
-When detected_prefix="validation" OR user provides hints/corrections:
+When detected_prefix="followup" OR user provides hints/corrections:
 - ALWAYS analyze BOTH previous_question AND current_question together
 - Previous question provides BASE CONTEXT (what was asked originally)
 - Current question provides CORRECTION/HINT/VALIDATION (what needs to change)
 - User hints include: "use table X", "show as side-by-side", "correct the SQL", "fix this", "wrong result"
 - User validations include: "no, I meant...", "actually...", "incorrect", "that's wrong"
-
-EXAMPLES OF VALIDATION/HINT PATTERNS:
-✓ Prev: "revenue for Q3" → Curr: "use Claims table instead of Ledger" → VALIDATION context
-✓ Prev: "revenue by month" → Curr: "show months side by side" → VALIDATION (SQL structure hint)
-✓ Prev: "cost for GLP-1" → Curr: "no, I meant specialty pharmacy only" → VALIDATION (filter correction)
-✓ Prev: "scripts for July" → Curr: "wrong, get from Billing table" → VALIDATION (table hint)
 
 **RULE 4: COMPONENT EXTRACTION**
 
@@ -216,21 +232,11 @@ Examples:
 - Prev: "revenue for PBM" → Curr: "volume for GLP-1" → Final: "What is volume for PBM for GLP-1" ✓
 - Prev: "revenue for Q3 2025" → Curr: "what about HDP" → Final: "What is revenue for HDP for Q3 2025" ✓
 
-VALIDATION/Correction handling:
-- **CRITICAL: Analyze BOTH previous AND current together to understand full context**
-- Format: "[Previous Question] - [User's correction/validation/hint]"
-- Keep previous question EXACTLY as-is, do NOT rewrite it
-- Append the user's current input as the correction/validation/hint point
-- Preserve ALL user hints (table names, structure preferences, corrections)
-- user_message: "Applying validation/correction/hint to previous question"
-- Examples:
-  * Prev: "What is revenue for PBM for Q3 2025 vs Q4 2025"
-  * Curr: "correct the sql to show months side by side"
-  * Result: "What is revenue for PBM for Q3 2025 vs Q4 2025 - correct the sql to show months side by side"
-
-  * Prev: "What is revenue for GLP-1 drugs for July 2025"
-  * Curr: "use Claims table instead of Ledger"
-  * Result: "What is revenue for GLP-1 drugs for July 2025 - use Claims table instead of Ledger"
+REFLECTION handling:
+- **CRITICAL: When context_decision is REFLECTION, do NOT rewrite the question**
+- Just pass through the original question - the reflection_agent will handle the correction
+- Set rewritten_question to the original current question
+- user_message: "Routing to reflection agent for correction"
 
 **RULE 9: FILTER VALUE EXTRACTION**
 
@@ -297,6 +303,11 @@ METRIC INHERITANCE: "show the decline" (Prev: "revenue for PBM")
 → No metric before "decline" → "show the revenue decline for PBM"
 → Filters: ["PBM"]
 
+REFLECTION: "follow up - wrong SQL" (Prev: "revenue for PBM for Q3")
+→ Correction detected → context_decision="REFLECTION"
+→ rewritten_question: "follow up - wrong SQL" (pass through)
+→ Filters: [] (reflection agent handles)
+
 OUTPUT FORMAT
 
 **CRITICAL REQUIREMENTS:**
@@ -305,11 +316,12 @@ OUTPUT FORMAT
 
 {{
   "analysis": {{
-    "detected_prefix": "new question|follow-up|validation|none",
+    "detected_prefix": "new_question|followup|none",
     "input_type": "greeting|dml_ddl|business_question",
     "is_valid_business_question": true|false,
     "response_message": "for non-business questions only",
-    "context_decision": "NEW|FOLLOW_UP|VALIDATION"
+    "context_decision": "NEW|FOLLOW_UP|REFLECTION",
+    "clean_question": "question with prefix stripped"
   }},
   "rewrite": {{
     "rewritten_question": "complete question with context",

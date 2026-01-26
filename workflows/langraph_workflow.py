@@ -9,6 +9,7 @@ from core.state_schema import AgentState
 from core.databricks_client import DatabricksClient
 from agents.llm_navigation_controller import LLMNavigationController
 from agents.llm_router_agent import LLMRouterAgent
+from agents.llm_reflection_agent import LLMReflectionAgent
 from agents.followup_question import FollowupQuestionAgent
 from agents.strategic_planner import StrategicPlanner
 from agents.drillthrough_planner import DrillthroughPlanner
@@ -27,6 +28,7 @@ class AsyncHealthcareFinanceWorkflow:
         # Initialize all agents
         self.nav_controller = LLMNavigationController(databricks_client)
         self.router_agent = LLMRouterAgent(databricks_client)
+        self.reflection_agent = LLMReflectionAgent(databricks_client)
         self.followup_agent = FollowupQuestionAgent(databricks_client)
         self.strategic_planner = StrategicPlanner(self.db_client)
         self.drillthrough_planner = DrillthroughPlanner(self.db_client)
@@ -52,15 +54,15 @@ class AsyncHealthcareFinanceWorkflow:
         self.narrative_app = self.narrative_workflow.compile(checkpointer=checkpointer)
     
     def _build_workflow(self) -> StateGraph:
-        """Build workflow with entry router, navigation controller and router agent"""
+        """Build workflow with entry router, navigation controller, reflection agent, and router agent"""
         workflow = StateGraph(AgentState)
 
         # Add nodes
         workflow.add_node("entry_router", self._entry_router_node)
         workflow.add_node("navigation_controller", self._navigation_controller_node)
+        workflow.add_node("reflection_agent", self._reflection_agent_node)
         workflow.add_node("router_agent", self._router_agent_node)
         workflow.add_node("strategy_planner_agent", self._strategy_planner_node)
-        
 
         # Set entry point
         workflow.set_entry_point("entry_router")
@@ -71,33 +73,44 @@ class AsyncHealthcareFinanceWorkflow:
             self._route_from_entry_router,
             {
                 "navigation_controller": "navigation_controller",
-                "router_agent": "router_agent"
+                "router_agent": "router_agent",
+                "reflection_agent": "reflection_agent"
             }
         )
 
-        # workflow.add_edge("navigation_controller", END)
-
-        # Routing from navigation_controller
+        # Routing from navigation_controller (includes REFLECTION route)
         workflow.add_conditional_edges(
             "navigation_controller",
             self._route_from_navigation,
             {
                 "router_agent": "router_agent",
+                "reflection_agent": "reflection_agent",
                 "root_cause_agent": "strategy_planner_agent",
                 "END": END
             }
         )
 
-        # ⭐ NEW: Conditional routing from router_agent
+        # Routing from reflection_agent
+        workflow.add_conditional_edges(
+            "reflection_agent",
+            self._route_from_reflection,
+            {
+                "router_agent": "router_agent",
+                "reflection_agent": "reflection_agent",
+                "END": END
+            }
+        )
+
+        # Conditional routing from router_agent
         workflow.add_conditional_edges(
             "router_agent",
             self._route_from_router,
             {
-                "navigation_controller": "navigation_controller",  # Loop back for new question
-                "END": END  # Normal completion or topic drift
+                "navigation_controller": "navigation_controller",
+                "END": END
             }
         )
-        
+
         # Strategy planner ends here for main workflow - drillthrough handled separately
         workflow.add_edge("strategy_planner_agent", END)
 
@@ -146,18 +159,23 @@ class AsyncHealthcareFinanceWorkflow:
 
     async def _entry_router_node(self, state: AgentState) -> AgentState:
         """Entry router node to decide workflow entry point."""
-        
+
         # Reset error messages
         state['nav_error_msg'] = None
-        state['router_error_msg'] = None 
+        state['router_error_msg'] = None
         state['follow_up_error_msg'] = None
         state['sql_gen_error_msg'] = None
         state['strategy_planner_err_msg'] = None
         state['user_friendly_message'] = None
         state['domain_selection']=state.get('domain_selection', [])
-        
+
         # Simple routing logic
-        if state.get("requires_dataset_clarification", False):
+        # Priority 1: Check for reflection handling (follow-up answer to reflection question)
+        if state.get("is_reflection_handling", False):
+            state['next_agent'] = ['reflection_agent']
+            state['next_agent_disp'] = 'Reflection Agent'
+            print("🔄 Entry router: Reflection handling active - routing to reflection_agent")
+        elif state.get("requires_dataset_clarification", False):
             state['next_agent'] = ['END']  # Skip for simplified version
             state['next_agent_disp'] = 'Dataset clarification needed'
         elif state.get("is_sql_followup", False):
@@ -171,7 +189,11 @@ class AsyncHealthcareFinanceWorkflow:
     
     def _route_from_entry_router(self, state: AgentState) -> str:
         """Route from entry_router to the correct starting node."""
-        if state.get("requires_dataset_clarification", False):
+        # Priority 1: Check for reflection handling (follow-up answer to reflection question)
+        if state.get("is_reflection_handling", False):
+            print("🔄 Routing entry to: reflection_agent (reflection handling active)")
+            return "reflection_agent"
+        elif state.get("requires_dataset_clarification", False):
             print("Routing entry to: END (dataset clarification)")
             return "router_agent"
         elif state.get("is_sql_followup", False):
@@ -225,7 +247,15 @@ class AsyncHealthcareFinanceWorkflow:
 
             # Add retry count tracking
             state['llm_retry_count'] = nav_result.get('llm_retry_count', 0)
-            
+
+            # Store reflection-related fields from navigation result
+            if nav_result.get('is_reflection_mode'):
+                state['is_reflection_mode'] = nav_result.get('is_reflection_mode', False)
+                state['is_reflection_handling'] = nav_result.get('is_reflection_handling', False)
+                state['reflection_phase'] = nav_result.get('reflection_phase', 'diagnosis')
+                state['user_correction_feedback'] = nav_result.get('user_correction_feedback', '')
+                state['context_type'] = nav_result.get('context_type', 'REFLECTION')
+
             # Store pending business question for context preservation
             state['pending_business_question'] = nav_result.get('pending_business_question', '')
             
@@ -279,7 +309,7 @@ class AsyncHealthcareFinanceWorkflow:
         
             print(f"Navigation Controller ending: {datetime.now().isoformat()}")
             return state
-            
+
         except Exception as e:
             print(f"Navigation failed: {str(e)}")
             if 'errors' not in state:
@@ -289,43 +319,159 @@ class AsyncHealthcareFinanceWorkflow:
             state['nav_error_msg'] = f"Navigation error: {str(e)}"
             return state
 
+    async def _reflection_agent_node(self, state: AgentState) -> AgentState:
+        """Reflection Agent: Handles user corrections to wrong SQL answers"""
+
+        cst = timezone('America/Chicago')
+        reflection_start_time = datetime.now(cst).strftime('%Y-%m-%d %H:%M:%S %Z')
+        print(f"\n🔄 Reflection Agent starting: {reflection_start_time}")
+
+        try:
+            # Execute reflection agent - ASYNC CALL
+            reflection_result = await self.reflection_agent.process_reflection(state)
+
+            # Update state with reflection results
+            state['is_reflection_mode'] = reflection_result.get('is_reflection_mode', True)
+            state['reflection_phase'] = reflection_result.get('reflection_phase', 'diagnosis')
+            state['reflection_diagnosis'] = reflection_result.get('reflection_diagnosis')
+            state['identified_issue_type'] = reflection_result.get('identified_issue_type')
+            state['correction_path'] = reflection_result.get('correction_path')
+            state['reflection_follow_up_question'] = reflection_result.get('reflection_follow_up_question')
+            state['reflection_plan'] = reflection_result.get('reflection_plan')
+            state['reflection_plan_approved'] = reflection_result.get('reflection_plan_approved')
+            state['user_correction_intent'] = reflection_result.get('user_correction_intent')
+            state['user_dataset_preference'] = reflection_result.get('user_dataset_preference')
+            state['available_datasets_for_correction'] = reflection_result.get('available_datasets_for_correction')
+            state['previous_sql_for_correction'] = reflection_result.get('previous_sql_for_correction')
+            state['previous_question_for_correction'] = reflection_result.get('previous_question_for_correction')
+            state['previous_table_used'] = reflection_result.get('previous_table_used')
+
+            # Set next agent from reflection result
+            state['next_agent'] = reflection_result.get('next_agent', 'END')
+            state['next_agent_disp'] = reflection_result.get('next_agent_disp', 'Reflection Agent')
+
+            # Handle user-friendly messages
+            user_message = reflection_result.get('user_friendly_message', '')
+            if user_message:
+                state['user_friendly_message'] = user_message
+
+            # Handle errors
+            reflection_error = reflection_result.get('reflection_error_msg')
+            if reflection_error:
+                state['reflection_error_msg'] = reflection_error
+                state['next_agent'] = 'END'
+
+            # If reflection approved dataset change, update state for router_agent
+            if reflection_result.get('dataset_change_requested', False):
+                state['dataset_change_requested'] = True
+                state['user_selected_datasets'] = reflection_result.get('user_selected_datasets', [])
+
+            # If rewritten_question was updated by reflection, use it
+            if reflection_result.get('rewritten_question'):
+                state['rewritten_question'] = reflection_result.get('rewritten_question')
+                state['current_question'] = reflection_result.get('rewritten_question')
+
+            print(f"  ✅ Reflection Agent completed:")
+            print(f"     - Phase: {state.get('reflection_phase')}")
+            print(f"     - Issue Type: {state.get('identified_issue_type')}")
+            print(f"     - Correction Path: {state.get('correction_path')}")
+            print(f"     - Next Agent: {state.get('next_agent')}")
+
+            return state
+
+        except Exception as e:
+            print(f"  ❌ Reflection agent failed: {str(e)}")
+            if 'errors' not in state:
+                state['errors'] = []
+            state['errors'].append(f"Reflection agent error: {str(e)}")
+            state['reflection_error_msg'] = f"Reflection agent failed: {str(e)}"
+            state['next_agent'] = 'END'
+            return state
+
+    def _route_from_reflection(self, state: AgentState) -> str:
+        """Route from reflection_agent based on phase and next steps"""
+
+        next_agent = state.get('next_agent', 'END')
+        reflection_phase = state.get('reflection_phase', 'diagnosis')
+        reflection_error = state.get('reflection_error_msg')
+        reflection_followup = state.get('reflection_follow_up_question')
+
+        print(f"🔀 Reflection routing debug:")
+        print(f"  - next_agent: '{next_agent}'")
+        print(f"  - reflection_phase: '{reflection_phase}'")
+        print(f"  - reflection_error: {bool(reflection_error)}")
+        print(f"  - reflection_followup exists: {bool(reflection_followup)}")
+
+        # Priority 1: Error - end workflow
+        if reflection_error:
+            print(f"  🛑 Routing to: END (reflection error)")
+            return "END"
+
+        # Priority 2: Follow-up question - wait for user input
+        if reflection_followup and next_agent == 'END':
+            print(f"  🛑 Routing to: END (awaiting user follow-up response)")
+            return "END"
+
+        # Priority 3: Route based on next_agent
+        if next_agent == 'router_agent':
+            print(f"  ✅ Routing to: router_agent (executing corrected SQL)")
+            return "router_agent"
+        elif next_agent == 'reflection_agent':
+            print(f"  🔄 Routing to: reflection_agent (continuing reflection flow)")
+            return "reflection_agent"
+        elif next_agent == 'END':
+            print(f"  🛑 Routing to: END")
+            return "END"
+        else:
+            print(f"  ⚠️ Unknown next_agent '{next_agent}', defaulting to END")
+            return "END"
+
     def _route_from_navigation(self, state: AgentState) -> str:
-        """Route from navigation based on clarification needs, greetings, and question type"""
-                
+        """Route from navigation based on clarification needs, greetings, question type, and REFLECTION"""
+
         requires_clarification = state.get('requires_domain_clarification', False)
         next_agent = state.get('next_agent', 'router_agent')
         domain_question = state.get('domain_followup_question', 'None')
         greeting_response = state.get('greeting_response')
         is_dml_ddl = state.get('is_dml_ddl', False)
         pending_business_question = state.get('pending_business_question', '')
-        nav_error_msg = state.get('nav_error_msg')  # Get error message
-        
+        nav_error_msg = state.get('nav_error_msg')
+        context_type = state.get('context_type', '')
+        is_reflection_mode = state.get('is_reflection_mode', False)
+
         print(f"🔀 Navigation routing debug:")
         print(f"  - requires_domain_clarification: {requires_clarification}")
         print(f"  - next_agent: '{next_agent}'")
+        print(f"  - context_type: '{context_type}'")
+        print(f"  - is_reflection_mode: {is_reflection_mode}")
         print(f"  - domain_followup_question exists: {bool(domain_question and domain_question != 'None')}")
         print(f"  - greeting_response exists: {bool(greeting_response)}")
         print(f"  - is_dml_ddl: {is_dml_ddl}")
         print(f"  - pending_business_question: '{pending_business_question}'")
-        print(f"  - nav_error_msg: {nav_error_msg}")  # Log error message
-        
+        print(f"  - nav_error_msg: {nav_error_msg}")
+
         # Priority 1: Check for navigation errors
         if nav_error_msg:
             print(f"  🛑 Routing to: END (navigation error: {nav_error_msg})")
             return "END"
-        
+
         # Priority 2: Check for greeting or DML/DDL response
         if greeting_response and greeting_response.strip():
             print(f"  🛑 Routing to: END (greeting/DML response)")
             return "END"
-        
+
         # Priority 3: Check for domain clarification requirement
         if requires_clarification:
             print(f"  🛑 Routing to: END (domain clarification required)")
             print(f"  🛑 Will preserve business question: '{pending_business_question}'")
             return "END"
-        
-        # Priority 4: Normal workflow routing based on next_agent
+
+        # Priority 4: REFLECTION context - route to reflection_agent
+        if context_type == 'REFLECTION' or next_agent == 'reflection_agent':
+            print(f"  🔄 Routing to: reflection_agent (REFLECTION detected)")
+            return "reflection_agent"
+
+        # Priority 5: Normal workflow routing based on next_agent
         if next_agent == "root_cause_agent":
             print(f"  ✅ Routing to: root_cause_agent")
             return "root_cause_agent"
@@ -333,7 +479,6 @@ class AsyncHealthcareFinanceWorkflow:
             print(f"  ✅ Routing to: router_agent")
             return "router_agent"
         elif next_agent == "END":
-            # This should only happen if we need to end the workflow
             print(f"  🛑 Routing to: END (explicitly set)")
             return "END"
         else:

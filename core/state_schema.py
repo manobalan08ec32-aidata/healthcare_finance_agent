@@ -25,6 +25,7 @@ class AgentState(TypedDict):
     
     # Navigation outputs
     rewritten_question: Optional[str]               # Processed/rewritten question
+    clean_question: Optional[str]                   # Question with prefix stripped (used for reflection feedback)
     question_type: Optional[str]                    # "what" or "why"
     next_agent: Optional[List[str]]                 # Next node(s) to execute (can be list)
     next_agent_disp: Optional[str]                  # Display name for next agent
@@ -209,6 +210,7 @@ class AgentState(TypedDict):
     user_correction_feedback: Optional[str]           # User's original correction feedback (e.g., "that's wrong")
     user_correction_intent: Optional[str]             # What user wants fixed (after clarification)
     user_dataset_preference: Optional[str]            # If user specifies different dataset
+    correction_details: Optional[str]                 # Specific correction details for FILTER_FIX/STRUCTURE_FIX
 
     # Available datasets for correction (loaded from metadata)
     available_datasets_for_correction: Optional[List[Dict[str, Any]]]  # Datasets available for user to choose
@@ -226,3 +228,4 @@ class AgentState(TypedDict):
     reflection_original_followup_question:Optional[str]
     reflection_followup_retry_exceeded:Optional[bool]
     reflection_followup_flg:Optional[bool]
+    is_followup_plan: Optional[bool]                  # True when plan is for follow-up correction (FILTER_FIX/STRUCTURE_FIX)

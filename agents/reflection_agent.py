@@ -92,6 +92,7 @@ class LLMReflectionAgent:
 
         elif reflection_phase == 'input_collection':
             # User responded to follow-up question (generates plan inline)
+            print('coming inside input collection')
             return await self._process_followup_response(state)
 
         elif reflection_phase == 'plan_review':
@@ -258,6 +259,7 @@ class LLMReflectionAgent:
                                 'next_agent': 'END'
                             })
                     elif correction_path in ['FILTER_FIX', 'STRUCTURE_FIX']:
+                        print("coming inside structural or filter changes")
                         # Update state with correction details for plan generation
                         result['user_correction_intent'] = diagnosis.get('suggested_fix', '')
                         result['correction_details'] = diagnosis.get('suggested_fix', '')
@@ -269,6 +271,7 @@ class LLMReflectionAgent:
 
                         if plan_result.get('success'):
                             result.update({
+                                'is_reflection_mode': True,
                                 'is_reflection_handling': True,  # Wait for user approval
                                 'reflection_phase': 'plan_review',
                                 'reflection_plan': plan_result.get('plan'),
@@ -423,7 +426,7 @@ class LLMReflectionAgent:
 
             if analysis is None:
                 return {
-                    'is_reflection_mode': True,
+                    'is_reflection_mode': False,
                     'is_reflection_handling': True,
                     'reflection_error_msg': "Failed to parse follow-up analysis",
                     'next_agent': 'END'
@@ -509,6 +512,7 @@ class LLMReflectionAgent:
 
             elif action in ['FILTER_FIX', 'STRUCTURE_FIX']:
                 # Update result with correction path and details
+                print('coming inside step-2 ')
                 result['correction_path'] = action
                 result['correction_details'] = correction_details
 

@@ -209,6 +209,7 @@ class LLMReflectionAgent:
                 if needs_followup:
                     # Need to ask user for clarification - set is_reflection_handling for direct routing
                     result.update({
+                        'is_reflection_mode': True,
                         'is_reflection_handling': True,
                         'reflection_phase': 'input_collection',
                         'reflection_follow_up_question': followup_question,
@@ -298,9 +299,10 @@ class LLMReflectionAgent:
 
             except Exception as e:
                 retry_count += 1
-                print(f"Diagnosis attempt {retry_count} failed: {str(e)}")
+                print(f"❌ Diagnosis attempt {retry_count} failed: {str(e)}")
                 if retry_count < self.max_retries:
-                    await asyncio.sleep(2 ** retry_count)
+                    print(f"    🔄 Retrying in 3s... (attempt {retry_count + 1}/{self.max_retries})")
+                    await asyncio.sleep(3)
                     continue
                 else:
                     return {
@@ -391,13 +393,26 @@ class LLMReflectionAgent:
             print("Current Timestamp before followup analysis call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             print("Followup Analysis prompt:", prompt)
 
-            response = await self.db_client.call_claude_api_endpoint_async(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000,
-                temperature=0.1,
-                top_p=0.9,
-                system_prompt=REFLECTION_DIAGNOSIS_SYSTEM_PROMPT
-            )
+            # LLM call with retry logic (3 retries, 3s backoff)
+            response = None
+            for attempt in range(self.max_retries):
+                try:
+                    response = await self.db_client.call_claude_api_endpoint_async(
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=1000,
+                        temperature=0.1,
+                        top_p=0.9,
+                        system_prompt=REFLECTION_DIAGNOSIS_SYSTEM_PROMPT
+                    )
+                    break  # Success, exit retry loop
+                except Exception as llm_error:
+                    print(f"❌ Followup analysis LLM call - attempt {attempt + 1} failed: {llm_error}")
+                    if attempt < self.max_retries - 1:
+                        print(f"    🔄 Retrying in 3s... (attempt {attempt + 2}/{self.max_retries})")
+                        await asyncio.sleep(3)
+                    else:
+                        raise  # Re-raise on final attempt
+
             print("Current Timestamp after followup analysis call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             print("Followup Analysis Response:", response)
 
@@ -638,13 +653,27 @@ class LLMReflectionAgent:
         try:
             print("Current Timestamp before plan approval analysis:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             print("Plan Approval Analysis prompt:", prompt)
-            response = await self.db_client.call_claude_api_endpoint_async(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=800,
-                temperature=0.1,
-                top_p=0.9,
-                system_prompt=REFLECTION_DIAGNOSIS_SYSTEM_PROMPT
-            )
+
+            # LLM call with retry logic (3 retries, 3s backoff)
+            response = None
+            for attempt in range(self.max_retries):
+                try:
+                    response = await self.db_client.call_claude_api_endpoint_async(
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=800,
+                        temperature=0.1,
+                        top_p=0.9,
+                        system_prompt=REFLECTION_DIAGNOSIS_SYSTEM_PROMPT
+                    )
+                    break  # Success, exit retry loop
+                except Exception as llm_error:
+                    print(f"❌ Plan approval analysis LLM call - attempt {attempt + 1} failed: {llm_error}")
+                    if attempt < self.max_retries - 1:
+                        print(f"    🔄 Retrying in 3s... (attempt {attempt + 2}/{self.max_retries})")
+                        await asyncio.sleep(3)
+                    else:
+                        raise  # Re-raise on final attempt
+
             print("Current Timestamp after plan approval analysis:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             print("Plan Approval Analysis Response:", response)
 
@@ -859,13 +888,27 @@ class LLMReflectionAgent:
 
         try:
             print("FPlan generated prompt:", prompt)
-            response = await self.db_client.call_claude_api_endpoint_async(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=800,
-                temperature=0.1,
-                top_p=0.9,
-                system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
-            )
+
+            # LLM call with retry logic (3 retries, 3s backoff)
+            response = None
+            for attempt in range(self.max_retries):
+                try:
+                    response = await self.db_client.call_claude_api_endpoint_async(
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=800,
+                        temperature=0.1,
+                        top_p=0.9,
+                        system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
+                    )
+                    break  # Success, exit retry loop
+                except Exception as llm_error:
+                    print(f"❌ Plan generation LLM call - attempt {attempt + 1} failed: {llm_error}")
+                    if attempt < self.max_retries - 1:
+                        print(f"    🔄 Retrying in 3s... (attempt {attempt + 2}/{self.max_retries})")
+                        await asyncio.sleep(3)
+                    else:
+                        raise  # Re-raise on final attempt
+
             print("FPlan generated response:", response)
 
             self._log('info', "Plan generated", state, llm_response=response[:1000])
@@ -974,13 +1017,27 @@ Options: ✅ Approve | ✏️ Modify | ❌ Cancel"""
 
         try:
             print("Plan generation prompt (inline):", prompt[:500])
-            response = await self.db_client.call_claude_api_endpoint_async(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=800,
-                temperature=0.1,
-                top_p=0.9,
-                system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
-            )
+
+            # LLM call with retry logic (3 retries, 3s backoff)
+            response = None
+            for attempt in range(self.max_retries):
+                try:
+                    response = await self.db_client.call_claude_api_endpoint_async(
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=800,
+                        temperature=0.1,
+                        top_p=0.9,
+                        system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
+                    )
+                    break  # Success, exit retry loop
+                except Exception as llm_error:
+                    print(f"❌ Plan generation (inline) LLM call - attempt {attempt + 1} failed: {llm_error}")
+                    if attempt < self.max_retries - 1:
+                        print(f"    🔄 Retrying in 3s... (attempt {attempt + 2}/{self.max_retries})")
+                        await asyncio.sleep(3)
+                    else:
+                        raise  # Re-raise on final attempt
+
             print("Plan generation response (inline):", response[:500])
 
             self._log('info', "Plan generated inline", state, llm_response=response[:500])

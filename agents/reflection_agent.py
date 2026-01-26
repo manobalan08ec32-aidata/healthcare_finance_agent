@@ -137,7 +137,7 @@ class LLMReflectionAgent:
         # Format available datasets for the prompt
         previous_table_used = previous_context.get('table_used', '')
         available_datasets_formatted = format_available_datasets(available_datasets, previous_table_used)
-
+        print('available_datasets_formatted',available_datasets_formatted)
         # Build diagnosis prompt
         prompt = REFLECTION_DIAGNOSIS_PROMPT.format(
             original_question=previous_context.get('question', 'Unknown'),
@@ -145,13 +145,14 @@ class LLMReflectionAgent:
             previous_sql=previous_context.get('sql', 'No SQL available'),
             user_correction_feedback=user_correction_feedback,
             domain_selection=domain_selection,
-            available_datasets_formatted=available_datasets_formatted
+            available_datasets=available_datasets_formatted
         )
 
         retry_count = 0
         while retry_count < self.max_retries:
             try:
                 print("Current Timestamp before diagnosis call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                print("Diagnosis Response:", prompt)
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=1000,
@@ -210,6 +211,8 @@ class LLMReflectionAgent:
                         'is_reflection_handling': True,
                         'reflection_phase': 'input_collection',
                         'reflection_follow_up_question': followup_question,
+                        'reflection_original_followup_question': followup_question,  # Store original for retries
+                        'reflection_followup_retry_count': 0,  # Initialize retry count
                         'next_agent': 'END',  # Wait for user input
                         'user_friendly_message': followup_question
                     })
@@ -348,6 +351,8 @@ class LLMReflectionAgent:
 
         try:
             print("Current Timestamp before followup analysis call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            print("Followup Analysis prompt:", prompt)
+
             response = await self.db_client.call_claude_api_endpoint_async(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1000,
@@ -374,27 +379,32 @@ class LLMReflectionAgent:
             # Handle topic drift
             if not analysis.get('is_relevant', True) or analysis.get('action') == 'TOPIC_DRIFT':
                 retry_count = state.get('reflection_followup_retry_count', 0)
+                original_followup = state.get('reflection_original_followup_question', followup_question)
 
                 if retry_count < 1:
-                    # First drift - re-ask with note
+                    # First drift - re-ask with note using ORIGINAL question
                     self._log('info', f"Topic drift detected (attempt {retry_count + 1}), re-asking", state)
                     return {
                         'is_reflection_mode': True,
                         'is_reflection_handling': True,
                         'reflection_phase': 'input_collection',
                         'reflection_followup_retry_count': retry_count + 1,
-                        'reflection_follow_up_question': f"I didn't quite understand your response. Let me ask again:\n\n{followup_question}",
+                        'reflection_original_followup_question': original_followup,  # Preserve original
+                        'reflection_follow_up_question': f"I didn't quite understand your response. Let me ask again:\n\n{original_followup}",
                         'next_agent': 'END',
-                        'user_friendly_message': f"Your response doesn't seem related to the correction. Let me ask again:\n\n{followup_question}"
+                        'reflection_followup_flg':True,
+                        'user_friendly_message': f"I didn't quite understand your response. Let me ask again:\n\n{original_followup}"
                     }
                 else:
-                    # Second drift - end flow
+                    # Second drift - end flow (retry_count >= 1)
                     self._log('info', "Topic drift detected twice, ending reflection flow", state)
                     return {
                         'is_reflection_mode': False,
                         'is_reflection_handling': False,
                         'reflection_phase': None,
+                        'reflection_followup_retry_count': 0,  # Reset counter
                         'next_agent': 'END',
+                        'reflection_followup_retry_exceeded': True,
                         'user_friendly_message': "I'm having trouble understanding your correction request. Please start a new question when you're ready."
                     }
 
@@ -551,6 +561,7 @@ class LLMReflectionAgent:
 
         try:
             print("Current Timestamp before plan approval analysis:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            print("Plan Approval Analysis prompt:", prompt)
             response = await self.db_client.call_claude_api_endpoint_async(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -738,6 +749,7 @@ class LLMReflectionAgent:
         )
 
         try:
+            print("FPlan generated prompt:", prompt)
             response = await self.db_client.call_claude_api_endpoint_async(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
@@ -745,8 +757,9 @@ class LLMReflectionAgent:
                 top_p=0.9,
                 system_prompt=REFLECTION_PLAN_SYSTEM_PROMPT
             )
+            print("FPlan generated response:", response)
 
-            self._log('info', "Plan generated", state, llm_response=response[:500])
+            self._log('info', "Plan generated", state, llm_response=response[:1000])
 
             # Parse and format the plan for display
             plan_display = self._format_plan_for_display(response, selected_datasets)
@@ -1099,6 +1112,7 @@ Options: ✅ Approve | ✏️ Modify | ❌ Cancel"""
         for attempt in range(self.max_retries):
             try:
                 print(f"🔄 Reflection SQL generation attempt {attempt + 1}")
+                print(f"Reflection SQL prompt: {sql_generation_prompt}...")
                 llm_response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": sql_generation_prompt}],
                     max_tokens=3000,
@@ -1107,7 +1121,7 @@ Options: ✅ Approve | ✏️ Modify | ❌ Cancel"""
                     system_prompt=SQL_WRITER_SYSTEM_PROMPT
                 )
 
-                print(f"Reflection SQL response: {llm_response[:500]}...")
+                print(f"Reflection SQL response: {llm_response[:1000]}...")
 
                 # Extract sql_story
                 sql_story = ""
@@ -1478,19 +1492,22 @@ Options: ✅ Approve | ✏️ Modify | ❌ Cancel"""
             with open(metadata_config_path, 'r') as f:
                 metadata_config = json.load(f)
 
-            # Get datasets for this domain
             domain_datasets = metadata_config.get(domain_selection, [])
-            if not domain_datasets:
-                # Try to find datasets that might match
-                for key in metadata_config:
-                    if domain_selection.lower() in key.lower():
-                        domain_datasets = metadata_config[key]
-                        break
 
-            return domain_datasets
+            # Convert to list of dicts with functional_name and table_name
+            available_datasets = []
+            for dataset_dict in domain_datasets:
+                for functional_name, table_name in dataset_dict.items():
+                    available_datasets.append({
+                        "functional_name": functional_name,
+                        "table_name": table_name
+                    })
+
+            print(f"✅ Loaded {len(available_datasets)} available datasets for {domain_selection}")
+            return available_datasets
 
         except Exception as e:
-            print(f"Error loading available datasets: {e}")
+            print(f"❌ Failed to load available datasets: {e}")
             return []
 
     def _generate_dataset_selection_question(self, available_datasets: List[Dict],

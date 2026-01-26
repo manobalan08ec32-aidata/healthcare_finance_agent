@@ -12,17 +12,17 @@ from prompts.navigation_prompts import NAVIGATION_SYSTEM_PROMPT, NAVIGATION_COMB
 logger = setup_logger(__name__)
 
 class LLMNavigationController:
-    """Single-prompt navigation controller with complete analysis, rewriting, and filter extraction"""
-    
+    """Single-prompt navigation controller with REFLECTION detection for correction/fix requests"""
+
     def __init__(self, databricks_client: DatabricksClient):
         self.db_client = databricks_client
-    
+
     def _log(self, level: str, message: str, state: AgentState = None, **extra):
         """Helper method to log with user context from state"""
         user_email = state.get('user_email') if state else None
         session_id = state.get('session_id') if state else None
         log_with_user_context(logger, level, f"[Navigation] {message}", user_email, session_id, **extra)
-    
+
     def _calculate_forecast_cycle(self) -> str:
         """
         Calculate current forecast cycle based on month:
@@ -33,7 +33,7 @@ class LLMNavigationController:
         """
         from datetime import datetime
         current_month = datetime.now().month
-        
+
         if 2 <= current_month <= 5:  # February to May
             return "2+10"
         elif 6 <= current_month <= 8:  # June to August
@@ -42,33 +42,37 @@ class LLMNavigationController:
             return "8+4"
         else:  # November (11), December (12), January (1)
             return "9+3"
-    
+
     async def process_user_query(self, state: AgentState) -> Dict[str, any]:
         """
-        Main entry point: Single-step LLM processing
-        
+        Main entry point: Single-step LLM processing with REFLECTION detection
+
         Args:
             state: Agent state containing question and history
         """
-        
+
         current_question = state.get('current_question', state.get('original_question', ''))
         existing_domain_selection = state.get('domain_selection', [])
         total_retry_count = state.get('llm_retry_count', 0)
-        
+
         self._log('info', "Processing user query", state, question=current_question)
-        
+
         # Single-step processing: Analyze → Rewrite → Extract in one call
         return await self._single_step_processing(
             current_question, existing_domain_selection, total_retry_count, state
         )
-    
-    async def _single_step_processing(self, current_question: str, existing_domain_selection: List[str], 
+
+    async def _single_step_processing(self, current_question: str, existing_domain_selection: List[str],
                                      total_retry_count: int, state: AgentState) -> Dict[str, any]:
-        """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt"""
-        
-        # self._log('info', "Starting question analysis and rewriting")
+        """Single-step LLM processing: Analyze → Rewrite → Extract in one prompt
+
+        Includes REFLECTION detection:
+        - When prefix is "follow-up" AND content contains correction words (wrong, fix, incorrect, etc.)
+        - Routes to reflection_agent with is_reflection_mode=True
+        """
+
         questions_history = state.get('user_question_history', [])
-        previous_question = state.get('rewritten_question', '') 
+        previous_question = state.get('rewritten_question', '')
         conversation_memory = state.get('conversation_memory', {
             'dimensions': {},
             'analysis_context': {
@@ -77,28 +81,28 @@ class LLMNavigationController:
             }
         })
         history_context = questions_history[-2:] if questions_history else []
-        
+
         # Calculate current forecast cycle based on current month
         current_forecast_cycle = self._calculate_forecast_cycle()
         self._log('info', "Calculated forecast cycle", state, cycle=current_forecast_cycle)
-        
+
         max_retries = 3
         retry_count = 0
-        
+
         while retry_count < max_retries:
             try:
                 # ═══════════════════════════════════════════════════════════════
                 # SINGLE STEP: COMBINED PROMPT
                 # ═══════════════════════════════════════════════════════════════
-                
+
                 prompt = self._build_combined_prompt(
-                    current_question, 
+                    current_question,
                     previous_question,
                     history_context,
                     current_forecast_cycle,
                     conversation_memory
                 )
-                # print('question prompt', prompt)
+
                 print("Current Timestamp before question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 response = await self.db_client.call_claude_api_endpoint_async(
                     messages=[{"role": "user", "content": prompt}],
@@ -109,12 +113,12 @@ class LLMNavigationController:
                 )
                 print("Current Timestamp after Question validator call:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 print("LLM Response:", response)
-                
+
                 # Log LLM output - actual response truncated to 500 chars for safety
                 self._log('info', "LLM response received from navigation validator", state,
                          llm_response=response,
                          retry_attempt=retry_count)
-                
+
                 # Check if LLM cannot answer - trigger retry
                 if "Sorry, the model cannot answer this question" in response:
                     retry_count += 1
@@ -141,7 +145,7 @@ class LLMNavigationController:
                             'filter_values': [],
                             'user_friendly_message': error_message
                         }
-                
+
                 # Strip markdown code blocks if present
                 cleaned_response = response.strip()
                 if cleaned_response.startswith("```json"):
@@ -151,7 +155,7 @@ class LLMNavigationController:
                 if cleaned_response.endswith("```"):
                     cleaned_response = cleaned_response[:-3]  # Remove trailing ```
                 cleaned_response = cleaned_response.strip()
-                
+
                 try:
                     result = json.loads(cleaned_response)
                 except json.JSONDecodeError as json_error:
@@ -165,13 +169,20 @@ class LLMNavigationController:
                             'response_message': response.strip()
                         }
                     }
-                
+
                 # Handle non-business questions (greeting, DML, invalid)
                 analysis = result.get('analysis', {})
                 input_type = analysis.get('input_type', 'business_question')
                 is_valid_business_question = analysis.get('is_valid_business_question', False)
                 response_message = analysis.get('response_message', '')
-                
+                context_decision = analysis.get('context_decision', 'NEW')
+                detected_prefix = analysis.get('detected_prefix', 'none')
+                clean_question = analysis.get('clean_question', current_question)
+
+                # ═══════════════════════════════════════════════════════════════
+                # EARLY EXIT: Non-business questions (greeting, DML, invalid)
+                # ═══════════════════════════════════════════════════════════════
+
                 if input_type in ['greeting', 'dml_ddl', 'invalid_business']:
                     return {
                         'rewritten_question': current_question,
@@ -188,26 +199,57 @@ class LLMNavigationController:
                         'filter_values': [],
                         'user_friendly_message': response_message
                     }
-                
-                # Handle business questions
+
+                # ═══════════════════════════════════════════════════════════════
+                # REFLECTION ROUTE: User follow-up with correction intent
+                # ═══════════════════════════════════════════════════════════════
+
+                if context_decision == 'REFLECTION':
+                    self._log('info', "REFLECTION detected - routing to reflection_agent", state,
+                             detected_prefix=detected_prefix, clean_question=clean_question)
+                    return {
+                        'rewritten_question': current_question,
+                        'question_type': 'what',
+                        'context_type': 'REFLECTION',
+                        'next_agent': 'reflection_agent',
+                        'next_agent_disp': 'Reflection Agent',
+                        'requires_domain_clarification': False,
+                        'domain_followup_question': None,
+                        'domain_selection': existing_domain_selection,
+                        'is_reflection_mode': True,
+                        'is_reflection_handling': False,  # Not yet in follow-up handling mode
+                        'reflection_phase': 'diagnosis',  # Explicitly set initial phase
+                        'llm_retry_count': total_retry_count + retry_count,
+                        'pending_business_question': '',
+                        'filter_values': [],
+                        'user_friendly_message': '',
+                        'detected_prefix': detected_prefix,
+                        'clean_question': clean_question,
+                        'user_correction_feedback': clean_question  # Store user's correction intent
+                    }
+
+                # ═══════════════════════════════════════════════════════════════
+                # BUSINESS QUESTION: Handle NEW and FOLLOW_UP
+                # ═══════════════════════════════════════════════════════════════
+
                 if input_type == 'business_question' and is_valid_business_question:
-                    
+
                     rewrite = result.get('rewrite', {})
                     filters = result.get('filters', {})
-                    
+
                     rewritten_question = rewrite.get('rewritten_question', current_question)
                     question_type = rewrite.get('question_type', 'what')
                     user_message = rewrite.get('user_message', '')
                     filter_values = filters.get('filter_values', [])
-                    
+
                     # Determine next agent based on question type
                     next_agent = "router_agent" if question_type == "what" else "root_cause_agent"
-                    
+
                     # Return complete result
                     return {
                         'rewritten_question': rewritten_question,
                         'question_type': question_type,
-                        'context_type': analysis.get('context_decision', 'NEW'),
+                        'context_type': context_decision,
                         'inherited_context': user_message,
                         'next_agent': next_agent,
                         'next_agent_disp': next_agent.replace('_', ' ').title(),
@@ -218,12 +260,12 @@ class LLMNavigationController:
                         'pending_business_question': '',
                         'filter_values': filter_values,
                         'user_friendly_message': user_message,
-                        'decision_from_analysis': analysis.get('context_decision', ''),
-                        'detected_prefix': analysis.get('detected_prefix', 'none'),
-                        'clean_question': analysis.get('clean_question', current_question),
+                        'decision_from_analysis': context_decision,
+                        'detected_prefix': detected_prefix,
+                        'clean_question': clean_question,
                         'reasoning': analysis.get('reasoning', '')
                     }
-                
+
                 # Fallback - invalid business question
                 return {
                     'rewritten_question': current_question,
@@ -239,11 +281,11 @@ class LLMNavigationController:
                     'filter_values': [],
                     'user_friendly_message': "I specialize in healthcare finance analytics."
                 }
-                        
+
             except Exception as e:
                 retry_count += 1
                 print(f"Single-step processing attempt {retry_count} failed: {str(e)}")
-                
+
                 if retry_count < max_retries:
                     print(f"Retrying... ({retry_count}/{max_retries})")
                     await asyncio.sleep(2 ** retry_count)
@@ -266,7 +308,7 @@ class LLMNavigationController:
                         'filter_values': [],
                         'user_friendly_message': "Service temporarily unavailable."
                     }
-    
+
     def _build_combined_prompt(self, current_question: str, previous_question: str,
                                history_context: List, current_forecast_cycle: str,
                                conversation_memory: Dict = None) -> str:

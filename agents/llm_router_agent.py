@@ -998,23 +998,6 @@ Previous question: {history_question_match}
 Use history to validate filter column choices. Never use history for time values.
 """
 
-        # Build user modification section if present (for re-planning after user modifies plan)
-        user_modification = state.get('user_modification', '')
-        user_modification_section = ""
-        if user_modification:
-            user_modification_section = f"""
-USER MODIFICATION FROM PREVIOUS PLAN:
-The user reviewed a previous plan and requested changes:
-"{user_modification}"
-
-IMPORTANT: Incorporate this modification into your analysis. The user wants to change
-filters, time ranges, or other aspects of the query. The EXTRACTED FILTER VALUES
-above have been updated with column matches for any new filter values mentioned.
-
-⚠️ MANDATORY: Since this is a user modification of a previous plan, you MUST output <plan_approval> block
-to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT skip to SQL_READY.
-"""
-
         # Use imported prompt template
         prompt = SQL_PLANNER_PROMPT.format(
             current_question=current_question,
@@ -1024,7 +1007,7 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
             mandatory_columns_text=mandatory_columns_text,
             dataset_context=dataset_context,
             other_available_datasets=', '.join(other_datasets) if other_datasets else 'None',
-            user_modification_section=user_modification_section
+            user_modifications=state.get('user_modification_section', '')
         )
 
         return prompt
@@ -1188,14 +1171,14 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
         print(f"✅ Switched to dataset(s): {', '.join(matched_functional_names)}")
         print(f"✅ Loaded new metadata for {len(matched_tables)} table(s)")
 
-        # Refresh feedback history for new tables
-        current_question = state.get('current_question', '')
-        await self._search_and_store_feedback_history(
-            current_question=current_question,
-            table_names=matched_tables,
-            state=state
-        )
-        print(f"🔄 Refreshed feedback history for new dataset(s)")
+        # # Refresh feedback history for new tables
+        # current_question = state.get('current_question', '')
+        # await self._search_and_store_feedback_history(
+        #     current_question=current_question,
+        #     table_names=matched_tables,
+        #     state=state
+        # )
+        # print(f"🔄 Refreshed feedback history for new dataset(s)")
 
         return {'success': True}
 
@@ -1243,7 +1226,7 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
         print("=" * 60)
         
         planner_prompt = self._build_sql_planner_prompt(context, state)
-        print("planner Prompt:", planner_prompt[:5000])
+        print("planner Prompt:", planner_prompt)
         
         context_output = None
         
@@ -1264,16 +1247,7 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
                          attempt=attempt + 1)          
                 # Extract context and check followup (state is updated with plan_approval_exists_flg inside function)
                 context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response, state)
-
-                # Handle force_show_plan: LLM should have produced <plan_approval> based on prompt instruction
-                force_show_plan = state.get('force_show_plan', False)
-                if force_show_plan:
-                    # Clear force_show_plan after this iteration
-                    state['force_show_plan'] = False
-                    if not needs_followup:
-                        # LLM didn't produce plan_approval despite instruction - log warning but proceed
-                        print("⚠️ force_show_plan=True but LLM didn't produce <plan_approval>. Proceeding with SQL generation.")
-
+                
                 if needs_followup:
                     print(f"❓ Followup needed: {followup_text[:150]}...")
                     state['is_sql_followup'] = True
@@ -1455,22 +1429,18 @@ TASK: Identify elements and categorize them:
    - Specific codes or IDs: "ABC123", "RX001"
    - NOT numeric values, NOT column names
 
-2. OTHER_ELEMENTS - Everything else the user mentions:
-   - Column names: "carrier_region", "client_name"
-   - Metrics: "rebate margin", "gross profit", "cost per script"
-   - Time periods: "Q1 2025", "FY 2024", "January 2025"
-
 EXCLUDE generic terms: pbm, hdp, mail, specialty, retail, optum, yes, no, ok, looks good
 
-OUTPUT: Return ONLY a JSON object with two arrays:
+OUTPUT: RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
+
 {{
-  "filter_values": ["CIGNA", "MPDOVA"],
-  "other_elements": ["carrier_region", "Q1 2025"]
+  "filter_values": ["CIGNA", "MPDOVA"]
 }}
-If nothing found, return: {{"filter_values": [], "other_elements": []}}
+If nothing found, return: {{"filter_values": []}}
 """
 
         try:
+            print("Extraction prompt:", extraction_prompt)
             llm_response = await self.db_client.call_claude_api_endpoint_async(
                 messages=[{"role": "user", "content": extraction_prompt}],
                 max_tokens=300,
@@ -1482,14 +1452,11 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
             # Parse JSON response
             result = json.loads(llm_response.strip())
             filter_values = result.get('filter_values', [])
-            other_elements = result.get('other_elements', [])
 
             print(f"🔍 LLM extracted filter_values: {filter_values}")
-            print(f"🔍 LLM extracted other_elements: {other_elements}")
 
             return {
-                'filter_values': filter_values if isinstance(filter_values, list) else [],
-                'other_elements': other_elements if isinstance(other_elements, list) else []
+                'filter_values': filter_values if isinstance(filter_values, list) else []
             }
 
         except Exception as e:
@@ -1515,7 +1482,6 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
         # Use LLM to extract and categorize elements
         extracted = await self._llm_extract_filter_values(user_modification, state)
         filter_values = extracted.get('filter_values', [])
-        other_elements = extracted.get('other_elements', [])
 
         additional_metadata = ""
         unresolved_filter_values = []
@@ -1548,19 +1514,10 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
                     additional_metadata += f"- {result}\n"
                 print(f"📊 Found {len(new_column_matches)} column matches for filter values")
 
-            if unresolved_filter_values:
-                print(f"⚠️ Unresolved filter values: {unresolved_filter_values}")
         else:
-            print("📊 No filter values extracted from modification")
+            print("📊 No filter values extracted from modification")    
 
-        # Add other_elements info for second planner to validate against metadata
-        if other_elements:
-            additional_metadata += f"\n**Other elements from user modification (validate against metadata):**\n"
-            for elem in other_elements:
-                additional_metadata += f"- {elem}\n"
-            print(f"📋 Other elements for planner validation: {other_elements}")
-
-        return additional_metadata, unresolved_filter_values
+        return additional_metadata
 
     async def _validate_followup_response_async(
         self,
@@ -1885,20 +1842,9 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
                 'error': load_result.get('error_message', 'Failed to load new dataset metadata')
             }
 
-        # Generate SQL with new dataset by REUSING the full planner -> writer pipeline
-        # This ensures proper validation against new schema without code duplication
-        print(f"🔄 Running SQL Planner + Writer pipeline for new dataset: {matched_functional_names}")
+        # Generate SQL with new dataset
+        print(f"🔨 Auto-generating SQL with new dataset: {matched_functional_names}")
         sql_context = self._extract_context(state)
-
-        # Reset plan iteration for fresh start with new dataset
-        # This ensures user gets full two-planner flow with new schema
-        state['plan_iteration'] = 0
-        state['user_modification'] = None
-        state['force_show_plan'] = False
-
-        # REUSE the main two-stage pipeline (_assess_and_generate_sql_async) which:
-        # 1. SQL Planner (Call 1) - validates question against new schema
-        # 2. SQL Writer (Call 2) - generates SQL if planner approves
         return await self._assess_and_generate_sql_async(sql_context, state)
 
     async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
@@ -1972,20 +1918,7 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
                 'original_followup_question': sql_followup_question,
                 'detected_new_question': sql_followup_answer
             }
-
-        # ========================================
-        # STEP 2: SQL GENERATION (based on classification)
-        # ========================================
-        print("\n📋 STEP 2: SQL Generation...")
-
-        if classification == 'DATASET_CHANGE_REQUEST':
-            print(f"\n🔄 DATASET_CHANGE_REQUEST detected - handling dataset change flow")
-            return await self._handle_dataset_change_from_followup(
-                requested_dataset_names=requested_datasets,
-                context=context,
-                state=state
-            )
-
+        
         if classification == 'SIMPLE_APPROVAL':
             print(f"\n✅ SIMPLE_APPROVAL detected - using lightweight SQL generation (~800 tokens)")
             return await self._generate_sql_simple_approval_async(
@@ -1995,59 +1928,57 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
                 state=state
             )
 
-        # APPROVAL_WITH_MODIFICATIONS: Handle with re-planning logic
-        print(f"\n✏️ APPROVAL_WITH_MODIFICATIONS detected")
 
-        # Check plan iteration to decide flow (max 2 plans)
-        plan_iteration = state.get('plan_iteration', 0)
+        # ========================================
+        # STEP 2: SQL GENERATION (based on classification)
+        # ========================================
+        print("\n📋 STEP 2: SQL Generation...")
 
-        if plan_iteration == 0:
-            # First modification - extract elements and search for filter values
-            print(f"📋 First plan modification (iteration {plan_iteration}) - extracting elements")
 
-            # Extract and search for filter values
-            # Returns (additional_metadata, unresolved_filter_values)
-            additional_metadata, unresolved_filter_values = await self._extract_and_search_new_filters(
+        user_modification_section = f"""
+The user reviewed a previous plan and requested changes:
+"{sql_followup_answer}"
+
+IMPORTANT: Incorporate this modification into your analysis. The user wants to change
+filters, time ranges, or other aspects of the query. The EXTRACTED FILTER VALUES
+above have been updated with column matches for any new filter values mentioned.
+
+⚠️ MANDATORY: Since this is a user modification of a previous plan, you MUST output <plan_approval> block
+to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT skip to SQL_READY."""
+        print('modification section',user_modification_section)
+        state["user_modification_section"] = user_modification_section
+
+        if classification == 'DATASET_CHANGE_REQUEST':
+            print(f"\n🔄 DATASET_CHANGE_REQUEST detected - handling dataset change flow")
+            return await self._handle_dataset_change_from_followup(
+                requested_dataset_names=requested_datasets,
+                context=context,
+                state=state
+            )
+
+        
+        # APPROVAL_WITH_MODIFICATIONS or fallback: Use full SQL generation
+        print(f"\n✏️ APPROVAL_WITH_MODIFICATIONS detected - using full SQL generation")
+
+        additional_metadata = await self._extract_and_search_new_filters(
                 modifications, state
             )
 
-            # Append additional metadata (found columns + other elements)
-            existing_filter_metadata = state.get('filter_metadata_results', '')
-            state['filter_metadata_results'] = existing_filter_metadata + additional_metadata
+        # Append additional metadata (found columns + other elements)
+        existing_filter_metadata = state.get('filter_metadata_results', '') or ''
+        state['filter_metadata_results'] = existing_filter_metadata + (additional_metadata or '')
 
-            # If there are unresolved filter values, add them to metadata for LLM to validate
-            # Let the second planner decide if it can resolve them against metadata
-            if unresolved_filter_values:
-                unresolved_str = ", ".join(unresolved_filter_values)
-                print(f"⚠️ Unresolved filter values (passing to planner): {unresolved_filter_values}")
-                state['filter_metadata_results'] += f"\n**Unresolved filter values (validate against metadata):**\n- {unresolved_str}\n"
+        # Store modifications in state for the full prompt
+        if modifications:
+            state['followup_modifications'] = modifications
 
-            # Store modification context for planner
-            state['user_modification'] = modifications
-            state['plan_iteration'] = 1
-            state['force_show_plan'] = True  # Always show 2nd plan for confirmation
-
-            # Re-run SQL Planner with updated context
-            # This will generate a SECOND plan incorporating user's modifications
-            print(f"🔄 Re-running SQL Planner with user modifications...")
-            sql_context = self._extract_context(state)
-            return await self._assess_and_generate_sql_async(sql_context, state)
-
-        else:
-            # Second plan approved with modifications
-            # Go directly to SQL Writer (no third plan allowed)
-            print(f"🔨 Second plan iteration ({plan_iteration}) - proceeding to SQL Writer (max plans reached)")
-
-            if modifications:
-                state['followup_modifications'] = modifications
-
-            # Use the original full SQL_FOLLOWUP_PROMPT for final SQL generation
-            return await self._generate_sql_full_followup_async(
-                context=context,
-                sql_followup_question=sql_followup_question,
-                sql_followup_answer=sql_followup_answer,
-                state=state
-            )
+        # Use the original full SQL_FOLLOWUP_PROMPT for complex cases
+        return await self._generate_sql_full_followup_async(
+            context=context,
+            sql_followup_question=sql_followup_question,
+            sql_followup_answer=sql_followup_answer,
+            state=state
+        )
 
     async def _generate_sql_full_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
         """

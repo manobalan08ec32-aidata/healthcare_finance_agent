@@ -272,7 +272,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
         elif node_name == 'navigation_controller':
             status_display.info("⏳ Validating your question...")
         elif node_name == 'router_agent':
-            status_display.info("⏳ Finding the right dataset for your question...")
+            status_display.info("⏳ Analyzing the Metadata...")
             # Start progressive updates
             asyncio.create_task(show_progressive_router_status())
         elif node_name == 'strategy_planner_agent':
@@ -285,9 +285,9 @@ async def run_streaming_workflow_async(workflow, user_query: str):
     async def show_progressive_router_status():
         """Show progressive status updates for router_agent node"""
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(8)
             if current_status_node == 'router_agent':  # Still on router
-                status_display.info("⏳ Generating SQL query based on metadata...")
+                status_display.info("⏳ Generating SQL Plan...")
 
             await asyncio.sleep(15)
             if current_status_node == 'router_agent':  # Still on router
@@ -447,61 +447,7 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         log_event('warning', "SQL returned no results")
                         add_assistant_message("No results available and please try different question.", message_type="error")
                         return
-
-                elif name == 'reflection_agent':
-                    print(f"🔄 Reflection agent completed")
-
-                    # Check for reflection errors
-                    if state.get('reflection_error_msg'):
-                        hide_spinner()
-                        status_display.empty()
-                        add_assistant_message(state.get('reflection_error_msg'), message_type="error")
-                        return
-
-                    # Check if reflection is waiting for user input (follow-up or plan approval)
-                    is_reflection_handling = state.get('is_reflection_handling', False)
-                    reflection_phase = state.get('reflection_phase', '')
-
-                    if is_reflection_handling:
-                        hide_spinner()
-                        status_display.empty()
-
-                        # Get the follow-up question or plan for display
-                        reflection_message = state.get('reflection_follow_up_question', '') or state.get('user_friendly_message', '')
-
-                        if reflection_message:
-                            # Check if this is a plan approval (contains plan markers)
-                            is_plan_approval = reflection_phase == 'plan_review' or '📋' in reflection_message
-
-                            # Use the same message type and flag as SQL plan approval
-                            add_assistant_message(
-                                reflection_message,
-                                message_type="needs_followup",
-                                plan_approval_exists_flg=is_plan_approval
-                            )
-                        return
-
-                    # Check if reflection completed with SQL result
-                    sql_result = state.get('sql_result', {})
-                    if sql_result and sql_result.get('success'):
-                        hide_spinner()
-                        status_display.empty()
-
-                        functional_names = state.get('functional_names', [])
-                        history_sql_used = state.get('history_sql_used', False)
-
-                        add_sql_result_message(
-                            sql_result,
-                            with_chart=True,
-                            functional_names=functional_names,
-                            history_sql_used=history_sql_used
-                        )
-                        last_state = state
-
-                        st.session_state.sql_rendered = True
-                        st.session_state.followup_state = state
-                        break
-
+                
                 elif name == 'strategy_planner_agent':
                     print(f"🧠 Strategic planner completed")
                     
@@ -1402,7 +1348,7 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
     elif not functional_names:
         print(f"⏭️ No functional_names to display")
     
-    # SQL Query in collapsible section
+    # SQL Query in collapsible section using HTML details/summary
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
@@ -1414,67 +1360,50 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         # Escape HTML characters in SQL query to prevent rendering issues
         escaped_sql = html.escape(sql_query)
         
-        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        # Use HTML details/summary for SQL query expander
         st.markdown(f"""
         <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
             <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
-                View SQL Query (Click to expand)
+                🔍 View SQL Query (Click to expand)
             </summary>
             <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
-                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
             </div>
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table - wrapped in expander with styled label
+    # Data table - show directly without expander
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
         
-        # Styled expander label using markdown
-        st.markdown("""
-        <style>
-        div[data-testid="stExpander"] {
-            border: 1px solid #EDE8E0;
-            border-radius: 6px;
-            margin: 10px 0;
-        }
-        div[data-testid="stExpander"] details summary {
-            font-family: 'Inter', sans-serif;
-            font-weight: 500;
-            font-size: 0.95rem;
-            color: #495057;
-            padding: 8px 12px;
-        }
-        div[data-testid="stExpander"] details summary:hover {
-            background-color: #f8f9fa;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
-            if row_count > 10000:
-                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-            elif not formatted_df.empty:
-                st.dataframe(
-                    formatted_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No data to display")
+        st.markdown("**📊 Data Output:**")
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
 
-        # Display chart visualization in separate expander (only if chart is available)
+        # Display chart visualization in checkbox expander (only if chart is available)
         if chart_spec and chart_spec.get('render', False):
-            with st.expander("📈 View Visual (Click to expand)", expanded=False):
-                try:
-                    # Convert data to DataFrame for chart (use raw data, not formatted)
-                    chart_df = pd.DataFrame(data) if isinstance(data, list) else data
-                    if not chart_df.empty:
+            try:
+                # Convert data to DataFrame for chart (use raw data, not formatted)
+                chart_df = pd.DataFrame(data) if isinstance(data, list) else data
+                if not chart_df.empty:
+                    # Use checkbox for chart to allow expand/collapse
+                    chart_key = f"show_chart_{hash(str(data)[:100]) if data else 'empty'}_{st.session_state.get('message_counter', 0)}"
+                    show_chart = st.checkbox("📈 View Visual (Click to expand)", key=chart_key, value=False)
+                    
+                    if show_chart:
                         render_chart_from_spec(chart_spec, chart_df)
-                except Exception as e:
-                    st.error(f"❌ Chart display error: {e}")
-                    print(f"❌ Chart display error: {e}")
+            except Exception as e:
+                st.error(f"❌ Chart display error: {e}")
+                print(f"❌ Chart display error: {e}")
 
         # Add feedback buttons after narrative (only for current session)
         if show_feedback:
@@ -1875,7 +1804,7 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
     </div>
     """, unsafe_allow_html=True)
     
-    # SQL Query in collapsible section
+    # SQL Query in collapsible section using HTML details/summary
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
@@ -1887,34 +1816,34 @@ def render_single_strategic_result(title, sql_query, data, narrative, index, sho
         # Escape HTML characters in SQL query to prevent rendering issues
         escaped_sql = html.escape(sql_query)
         
-        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        # Use HTML details/summary for SQL query expander
         st.markdown(f"""
         <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
             <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
-                View Strategic SQL Query #{index}
+                🔍 View Strategic SQL Query #{index} (Click to expand)
             </summary>
             <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
-                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
             </div>
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table - wrapped in expander with styled label
+    # Data table - show directly without expander
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
         
-        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
-            if row_count > 10000:
-                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-            elif not formatted_df.empty:
-                st.dataframe(
-                    formatted_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No data to display")
+        st.markdown(f"**📊 Strategic Data Output #{index}:**")
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
     
     # Strategic narrative
     if narrative:
@@ -1981,7 +1910,7 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
     </div>
     """, unsafe_allow_html=True)
     
-    # SQL Query in collapsible section
+    # SQL Query in collapsible section using HTML details/summary
     if sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
@@ -1993,34 +1922,34 @@ def render_single_drillthrough_result(title, sql_query, data, narrative, causati
         # Escape HTML characters in SQL query to prevent rendering issues
         escaped_sql = html.escape(sql_query)
         
-        # Use HTML details/summary instead of st.expander to avoid Azure rendering issues
+        # Use HTML details/summary for SQL query expander
         st.markdown(f"""
         <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
             <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
-                View Drillthrough SQL Query #{index}
+                🔍 View Drillthrough SQL Query #{index} (Click to expand)
             </summary>
             <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
-                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0;"><code>{escaped_sql}</code></pre>
+                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
             </div>
         </details>
         """, unsafe_allow_html=True)
     
-    # Data table - wrapped in expander with styled label
+    # Data table - show directly without expander
     if data:
         formatted_df = format_sql_data_for_streamlit(data)
         row_count = len(formatted_df) if hasattr(formatted_df, 'shape') else 0
         
-        with st.expander("📊 View Data Output (Click to expand)", expanded=False):
-            if row_count > 10000:
-                st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
-            elif not formatted_df.empty:
-                st.dataframe(
-                    formatted_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No data to display")
+        st.markdown(f"**📊 Drillthrough Data Output #{index}:**")
+        if row_count > 10000:
+            st.warning("⚠️ SQL query output exceeds more than 10000 rows. Please rephrase your query to reduce the result size.")
+        elif not formatted_df.empty:
+            st.dataframe(
+                formatted_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data to display")
     
     # Drillthrough narrative and causational insights
     if narrative or causational_insights:

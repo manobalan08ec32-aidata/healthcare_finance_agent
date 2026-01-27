@@ -1010,6 +1010,9 @@ The user reviewed a previous plan and requested changes:
 IMPORTANT: Incorporate this modification into your analysis. The user wants to change
 filters, time ranges, or other aspects of the query. The EXTRACTED FILTER VALUES
 above have been updated with column matches for any new filter values mentioned.
+
+⚠️ MANDATORY: Since this is a user modification of a previous plan, you MUST output <plan_approval> block
+to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT skip to SQL_READY.
 """
 
         # Use imported prompt template
@@ -1091,57 +1094,6 @@ above have been updated with column matches for any new filter values mentioned.
             followup_text = ""
 
         return context_content, needs_followup, followup_text
-
-    def _build_plan_approval_from_context(self, context_output: str, state: Dict) -> str:
-        """Build a plan approval message from context when planner didn't produce one
-
-        Used when force_show_plan=True for user modification confirmation.
-
-        Args:
-            context_output: The context block from planner
-            state: Current state dict
-
-        Returns:
-            str: Plan approval message for user confirmation
-        """
-        current_question = state.get('current_question', '')
-        user_modification = state.get('user_modification', '')
-        functional_names = state.get('functional_names', [])
-        dataset_name = ', '.join(functional_names) if functional_names else 'Unknown'
-
-        # Extract key details from context
-        filters_section = ""
-        select_section = ""
-
-        # Parse FILTERS from context
-        filters_match = re.search(r'FILTERS:\s*\n((?:- .*\n?)+)', context_output, re.MULTILINE)
-        if filters_match:
-            filters_lines = filters_match.group(1).strip().split('\n')
-            filters_section = "\n".join([f"  {line.strip()}" for line in filters_lines if line.strip()])
-
-        # Parse SELECT from context
-        select_match = re.search(r'SELECT:\s*\n((?:- .*\n?)+)', context_output, re.MULTILINE)
-        if select_match:
-            select_lines = select_match.group(1).strip().split('\n')
-            select_section = "\n".join([f"  {line.strip()}" for line in select_lines if line.strip()])
-
-        plan_approval = f"""📋 Updated SQL Plan (incorporating your changes)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 Question: {current_question}
-
-✏️ Your Modification: "{user_modification}"
-
-📊 Dataset: {dataset_name}
-
-📌 Selected Columns:
-{select_section if select_section else '  (see context for details)'}
-
-🔍 Filters Applied:
-{filters_section if filters_section else '  (see context for details)'}
-
-Please confirm this updated plan to proceed with SQL generation."""
-
-        return plan_approval
 
     async def _search_and_store_feedback_history(self, current_question: str, table_names: list, state: Dict) -> bool:
         """Search feedback SQL and store history in state
@@ -1313,18 +1265,14 @@ Please confirm this updated plan to proceed with SQL generation."""
                 # Extract context and check followup (state is updated with plan_approval_exists_flg inside function)
                 context_output, needs_followup, followup_text = self._extract_context_and_followup(planner_response, state)
 
-                # Handle force_show_plan: Always show plan for user modification confirmation
+                # Handle force_show_plan: LLM should have produced <plan_approval> based on prompt instruction
                 force_show_plan = state.get('force_show_plan', False)
-                if force_show_plan and not needs_followup:
-                    # User modified plan - force plan approval even if planner didn't produce one
-                    print("📋 force_show_plan=True: Forcing plan approval for user confirmation")
-                    needs_followup = True
-                    state['plan_approval_exists_flg'] = True
-                    # Build a plan approval from context if not present
-                    if not followup_text:
-                        followup_text = self._build_plan_approval_from_context(context_output, state)
-                    # Clear force_show_plan after handling
+                if force_show_plan:
+                    # Clear force_show_plan after this iteration
                     state['force_show_plan'] = False
+                    if not needs_followup:
+                        # LLM didn't produce plan_approval despite instruction - log warning but proceed
+                        print("⚠️ force_show_plan=True but LLM didn't produce <plan_approval>. Proceeding with SQL generation.")
 
                 if needs_followup:
                     print(f"❓ Followup needed: {followup_text[:150]}...")

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 import json
 import asyncio
 import re
@@ -16,16 +16,13 @@ from prompts.router_prompts import (
     DATASET_CLARIFICATION_PROMPT,
     SQL_PLANNER_SYSTEM_PROMPT,
     SQL_PLANNER_PROMPT,
-    SQL_WRITER_SYSTEM_PROMPT,
     SQL_WRITER_PROMPT,
-    SQL_DATASET_CHANGE_PROMPT,
     SQL_HISTORY_SECTION_TEMPLATE,
     SQL_NO_HISTORY_SECTION,
     SQL_FOLLOWUP_SYSTEM_PROMPT,
     SQL_FOLLOWUP_PROMPT,
     SQL_FOLLOWUP_VALIDATION_SYSTEM_PROMPT,
     SQL_FOLLOWUP_VALIDATION_PROMPT,
-    SQL_FOLLOWUP_SIMPLE_APPROVAL_PROMPT,
     SQL_FIX_PROMPT,
 )
 
@@ -1043,10 +1040,10 @@ Use history to validate filter column choices. Never use history for time values
 
 
     def _extract_context_and_followup(self, response: str, state: Dict) -> tuple[str, bool, str]:
-        """Extract context block and check for followup or plan_approval
+        """Extract context block and check for followup
 
         Returns:
-            tuple: (context_content, needs_followup, followup_or_plan_text)
+            tuple: (context_content, needs_followup, followup_text)
         """
 
         # Extract context block
@@ -1056,25 +1053,20 @@ Use history to validate filter column choices. Never use history for time values
 
         context_content = context_match.group(1).strip()
 
-        # Check for followup - either in tag or in DECISION
+        # Check for followup - only actual <followup> tag or DECISION: FOLLOWUP_REQUIRED
         followup_match = re.search(r'<followup>(.*?)</followup>', response, re.DOTALL)
 
-        # Check for plan_approval block
-        plan_approval_match = re.search(r'<plan_approval>(.*?)</plan_approval>', response, re.DOTALL)
+        # needs_followup is ONLY true when there's an actual followup question
+        needs_followup = bool(followup_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
 
-        # Determine if needs followup (followup OR plan_approval)
-        needs_followup = bool(followup_match) or bool(plan_approval_match) or 'DECISION: FOLLOWUP_REQUIRED' in context_content
+        # Extract followup text if exists
+        followup_text = followup_match.group(1).strip() if followup_match else ""
 
-        # Set plan approval flag in state
-        state['plan_approval_exists_flg'] = bool(plan_approval_match)
-
-        # Get the text to display (followup takes priority if both exist)
-        if followup_match:
-            followup_text = followup_match.group(1).strip()
-        elif plan_approval_match:
-            followup_text = plan_approval_match.group(1).strip()
-        else:
-            followup_text = ""
+        # Check for sql_plan block and store in sql_story for UI display
+        sql_plan_match = re.search(r'<sql_plan>(.*?)</sql_plan>', response, re.DOTALL)
+        if sql_plan_match:
+            state['sql_story'] = sql_plan_match.group(1).strip()
+            print(f"📋 Stored sql_plan in sql_story ({len(state['sql_story'])} chars)")
 
         return context_content, needs_followup, followup_text
 
@@ -1317,13 +1309,11 @@ Use history to validate filter column choices. Never use history for time values
                 history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', writer_response, re.IGNORECASE)
                 if history_match:
                     history_sql_used = history_match.group(1).strip().lower() == 'true'
-                
-                # Extract sql_story
-                sql_story = ""
-                story_match = re.search(r'<sql_story>(.*?)</sql_story>', writer_response, re.DOTALL)
-                if story_match:
-                    sql_story = story_match.group(1).strip()
-                
+
+                # Get sql_story (plan) from state - it was stored from planner's plan_approval
+                sql_story = state.get('sql_story', '')
+                print(f"📖 Using SQL plan from state ({len(sql_story)} chars)")
+
                 # Check for multiple SQL
                 multiple_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', writer_response, re.DOTALL)
                 if multiple_match:
@@ -1404,121 +1394,6 @@ Use history to validate filter column choices. Never use history for time values
 
     # ============ TWO-STEP FOLLOWUP HANDLING METHODS ============
 
-    async def _llm_extract_filter_values(self, user_modification: str, state: Dict) -> Dict[str, List[str]]:
-        """Use LLM to extract ALL elements from user modification, categorized
-
-        Extracts and categorizes elements into:
-        - filter_values: Actual data values (e.g., "CIGNA", "MPDOVA") - searchable via search_column_values()
-        - other_elements: Column names, metrics, time periods - validated by planner against metadata
-
-        Args:
-            user_modification: User's modification text
-            state: Current state dict
-
-        Returns:
-            Dict with 'filter_values' and 'other_elements' lists
-        """
-        extraction_prompt = f"""Extract and categorize ALL elements from the user's plan modification.
-
-USER MODIFICATION: {user_modification}
-
-TASK: Identify elements and categorize them:
-
-1. FILTER_VALUES - Actual data values that exist in database columns:
-   - Carrier/client names: "CIGNA", "MPDOVA", "Acme Corp"
-   - Specific codes or IDs: "ABC123", "RX001"
-   - NOT numeric values, NOT column names
-
-EXCLUDE generic terms: pbm, hdp, mail, specialty, retail, optum, yes, no, ok, looks good
-
-OUTPUT: RESPONSE FORMAT MUST be valid JSON. Do NOT include any extra text, markdown, or formatting. The response MUST not start with ```json and end with ```
-
-{{
-  "filter_values": ["CIGNA", "MPDOVA"]
-}}
-If nothing found, return: {{"filter_values": []}}
-"""
-
-        try:
-            print("Extraction prompt:", extraction_prompt)
-            llm_response = await self.db_client.call_claude_api_endpoint_async(
-                messages=[{"role": "user", "content": extraction_prompt}],
-                max_tokens=300,
-                temperature=0.0,
-                top_p=0.1,
-                system_prompt="You are a data element extractor. Output only valid JSON objects."
-            )
-
-            # Parse JSON response
-            result = json.loads(llm_response.strip())
-            filter_values = result.get('filter_values', [])
-
-            print(f"🔍 LLM extracted filter_values: {filter_values}")
-
-            return {
-                'filter_values': filter_values if isinstance(filter_values, list) else []
-            }
-
-        except Exception as e:
-            print(f"⚠️ Element extraction failed: {e}")
-            return {'filter_values': [], 'other_elements': []}
-
-    async def _extract_and_search_new_filters(self, user_modification: str, state: Dict) -> Tuple[str, List[str]]:
-        """Extract elements using LLM and search for filter values in columns
-
-        Only filter_values are searched via search_column_values().
-        Other elements (column names, metrics, time periods) are passed to second planner
-        for validation against metadata.
-
-        Args:
-            user_modification: User's modification text
-            state: Current state dict
-
-        Returns:
-            Tuple of (additional_filter_metadata, unresolved_filter_values)
-            - additional_filter_metadata: New metadata to APPEND to existing filter_metadata_results
-            - unresolved_filter_values: filter values that couldn't be found in any column
-        """
-        # Use LLM to extract and categorize elements
-        extracted = await self._llm_extract_filter_values(user_modification, state)
-        filter_values = extracted.get('filter_values', [])
-
-        additional_metadata = ""
-        unresolved_filter_values = []
-
-        # Search for filter_values only (actual data values)
-        if filter_values:
-            print(f"🔍 Searching columns for filter values: {filter_values}")
-
-            new_column_matches = await self.db_client.search_column_values(
-                filter_values,
-                max_columns=7,
-                max_values_per_column=5
-            )
-
-            # Track which filter values were found
-            found_values = set()
-            if new_column_matches:
-                for match in new_column_matches:
-                    # Parse match to extract the value
-                    for fv in filter_values:
-                        if fv.lower() in str(match).lower():
-                            found_values.add(fv.lower())
-
-            # Identify unresolved filter values
-            unresolved_filter_values = [fv for fv in filter_values if fv.lower() not in found_values]
-
-            if new_column_matches:
-                additional_metadata += "\n**Columns found for modified filter values:**\n"
-                for result in new_column_matches:
-                    additional_metadata += f"- {result}\n"
-                print(f"📊 Found {len(new_column_matches)} column matches for filter values")
-
-        else:
-            print("📊 No filter values extracted from modification")    
-
-        return additional_metadata
-
     async def _validate_followup_response_async(
         self,
         sql_followup_question: str,
@@ -1533,24 +1408,13 @@ If nothing found, return: {{"filter_values": []}}
 
         Returns:
             Dict with keys:
-            - classification: SIMPLE_APPROVAL | APPROVAL_WITH_MODIFICATIONS |
-                             DATASET_CHANGE_REQUEST | NEW_QUESTION | TOPIC_DRIFT
-            - modifications: str (if APPROVAL_WITH_MODIFICATIONS)
-            - requested_datasets: List[str] (if DATASET_CHANGE_REQUEST)
+            - classification: VALID_ANSWER | NEW_QUESTION | TOPIC_DRIFT
             - reasoning: str
         """
         current_question = state.get('rewritten_question', state.get('current_question', ''))
         selected_functional_names = state.get('functional_names', [])
-        available_datasets = state.get('available_datasets', [])
-
-        # Get other available datasets (excluding selected ones)
-        other_datasets = [
-            d['functional_name'] for d in available_datasets
-            if d['functional_name'] not in selected_functional_names
-        ]
 
         selected_dataset_name = ', '.join(selected_functional_names) if selected_functional_names else 'None'
-        other_available_datasets = ', '.join(other_datasets) if other_datasets else 'None'
 
         # Clean the follow-up answer
         cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', sql_followup_answer).strip()
@@ -1559,7 +1423,6 @@ If nothing found, return: {{"filter_values": []}}
         validation_prompt = SQL_FOLLOWUP_VALIDATION_PROMPT.format(
             current_question=current_question,
             selected_dataset_name=selected_dataset_name,
-            other_available_datasets=other_available_datasets,
             sql_followup_question=sql_followup_question,
             sql_followup_answer=cleaned_sql_followup_answer
         )
@@ -1585,29 +1448,18 @@ If nothing found, return: {{"filter_values": []}}
 
                 # Parse XML response
                 classification_match = re.search(r'<classification>(.*?)</classification>', llm_response, re.DOTALL)
-                modifications_match = re.search(r'<modifications>(.*?)</modifications>', llm_response, re.DOTALL)
-                datasets_match = re.search(r'<requested_datasets>(.*?)</requested_datasets>', llm_response, re.DOTALL)
                 reasoning_match = re.search(r'<reasoning>(.*?)</reasoning>', llm_response, re.DOTALL)
 
                 if not classification_match:
                     raise ValueError("No <classification> tag found in validation response")
 
                 classification = classification_match.group(1).strip().upper()
-                modifications = modifications_match.group(1).strip() if modifications_match else 'none'
-                requested_datasets_str = datasets_match.group(1).strip() if datasets_match else 'none'
                 reasoning = reasoning_match.group(1).strip() if reasoning_match else ''
-
-                # Parse requested datasets into list
-                requested_datasets = []
-                if requested_datasets_str.lower() != 'none' and requested_datasets_str:
-                    requested_datasets = [d.strip() for d in requested_datasets_str.split(',') if d.strip()]
 
                 print(f"✅ Validation complete: {classification}")
 
                 return {
                     'classification': classification,
-                    'modifications': modifications if modifications.lower() != 'none' else '',
-                    'requested_datasets': requested_datasets,
                     'reasoning': reasoning
                 }
 
@@ -1618,234 +1470,12 @@ If nothing found, return: {{"filter_values": []}}
                     print(f"🔄 Retrying validation... ({attempt + 1}/{self.max_retries})")
                     await asyncio.sleep(2 ** attempt)
 
-        # Fallback: if validation fails, default to APPROVAL_WITH_MODIFICATIONS to trigger full SQL generation
-        print("⚠️ Validation failed, defaulting to APPROVAL_WITH_MODIFICATIONS for full processing")
+        # Fallback: if validation fails, default to VALID_ANSWER to proceed with SQL generation
+        print("⚠️ Validation failed, defaulting to VALID_ANSWER for SQL generation")
         return {
-            'classification': 'APPROVAL_WITH_MODIFICATIONS',
-            'modifications': sql_followup_answer,
-            'requested_datasets': [],
-            'reasoning': 'Validation failed, defaulting to full processing'
+            'classification': 'VALID_ANSWER',
+            'reasoning': 'Validation failed, defaulting to SQL generation'
         }
-
-    async def _generate_sql_simple_approval_async(
-        self,
-        context: Dict,
-        sql_followup_question: str,
-        sql_followup_answer: str,
-        state: Dict
-    ) -> Dict[str, Any]:
-        """
-        Step 2a: Generate SQL for simple approval case with lightweight prompt (~800 tokens).
-
-        This method is called when the user simply approved the clarification without
-        adding new requirements. Uses a minimal prompt without full SQL generation rules.
-
-        Returns:
-            Dict with SQL generation result (same structure as full method)
-        """
-        current_question = context.get('current_question', '')
-        dataset_metadata = context.get('dataset_metadata', '')
-        filter_metadata_results = state.get('filter_metadata_results', [])
-
-        # Get history section from state
-        history_section = state.get('sql_history_section', SQL_NO_HISTORY_SECTION)
-
-        # Build mandatory columns text
-        selected_datasets = state.get('selected_dataset', [])
-        mandatory_column_mapping = {
-            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": ["Ledger"],
-            "prd_optumrx_orxfdmprdsa.rag.pbm_claims": ["product_category='PBM'"]
-        }
-
-        mandatory_columns_info = []
-        if isinstance(selected_datasets, list):
-            for dataset in selected_datasets:
-                if dataset in mandatory_column_mapping:
-                    for col in mandatory_column_mapping[dataset]:
-                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
-
-        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
-
-        # Clean the follow-up answer
-        cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', sql_followup_answer).strip()
-
-        # Build lightweight SQL generation prompt
-        simple_approval_prompt = SQL_FOLLOWUP_SIMPLE_APPROVAL_PROMPT.format(
-            current_question=current_question,
-            sql_followup_question=sql_followup_question,
-            sql_followup_answer=cleaned_sql_followup_answer,
-            dataset_metadata=dataset_metadata,
-            mandatory_columns_text=mandatory_columns_text,
-            filter_metadata_results=filter_metadata_results,
-            history_section=history_section,
-            reasoning_context=state.get('reasoning_context', '')
-        )
-
-        for attempt in range(self.max_retries):
-            try:
-                print(f"🔨 Step 2a: Generating SQL for simple approval (attempt {attempt + 1})...")
-                print(f"📝 Simple approval prompt: {simple_approval_prompt[:5000]}...")
-
-                llm_response = await self.db_client.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": simple_approval_prompt}],
-                    max_tokens=2500,
-                    temperature=0.0,
-                    top_p=0.1,
-                    system_prompt=SQL_FOLLOWUP_SYSTEM_PROMPT
-                )
-
-                print(f"📊 Simple approval SQL response: {llm_response}")
-
-                self._log('info', "LLM response received from simple approval SQL generation", state,
-                         llm_response=llm_response,
-                         attempt=attempt + 1)
-
-                # Extract sql_story
-                sql_story = ""
-                story_match = re.search(r'<sql_story>(.*?)</sql_story>', llm_response, re.DOTALL)
-                if story_match:
-                    sql_story = story_match.group(1).strip()
-                    print(f"📖 Captured SQL story from simple approval ({len(sql_story)} chars)")
-
-                # Extract history_sql_used flag
-                history_sql_used = False
-                history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE)
-                if history_match:
-                    history_sql_used = history_match.group(1).strip().lower() == 'true'
-                    print(f"📊 history_sql_used flag: {history_sql_used}")
-
-                # Check for multiple SQL queries
-                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
-                if multiple_sql_match:
-                    multiple_content = multiple_sql_match.group(1).strip()
-
-                    # Extract individual queries with titles
-                    query_matches = re.findall(
-                        r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>',
-                        multiple_content, re.DOTALL
-                    )
-
-                    if query_matches:
-                        sql_queries = []
-                        query_titles = []
-                        for _, title, query in query_matches:
-                            cleaned_query = query.strip().replace('`', '')
-                            cleaned_title = title.strip()
-                            if cleaned_query and cleaned_title:
-                                sql_queries.append(cleaned_query)
-                                query_titles.append(cleaned_title)
-
-                        if sql_queries:
-                            print(f"✅ Generated {len(sql_queries)} queries via simple approval")
-                            return {
-                                'success': True,
-                                'multiple_sql': True,
-                                'topic_drift': False,
-                                'new_question': False,
-                                'sql_queries': sql_queries,
-                                'query_titles': query_titles,
-                                'query_count': len(sql_queries),
-                                'history_sql_used': history_sql_used,
-                                'sql_story': sql_story
-                            }
-
-                    raise ValueError("Empty or invalid multiple SQL queries")
-
-                # Check for single SQL query
-                sql_match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-                if sql_match:
-                    sql_query = sql_match.group(1).strip().replace('`', '')
-
-                    if not sql_query:
-                        raise ValueError("Empty SQL query in response")
-
-                    print(f"✅ Generated single SQL via simple approval ({len(sql_query)} chars)")
-                    return {
-                        'success': True,
-                        'multiple_sql': False,
-                        'topic_drift': False,
-                        'new_question': False,
-                        'sql_query': sql_query,
-                        'history_sql_used': history_sql_used,
-                        'sql_story': sql_story
-                    }
-
-                raise ValueError("No SQL found in response")
-
-            except Exception as e:
-                print(f"❌ Simple approval SQL attempt {attempt + 1} failed: {str(e)}")
-
-                if attempt < self.max_retries - 1:
-                    print(f"🔄 Retrying... ({attempt + 1}/{self.max_retries})")
-                    await asyncio.sleep(2 ** attempt)
-
-        return {
-            'success': False,
-            'topic_drift': False,
-            'new_question': False,
-            'history_sql_used': False,
-            'error': f"Simple approval SQL generation failed after {self.max_retries} attempts"
-        }
-
-    async def _handle_dataset_change_from_followup(
-        self,
-        requested_dataset_names: list,
-        context: Dict,
-        state: Dict
-    ) -> Dict[str, Any]:
-        """
-        Handle dataset change request detected during follow-up validation.
-
-        Maps functional names to table names, loads new metadata, and generates SQL.
-
-        Args:
-            requested_dataset_names: List of functional dataset names requested by user
-            context: Current execution context
-            state: Current state dict
-
-        Returns:
-            SQL generation result dict
-        """
-        available_datasets = state.get('available_datasets', [])
-        matched_tables = []
-        matched_functional_names = []
-
-        for req_name in requested_dataset_names:
-            for dataset in available_datasets:
-                if dataset['functional_name'].strip().lower() == req_name.strip().lower():
-                    matched_tables.append(dataset['table_name'])
-                    matched_functional_names.append(dataset['functional_name'])
-                    break
-
-        if not matched_tables:
-            print(f"⚠️ No matching tables found for requested datasets: {requested_dataset_names}")
-            return {
-                'success': False,
-                'topic_drift': True,
-                'new_question': False,
-                'message': f"Requested dataset(s) not found: {requested_dataset_names}"
-            }
-
-        # Load metadata for new dataset(s)
-        print(f"🔄 Dataset change: {matched_functional_names}")
-        load_result = await self._load_metadata_for_dataset_change(
-            matched_tables=matched_tables,
-            matched_functional_names=matched_functional_names,
-            state=state
-        )
-
-        if not load_result.get('success'):
-            return {
-                'success': False,
-                'topic_drift': False,
-                'new_question': False,
-                'error': load_result.get('error_message', 'Failed to load new dataset metadata')
-            }
-
-        # Generate SQL with new dataset
-        print(f"🔨 Auto-generating SQL with new dataset: {matched_functional_names}")
-        sql_context = self._extract_context(state)
-        return await self._assess_and_generate_sql_async(sql_context, state)
 
     async def _generate_sql_with_followup_async(self, context: Dict, sql_followup_question: str, sql_followup_answer: str, state: Dict) -> Dict[str, Any]:
         """
@@ -1854,12 +1484,8 @@ If nothing found, return: {{"filter_values": []}}
         Step 1: Validate response (lightweight ~300 tokens)
         Step 2: Generate SQL (conditional, based on classification)
 
-        This replaces the previous monolithic approach that always used ~3000 tokens.
-
         Flow:
-        - SIMPLE_APPROVAL → Lightweight SQL generation (~800 tokens)
-        - APPROVAL_WITH_MODIFICATIONS → Full SQL generation (~2500 tokens)
-        - DATASET_CHANGE_REQUEST → Dataset change flow (existing)
+        - VALID_ANSWER → Lightweight SQL generation (~800 tokens)
         - NEW_QUESTION → Return immediately, no SQL call
         - TOPIC_DRIFT → Return immediately, no SQL call
         """
@@ -1879,15 +1505,11 @@ If nothing found, return: {{"filter_values": []}}
             state=state
         )
 
-        classification = validation_result.get('classification', 'APPROVAL_WITH_MODIFICATIONS')
-        modifications = validation_result.get('modifications', '')
-        requested_datasets = validation_result.get('requested_datasets', [])
+        classification = validation_result.get('classification', 'VALID_ANSWER')
         reasoning = validation_result.get('reasoning', '')
 
         print(f"\n✅ Validation Result:")
         print(f"   Classification: {classification}")
-        print(f"   Modifications: {modifications}")
-        print(f"   Requested Datasets: {requested_datasets}")
         print(f"   Reasoning: {reasoning}")
 
         # Store validation result in state for debugging/logging
@@ -1895,7 +1517,7 @@ If nothing found, return: {{"filter_values": []}}
         state['followup_classification'] = classification
 
         # ========================================
-        # HANDLE NON-SQL CASES (no second LLM call)
+        # HANDLE BASED ON CLASSIFICATION
         # ========================================
 
         if classification == 'TOPIC_DRIFT':
@@ -1918,61 +1540,9 @@ If nothing found, return: {{"filter_values": []}}
                 'original_followup_question': sql_followup_question,
                 'detected_new_question': sql_followup_answer
             }
-        
-        if classification == 'SIMPLE_APPROVAL':
-            print(f"\n✅ SIMPLE_APPROVAL detected - using lightweight SQL generation (~800 tokens)")
-            return await self._generate_sql_simple_approval_async(
-                context=context,
-                sql_followup_question=sql_followup_question,
-                sql_followup_answer=sql_followup_answer,
-                state=state
-            )
 
-
-        # ========================================
-        # STEP 2: SQL GENERATION (based on classification)
-        # ========================================
-        print("\n📋 STEP 2: SQL Generation...")
-
-
-        user_modification_section = f"""
-The user reviewed a previous plan and requested changes:
-"{sql_followup_answer}"
-
-IMPORTANT: Incorporate this modification into your analysis. The user wants to change
-filters, time ranges, or other aspects of the query. The EXTRACTED FILTER VALUES
-above have been updated with column matches for any new filter values mentioned.
-
-⚠️ MANDATORY: Since this is a user modification of a previous plan, you MUST output <plan_approval> block
-to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT skip to SQL_READY."""
-        print('modification section',user_modification_section)
-        state["user_modification_section"] = user_modification_section
-
-        if classification == 'DATASET_CHANGE_REQUEST':
-            print(f"\n🔄 DATASET_CHANGE_REQUEST detected - handling dataset change flow")
-            return await self._handle_dataset_change_from_followup(
-                requested_dataset_names=requested_datasets,
-                context=context,
-                state=state
-            )
-
-        
-        # APPROVAL_WITH_MODIFICATIONS or fallback: Use full SQL generation
-        print(f"\n✏️ APPROVAL_WITH_MODIFICATIONS detected - using full SQL generation")
-
-        additional_metadata = await self._extract_and_search_new_filters(
-                modifications, state
-            )
-
-        # Append additional metadata (found columns + other elements)
-        existing_filter_metadata = state.get('filter_metadata_results', '') or ''
-        state['filter_metadata_results'] = existing_filter_metadata + (additional_metadata or '')
-
-        # Store modifications in state for the full prompt
-        if modifications:
-            state['followup_modifications'] = modifications
-
-        # Use the original full SQL_FOLLOWUP_PROMPT for complex cases
+        # VALID_ANSWER: Generate SQL using the full followup method with complete metadata
+        print(f"\n✅ VALID_ANSWER detected - generating SQL")
         return await self._generate_sql_full_followup_async(
             context=context,
             sql_followup_question=sql_followup_question,
@@ -2025,16 +1595,7 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
 
         # Build dataset context for followup
         selected_functional_names = state.get('functional_names', [])
-        available_datasets = state.get('available_datasets', [])
-
-        # Get other available datasets (excluding selected ones)
-        other_datasets = [
-            d['functional_name'] for d in available_datasets
-            if d['functional_name'] not in selected_functional_names
-        ]
-
         selected_dataset_name = ', '.join(selected_functional_names) if selected_functional_names else 'None'
-        other_available_datasets = ', '.join(other_datasets) if other_datasets else 'None'
 
         # Clean the follow-up answer
         cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', sql_followup_answer).strip()
@@ -2049,8 +1610,7 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
             history_section=history_section,
             sql_followup_question=sql_followup_question,
             sql_followup_answer=cleaned_sql_followup_answer,
-            selected_dataset_name=selected_dataset_name,
-            other_available_datasets=other_available_datasets
+            selected_dataset_name=selected_dataset_name
         )
 
         for attempt in range(self.max_retries):
@@ -2074,12 +1634,12 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
                 # Note: Skip dataset_change, new_question, topic_drift checks since
                 # we already validated in Step 1. Go directly to SQL extraction.
 
-                # Extract sql_story tag
+                # Extract sql_plan tag and store in sql_story for UI display
                 sql_story = ""
-                story_match = re.search(r'<sql_story>(.*?)</sql_story>', llm_response, re.DOTALL)
-                if story_match:
-                    sql_story = story_match.group(1).strip()
-                    print(f"📖 Captured SQL generation story from full followup ({len(sql_story)} chars)")
+                plan_match = re.search(r'<sql_plan>(.*?)</sql_plan>', llm_response, re.DOTALL)
+                if plan_match:
+                    sql_story = plan_match.group(1).strip()
+                    print(f"📋 Extracted sql_plan from followup response ({len(sql_story)} chars)")
 
                 # Extract history_sql_used flag
                 history_sql_used = False
@@ -2159,171 +1719,6 @@ to confirm the updated plan with the user. Use EXECUTION_PATH: SHOW_PLAN. Do NOT
             'new_question': False,
             'history_sql_used': False,
             'error': f"Full SQL generation with follow-up failed after {self.max_retries} attempts"
-        }
-
-    async def _generate_sql_after_dataset_change(self, context: Dict, state: Dict) -> Dict[str, Any]:
-        """Generate SQL after dataset change without re-validation
-
-        This method is called when user changes dataset during follow-up.
-        It generates SQL directly using the new dataset metadata without
-        going through the planner validation again.
-
-        Args:
-            context: Execution context containing question, metadata, etc.
-            state: Current state with updated dataset information
-
-        Returns:
-            Dictionary with SQL generation result
-        """
-
-        current_question = context.get('current_question', '')
-        dataset_metadata = context.get('dataset_metadata', '')
-        filter_metadata_results = state.get('filter_metadata_results', [])
-        selected_datasets = state.get('selected_dataset', [])
-
-        # Build mandatory columns (same as in _generate_sql_with_followup_async)
-        mandatory_column_mapping = {
-            "prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast": ["Ledger"],
-            "prd_optumrx_orxfdmprdsa.rag.pbm_claims": ["product_category='PBM'"]
-        }
-
-        mandatory_columns_info = []
-        if isinstance(selected_datasets, list):
-            for dataset in selected_datasets:
-                if dataset in mandatory_column_mapping:
-                    for col in mandatory_column_mapping[dataset]:
-                        mandatory_columns_info.append(f"Table {dataset}: {col} (MANDATORY)")
-
-        mandatory_columns_text = "\n".join(mandatory_columns_info) if mandatory_columns_info else "Not Applicable"
-
-        # Build history section (if available)
-        history_question_match = state.get('history_question_match', '')
-        matched_sql = state.get('matched_sql', '')
-        has_history = bool(matched_sql and history_question_match)
-
-        if has_history:
-            history_section = SQL_HISTORY_SECTION_TEMPLATE.format(
-                history_question_match=history_question_match,
-                matched_sql=matched_sql
-            )
-        else:
-            history_section = SQL_NO_HISTORY_SECTION
-
-        # Use comprehensive SQL_DATASET_CHANGE_PROMPT template
-        # This is a copy of SQL_WRITER_PROMPT but without context_output field
-        cleaned_sql_followup_answer = re.sub(r'(?i)\bfollow[- ]?up\b', '', state.get('current_question', '')).strip()
-
-        sql_generation_prompt = SQL_DATASET_CHANGE_PROMPT.format(
-            current_question=current_question,
-            dataset_metadata=dataset_metadata,
-            mandatory_columns_text=mandatory_columns_text,
-            filter_metadata_results=filter_metadata_results,
-            history_section=history_section,
-            sql_followup_question=state.get('sql_followup_question', ''),
-            sql_followup_answer=cleaned_sql_followup_answer
-        )
-
-        # Retry logic for SQL generation
-        for attempt in range(self.max_retries):
-            try:
-                print(f'Dataset change SQL prompt: {sql_generation_prompt[:7000]}')
-                llm_response = await self.db_client.call_claude_api_endpoint_async(
-                    messages=[{"role": "user", "content": sql_generation_prompt}],
-                    max_tokens=3000,
-                    temperature=0.0,
-                    top_p=0.1,
-                    system_prompt=SQL_WRITER_SYSTEM_PROMPT
-                )
-
-                print(f'Dataset change SQL response: {llm_response}')
-
-                # Extract sql_story FIRST (before other tags)
-                sql_story = ""
-                story_match = re.search(r'<sql_story>(.*?)</sql_story>', llm_response, re.DOTALL)
-                if story_match:
-                    sql_story = story_match.group(1).strip()
-                    print(f"📖 Captured SQL generation story from dataset change ({len(sql_story)} chars)")
-
-                # Check for multiple SQL queries FIRST
-                multiple_sql_match = re.search(r'<multiple_sql>(.*?)</multiple_sql>', llm_response, re.DOTALL)
-                if multiple_sql_match:
-                    multiple_content = multiple_sql_match.group(1).strip()
-
-                    # Extract individual queries with titles
-                    query_matches = re.findall(r'<query(\d+)_title>(.*?)</query\1_title>.*?<query\1>(.*?)</query\1>', multiple_content, re.DOTALL)
-                    if query_matches:
-                        sql_queries = []
-                        query_titles = []
-                        for i, (query_num, title, query) in enumerate(query_matches):
-                            cleaned_query = query.strip().replace('`', '')
-                            cleaned_title = title.strip()
-                            if cleaned_query and cleaned_title:
-                                sql_queries.append(cleaned_query)
-                                query_titles.append(cleaned_title)
-
-                        if sql_queries:
-                            # Extract history_sql_used flag
-                            history_sql_used = False
-                            history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE)
-                            if history_match:
-                                history_sql_used = history_match.group(1).lower() == 'true'
-                                print(f"📊 history_sql_used flag from LLM: {history_sql_used}")
-
-                            print(f"✅ Multiple SQL queries generated after dataset change")
-                            return {
-                                'success': True,
-                                'multiple_sql': True,
-                                'topic_drift': False,
-                                'new_question': False,
-                                'sql_queries': sql_queries,
-                                'query_titles': query_titles,
-                                'query_count': len(sql_queries),
-                                'history_sql_used': history_sql_used,
-                                'sql_story': sql_story
-                            }
-
-                    raise ValueError("Empty or invalid multiple SQL queries in XML response")
-
-                # Check for single SQL query
-                match = re.search(r'<sql>(.*?)</sql>', llm_response, re.DOTALL)
-                if match:
-                    sql_query = match.group(1).strip()
-                    sql_query = sql_query.replace('`', '')  # Remove backticks
-
-                    if not sql_query:
-                        raise ValueError("Empty SQL query in XML response")
-
-                    # Extract history_sql_used flag
-                    history_sql_used = False
-                    history_match = re.search(r'<history_sql_used>\s*(true|false)\s*</history_sql_used>', llm_response, re.IGNORECASE)
-                    if history_match:
-                        history_sql_used = history_match.group(1).lower() == 'true'
-                        print(f"📊 history_sql_used flag from LLM: {history_sql_used}")
-
-                    print(f"✅ SQL generated successfully after dataset change")
-                    return {
-                        'success': True,
-                        'multiple_sql': False,
-                        'topic_drift': False,
-                        'new_question': False,
-                        'sql_query': sql_query,
-                        'history_sql_used': history_sql_used,
-                        'sql_story': sql_story
-                    }
-                else:
-                    raise ValueError("No valid XML response found (expected sql or multiple_sql)")
-
-            except Exception as e:
-                print(f"❌ SQL generation after dataset change - attempt {attempt + 1} failed: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-
-        return {
-            'success': False,
-            'topic_drift': False,
-            'new_question': False,
-            'history_sql_used': False,
-            'error': f"SQL generation failed after dataset change ({self.max_retries} attempts)"
         }
 
     async def _execute_sql_with_retry_async(self, initial_sql: str, context: Dict, max_retries: int = 3) -> Dict:

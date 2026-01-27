@@ -1942,6 +1942,12 @@ If nothing found, return: {{"filter_values": [], "other_elements": []}}
         print(f"🔄 Running SQL Planner + Writer pipeline for new dataset: {matched_functional_names}")
         sql_context = self._extract_context(state)
 
+        # Reset plan iteration for fresh start with new dataset
+        # This ensures user gets full two-planner flow with new schema
+        state['plan_iteration'] = 0
+        state['user_modification'] = None
+        state['force_show_plan'] = False
+
         # REUSE the main two-stage pipeline (_assess_and_generate_sql_async) which:
         # 1. SQL Planner (Call 1) - validates question against new schema
         # 2. SQL Writer (Call 2) - generates SQL if planner approves

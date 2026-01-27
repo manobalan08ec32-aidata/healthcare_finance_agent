@@ -88,9 +88,11 @@ For each VALUE, resolve in priority order:
 
 A. SYNONYM CHECK → Look for patterns in METADATA (Mail→Home Delivery, SP→Specialty)
 B. EXTRACTED FILTERS → Pre-verified from database:
-   - Found in ONE column → Use it
-   - Found in MULTIPLE → Check HISTORY hint → If none, follow-up asking WHICH COLUMN
-   - Not found → Continue to METADATA
+     1. Check which column's sample values actually contain the exact filter value from question
+     2. If ONE column has exact match → Use that column
+     3. If MULTIPLE columns have exact match or NONE have exact match → Check HISTORY for hint
+     4. If no history → Follow-up asking WHICH COLUMN
+   - Value NOT found in extracted filters → Continue to METADATA check
 C. HISTORY SQL → Use history's column choice for ambiguous values (⚠️ Never for TIME filters)
 D. METADATA SAMPLES → Search sample values in column descriptions
 E. NOT MAPPED → Follow-up required (unless it's a number)

@@ -326,7 +326,7 @@ QUESTION: {current_question}
 EXTRACTED FILTER VALUES: {filter_metadata_results}
 
 {history_hint}
-
+{user_modification_section}
 METADATA: {dataset_metadata}
 MANDATORY FILTERS: {mandatory_columns_text}
 
@@ -428,28 +428,17 @@ When ANY info is missing or ambiguous:
 • Unclear metric or grouping intent
 → Output: <followup> only
 
-PATH B - SHOW_PLAN:
-When ALL info is available BUT complexity or risk exists:
+PATH B - SHOW_PLAN (DEFAULT - When No History Can Help):
+Use when NO historical SQL available OR history cannot help (different metric, different table, unrelated query).
+This is the DEFAULT path when history cannot assist.
+→ Output: <plan_approval> + <context>
 
-COMPLEXITY (2+ triggers SHOW_PLAN):
-• Multiple JOINs (3+ tables)
-• Business calculations (variance, YoY, margin %, forecast vs actual)
-• Multiple interacting filters (time + category + carrier together)
-• Aggregation across 3+ dimensions,bigger formula involved,correlated sub query needed
-• Filter clarity issues , never assume
-• Assumptions user should validate (fiscal vs calendar quarter)
-
-RISK (ANY triggers SHOW_PLAN):
-• Results could be misleading if assumptions wrong
-• Time grain interpretation affects outcome
-• Filter value resolved but not fully clear (value has variations in data)
-
-HISTORY OVERRIDE: Similar pattern or calculation exists in history question or history SQL + filters match current question→ skip to PATH C
-→ Output:<plan_approval> + <context>
-
-PATH C - SQL_READY:
-When ALL info mapped successfully AND query is straightforward OR history confirms pattern
+PATH C - SQL_READY (When History SQL Can Help):
+Use when historical SQL CAN help: same/similar metric, reusable filter patterns, adaptable calculation structure, or provides column/grouping reference.
 → Output: <context> only
+
+DECISION RULE: History SQL with same metric type or similar calculation → PATH C
+No history or unrelated history → PATH B (SHOW_PLAN)
 
 OUTPUT FORMAT
 

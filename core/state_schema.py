@@ -106,6 +106,11 @@ class AgentState(TypedDict):
     sql_followup_question: Optional[str]           # SQL clarification message
     needs_followup: Optional[bool]                 # SQL needs follow-up flag
     dataset_change_requested: Optional[bool]       # Flag indicating user requested dataset change during SQL followup
+
+    # SQL plan modification handling (two-planner flow)
+    plan_iteration: Optional[int]                  # Tracks plan iteration (0=first, 1=second max)
+    user_modification: Optional[str]               # User's modification text from plan approval response
+    force_show_plan: Optional[bool]                # When True, always show plan approval (used for 2nd iteration)
     
     # SQL history and results
     questions_sql_history: Optional[List[str]]     # SQL queries with titles history

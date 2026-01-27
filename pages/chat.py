@@ -1362,11 +1362,6 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
                 st.error(f"❌ Chart display error: {e}")
                 print(f"❌ Chart display error: {e}")
 
-        # Add feedback buttons after narrative (only for current session)
-        if show_feedback:
-            # ⭐ Pass sub_index and table_name to render_feedback_section
-            render_feedback_section(title, sql_query, data, narrative, user_question, message_idx, table_name, sub_index)
-    
     # 🆕 DISPLAY NARRATIVE AND POWER BI REPORT (Power BI below narrative, not side-by-side)
     # Check if we have Power BI data to display (ONLY if report_found is true)
     has_powerbi_info = False
@@ -1394,7 +1389,12 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # Add feedback buttons AFTER Key Insights (only for current session)
+    if show_feedback:
+        # ⭐ Pass sub_index and table_name to render_feedback_section
+        render_feedback_section(title, sql_query, data, narrative, user_question, message_idx, table_name, sub_index)
+
     # Display Power BI Report Info BELOW narrative (only if report_found is true) - Optum styled
     if has_powerbi_info:
         report_found = powerbi_data.get('report_found', False)
@@ -2565,34 +2565,34 @@ def render_last_session_overview():
             if cleaned_overview.endswith('```'):
                 cleaned_overview = cleaned_overview[:-3]  # Remove ```
             cleaned_overview = cleaned_overview.strip()
-            
-            # Use LLM-generated narrative overview with dark blue font
+
+            # Use LLM-generated narrative overview - styled like Key Insights card
             st.markdown(f"""
-            <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 16px; margin: 16px 0;">
-                <div style="display: flex; align-items: center; margin-bottom: 12px;">
-                    <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
-                    <strong style="color: #D74120; font-size: 1.1rem;">What we discussed last time</strong>
+            <div class="insights-card">
+                <div class="insights-header">
+                    <div class="insights-icon">💭</div>
+                    <div class="insights-title">What we discussed last time</div>
                 </div>
-                <div style="color: #D74120; line-height: 1.6; font-weight: 500;">
+                <div style="color: #2a2a2a; font-size: 14px; line-height: 1.7;">
                     {cleaned_overview}
                 </div>
-                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #D74120; font-size: 0.9rem;">
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #666; font-size: 0.9rem;">
                     <em>Ready to continue? Ask me a new question! 🚀</em>
                 </div>
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Fallback: Show a simple message with the session info
+            # Fallback: Show a simple message with the session info - styled like Key Insights card
             st.markdown(f"""
-            <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 16px; margin: 16px 0;">
-                <div style="display: flex; align-items: center; margin-bottom: 12px;">
-                    <span style="font-size: 1.2rem; margin-right: 8px;">💭</span>
-                    <strong style="color: #D74120; font-size: 1.1rem;">Welcome back!</strong>
+            <div class="insights-card">
+                <div class="insights-header">
+                    <div class="insights-icon">💭</div>
+                    <div class="insights-title">Welcome back!</div>
                 </div>
-                <div style="color: #D74120; line-height: 1.6; font-weight: 500;">
+                <div style="color: #2a2a2a; font-size: 14px; line-height: 1.7;">
                     I found your previous session from <strong>{insert_ts}</strong>. Model could not process at this time!
                 </div>
-                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #D74120; font-size: 0.9rem;">
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #EDE8E0; color: #666; font-size: 0.9rem;">
                     <em>Ready to continue? Ask me a new question! 🚀</em>
                 </div>
             </div>

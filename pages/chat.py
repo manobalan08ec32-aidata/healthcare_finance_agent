@@ -1201,7 +1201,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
         st.markdown("---")
         st.success("✅ Thank you for your feedback!")
 
-def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, functional_names=None, powerbi_data=None, history_sql_used=False):
+def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, functional_names=None, powerbi_data=None):
     """Render SQL results with title, expandable SQL query, data table, and narrative"""
     
     print(f"📊 render_sql_results called with: type={type(sql_result)}, show_feedback={show_feedback}, powerbi_data={powerbi_data is not None}")
@@ -1234,40 +1234,18 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
     
     # Check if multiple results
     if sql_result.get('multiple_results', False):
-        # Display Trusted/New SQL badge and SQL Plan checkbox for multiple queries
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            # Trusted SQL / New SQL badge
-            if history_sql_used:
-                st.markdown("""
-                <div class="trusted-badge">
-                    <span class="trusted-badge-icon">✓</span>
-                    <span>Trusted SQL Pattern Used</span>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                <div class="new-sql-badge">
-                    <span>⚡</span>
-                    <span>New SQL Generated</span>
-                </div>
-                """, unsafe_allow_html=True)
-
-        show_multi_plan = False
-        with col2:
-            # SQL Plan checkbox for multiple results
-            if sql_generation_story and sql_generation_story.strip():
-                multi_plan_key = f"show_sql_plan_multi_{hash(str(sql_generation_story)[:100])}_{st.session_state.get('message_counter', 0)}"
-                show_multi_plan = st.checkbox("📋 SQL Plan", key=multi_plan_key, value=False)
-
-        # Render SQL Plan content if expanded
-        if show_multi_plan and sql_generation_story and sql_generation_story.strip():
+        # Display SQL Plan once at the top for multiple queries using HTML details/summary
+        if sql_generation_story and sql_generation_story.strip():
             safe_sql_story = html.escape(sql_generation_story)
             st.markdown(f"""
-            <div style="background-color: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 6px; padding: 12px; margin: 5px 0;">
-                <pre style="white-space: pre-wrap; font-family: inherit; margin: 0; font-size: 13px; line-height: 1.5;">{safe_sql_story}</pre>
-            </div>
+            <details style="margin: 5px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+                <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                    📋 View SQL Plan
+                </summary>
+                <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                    <pre style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; font-size: 13px; line-height: 1.6; color: #2a2a2a;">{safe_sql_story}</pre>
+                </div>
+            </details>
             """, unsafe_allow_html=True)
 
         query_results = sql_result.get('query_results', [])
@@ -1281,7 +1259,7 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
             render_single_sql_result(
                 title, sql_query, data, narrative,
                 user_question, show_feedback, message_idx,
-                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None, chart_spec=chart_spec, history_sql_used=history_sql_used
+                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None, chart_spec=chart_spec
             )
     else:
         # Single result - use rewritten_question if available, otherwise default
@@ -1294,11 +1272,11 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
         render_single_sql_result(
             title, sql_query, data, narrative,
             user_question, show_feedback, message_idx,
-            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story, chart_spec=chart_spec, history_sql_used=history_sql_used
+            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story, chart_spec=chart_spec
         )
 
 
-def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None, chart_spec=None, history_sql_used=False):
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None, chart_spec=None):
     """Render a single SQL result with warm gold background for title and narrative
 
     Args:
@@ -1307,71 +1285,49 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         powerbi_data: Power BI report matching data from narrative agent
         sql_story: Business-friendly explanation of SQL generation (2-3 lines)
         chart_spec: LLM-generated chart specification for visualization
-        history_sql_used: Boolean indicating if trusted SQL pattern was used
     """
 
-    # Create inline row with columns: [Trusted/New SQL badge] [SQL Plan checkbox] [SQL Query checkbox]
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Create two-column layout for SQL Plan and SQL Query expanders
+    col1, col2 = st.columns(2)
 
     with col1:
-        # Trusted SQL / New SQL badge
-        if history_sql_used:
-            st.markdown("""
-            <div class="trusted-badge">
-                <span class="trusted-badge-icon">✓</span>
-                <span>Trusted SQL Pattern Used</span>
-            </div>
+        # SQL Plan in collapsible section using HTML details/summary
+        if sql_story and sql_story.strip():
+            safe_sql_story = html.escape(sql_story)
+            st.markdown(f"""
+            <details style="margin: 5px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+                <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                    📋 View SQL Plan
+                </summary>
+                <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                    <pre style="white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; font-size: 13px; line-height: 1.6; color: #2a2a2a;">{safe_sql_story}</pre>
+                </div>
+            </details>
             """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div class="new-sql-badge">
-                <span>⚡</span>
-                <span>New SQL Generated</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-    # Initialize checkbox states
-    show_plan = False
-    show_query = False
 
     with col2:
-        # SQL Plan checkbox
-        if sql_story and sql_story.strip():
-            plan_key = f"show_sql_plan_{hash(str(sql_query)[:100]) if sql_query else 'empty'}_{sub_index if sub_index is not None else 0}_{message_idx if message_idx is not None else 0}"
-            show_plan = st.checkbox("📋 SQL Plan", key=plan_key, value=False)
-
-    with col3:
-        # SQL Query checkbox
+        # SQL Query in collapsible section using HTML details/summary
         if sql_query:
-            query_key = f"show_sql_query_{hash(str(sql_query)[:100])}_{sub_index if sub_index is not None else 0}_{message_idx if message_idx is not None else 0}"
-            show_query = st.checkbox("🔍 SQL Query", key=query_key, value=False)
+            # Ensure sql_query is a string and clean it
+            if not isinstance(sql_query, str):
+                sql_query = str(sql_query)
 
-    # Render SQL Plan content if expanded
-    if show_plan and sql_story and sql_story.strip():
-        safe_sql_story = html.escape(sql_story)
-        st.markdown(f"""
-        <div style="background-color: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 6px; padding: 12px; margin: 5px 0;">
-            <pre style="white-space: pre-wrap; font-family: inherit; margin: 0; font-size: 13px; line-height: 1.5;">{safe_sql_story}</pre>
-        </div>
-        """, unsafe_allow_html=True)
+            # Remove any [object Object] artifacts that may have been injected
+            sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
 
-    # Render SQL Query content if expanded
-    if show_query and sql_query:
-        # Ensure sql_query is a string and clean it
-        if not isinstance(sql_query, str):
-            sql_query = str(sql_query)
+            # Escape HTML characters in SQL query to prevent rendering issues
+            escaped_sql = html.escape(sql_query)
 
-        # Remove any [object Object] artifacts that may have been injected
-        sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
-
-        # Escape HTML characters in SQL query to prevent rendering issues
-        escaped_sql = html.escape(sql_query)
-
-        st.markdown(f"""
-        <div style="padding: 12px; background-color: #f8f9fa; border-radius: 6px; margin: 5px 0;">
-            <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown(f"""
+            <details style="margin: 5px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
+                <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
+                    🔍 View SQL Query
+                </summary>
+                <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
+                    <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
+                </div>
+            </details>
+            """, unsafe_allow_html=True)
     
     # Data table - show directly without expander
     if data:
@@ -4541,7 +4497,7 @@ def render_chat_message_enhanced(message, message_idx):
                     print(f"    ✅ Added sql_generation_story to sql_result from message")
 
                 # Feedback is only shown if the message is NOT historical
-                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical, message_idx=message_idx, functional_names=functional_names, powerbi_data=powerbi_data, history_sql_used=history_sql_used)
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical, message_idx=message_idx, functional_names=functional_names, powerbi_data=powerbi_data)
             return
         
         # Handle strategic analysis messages

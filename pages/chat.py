@@ -431,8 +431,8 @@ async def run_streaming_workflow_async(workflow, user_query: str):
                         
                         # 🆕 DO NOT pass Power BI data here - it will be added by narrative agent
                         # Initial message has NO Power BI data (narrative agent will add it)
-                        # Pass functional_names, selected_dataset, and sql_story to sql_result for database tracking
-                        add_sql_result_message(sql_result, rewritten_question, functional_names, None, selected_dataset, sql_generation_story)
+                        # Pass functional_names, selected_dataset, sql_story, and history_sql_used to sql_result for database tracking
+                        add_sql_result_message(sql_result, rewritten_question, functional_names, None, selected_dataset, sql_generation_story, history_sql_used)
                         last_state = state
                         
                         st.session_state.sql_rendered = True
@@ -637,27 +637,6 @@ def log_event(level: str, message: str, **extra):
     user_email = get_authenticated_user()
     session_id = st.session_state.get('session_id', 'no_session')
     log_with_user_context(logger, level, message, user_email, session_id, **extra)
-
-
-# ============ COSMOS DB HELPER FUNCTIONS ============
-
-def is_cosmos_enabled() -> bool:
-    """Check if Cosmos DB integration is enabled"""
-    return os.getenv("COSMOS_DB_ENABLED", "false").lower() == "true"
-
-
-def load_session_snapshot_sync(user_id: str, session_date: str) -> Optional[Dict[str, Any]]:
-    """Synchronous wrapper to load session snapshot from Cosmos"""
-    if not is_cosmos_enabled():
-        return None
-    
-    try:
-        from core.cosmos_state_manager import get_cosmos_manager
-        manager = get_cosmos_manager()
-        return asyncio.run(manager.load_session_snapshot(user_id, session_date))
-    except Exception as e:
-        print(f"⚠️ Failed to load snapshot: {e}")
-        return None
 
 
 def get_available_datasets():
@@ -1222,7 +1201,7 @@ def render_feedback_section(title, sql_query, data, narrative, user_question=Non
         st.markdown("---")
         st.success("✅ Thank you for your feedback!")
 
-def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, functional_names=None, powerbi_data=None):
+def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, message_idx=None, functional_names=None, powerbi_data=None, history_sql_used=False):
     """Render SQL results with title, expandable SQL query, data table, and narrative"""
     
     print(f"📊 render_sql_results called with: type={type(sql_result)}, show_feedback={show_feedback}, powerbi_data={powerbi_data is not None}")
@@ -1255,17 +1234,42 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
     
     # Check if multiple results
     if sql_result.get('multiple_results', False):
-        # Display SQL Generation Story once at the top for multiple queries
-        if sql_generation_story and sql_generation_story.strip():
-            st.markdown(f"""
-            <div class="explanation-card">
-                <div class="explanation-title">
-                    <span>📖</span> How I solved this
+        # Display Trusted/New SQL badge and SQL Plan checkbox for multiple queries
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            # Trusted SQL / New SQL badge
+            if history_sql_used:
+                st.markdown("""
+                <div class="trusted-badge">
+                    <span class="trusted-badge-icon">✓</span>
+                    <span>Trusted SQL Pattern Used</span>
                 </div>
-                <div class="explanation-text">{sql_generation_story}</div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="new-sql-badge">
+                    <span>⚡</span>
+                    <span>New SQL Generated</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+        show_multi_plan = False
+        with col2:
+            # SQL Plan checkbox for multiple results
+            if sql_generation_story and sql_generation_story.strip():
+                multi_plan_key = f"show_sql_plan_multi_{hash(str(sql_generation_story)[:100])}_{st.session_state.get('message_counter', 0)}"
+                show_multi_plan = st.checkbox("📋 SQL Plan", key=multi_plan_key, value=False)
+
+        # Render SQL Plan content if expanded
+        if show_multi_plan and sql_generation_story and sql_generation_story.strip():
+            safe_sql_story = html.escape(sql_generation_story)
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 6px; padding: 12px; margin: 5px 0;">
+                <pre style="white-space: pre-wrap; font-family: inherit; margin: 0; font-size: 13px; line-height: 1.5;">{safe_sql_story}</pre>
             </div>
             """, unsafe_allow_html=True)
-        
+
         query_results = sql_result.get('query_results', [])
         for i, result in enumerate(query_results):
             title = result.get('title', f'Query {i+1}')
@@ -1273,11 +1277,11 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
             data = result.get('data', [])
             narrative = result.get('narrative', '')
             
-            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data AND chart_spec, but NO sql_story (already shown once)
+            # ⭐ Pass sub_index (i) AND is_historical AND functional_names AND table_name AND powerbi_data AND chart_spec AND history_sql_used, but NO sql_story (already shown once)
             render_single_sql_result(
                 title, sql_query, data, narrative,
                 user_question, show_feedback, message_idx,
-                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None, chart_spec=chart_spec
+                functional_names, sub_index=i, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=None, chart_spec=chart_spec, history_sql_used=history_sql_used
             )
     else:
         # Single result - use rewritten_question if available, otherwise default
@@ -1286,15 +1290,15 @@ def render_sql_results(sql_result, rewritten_question=None, show_feedback=True, 
         data = sql_result.get('query_results', [])
         narrative = sql_result.get('narrative', '')
         
-        # ⭐ No sub_index needed for single result, but pass is_historical, functional_names, table_name, powerbi_data, sql_story, and chart_spec
+        # ⭐ No sub_index needed for single result, but pass is_historical, functional_names, table_name, powerbi_data, sql_story, chart_spec, and history_sql_used
         render_single_sql_result(
             title, sql_query, data, narrative,
             user_question, show_feedback, message_idx,
-            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story, chart_spec=chart_spec
+            functional_names, sub_index=None, is_historical=is_historical, table_name=table_name, powerbi_data=powerbi_data, sql_story=sql_generation_story, chart_spec=chart_spec, history_sql_used=history_sql_used
         )
 
 
-def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None, chart_spec=None):
+def render_single_sql_result(title, sql_query, data, narrative, user_question=None, show_feedback=True, message_idx=None, functional_names=None, sub_index=None, is_historical=False, table_name=None, powerbi_data=None, sql_story=None, chart_spec=None, history_sql_used=False):
     """Render a single SQL result with warm gold background for title and narrative
 
     Args:
@@ -1303,73 +1307,70 @@ def render_single_sql_result(title, sql_query, data, narrative, user_question=No
         powerbi_data: Power BI report matching data from narrative agent
         sql_story: Business-friendly explanation of SQL generation (2-3 lines)
         chart_spec: LLM-generated chart specification for visualization
+        history_sql_used: Boolean indicating if trusted SQL pattern was used
     """
-    
-    # Title with custom narrative-content styling
-    st.markdown(f"""
-    <div class="narrative-content">
-        <strong>🔄 AI Interpreted as:</strong> {title}
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Display SQL Generation Story (NEW) - Optum styled explanation card
-    if sql_story and sql_story.strip():
-        st.markdown(f"""
-        <div class="explanation-card">
-            <div class="explanation-title">
-                <span>📖</span> How I solved this
+
+    # Create inline row with columns: [Trusted/New SQL badge] [SQL Plan checkbox] [SQL Query checkbox]
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        # Trusted SQL / New SQL badge
+        if history_sql_used:
+            st.markdown("""
+            <div class="trusted-badge">
+                <span class="trusted-badge-icon">✓</span>
+                <span>Trusted SQL Pattern Used</span>
             </div>
-            <div class="explanation-text">{sql_story}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Display functional_names ONLY for historical sessions (not current sessions)
-    # Current sessions already show this via selection_reasoning message
-    # Use the same styling as selection_reasoning message for consistency
-    # CRITICAL: Only show if is_historical=True to avoid duplicate display with selection_reasoning message
-    if functional_names and is_historical:
-        # Format functional_names for display
-        if isinstance(functional_names, list):
-            datasets_text = ", ".join(functional_names)
+            """, unsafe_allow_html=True)
         else:
-            datasets_text = str(functional_names)
-        
-        # Use same styling as selection_reasoning message (sky blue box)
-        st.markdown(f"""
-        <div style="background-color: #FAF8F2; border: 1px solid #F9A667; border-radius: 8px; padding: 12px; margin: 10px 0;">
-            <div style="display: flex; align-items: center;">
-                <span style="font-size: 1rem; margin-right: 8px;">📊</span>
-                <strong style="color: #D74120; font-size: 0.95rem;">Selected Datasets: {datasets_text}</strong>
+            st.markdown("""
+            <div class="new-sql-badge">
+                <span>⚡</span>
+                <span>New SQL Generated</span>
             </div>
+            """, unsafe_allow_html=True)
+
+    # Initialize checkbox states
+    show_plan = False
+    show_query = False
+
+    with col2:
+        # SQL Plan checkbox
+        if sql_story and sql_story.strip():
+            plan_key = f"show_sql_plan_{hash(str(sql_query)[:100]) if sql_query else 'empty'}_{sub_index if sub_index is not None else 0}_{message_idx if message_idx is not None else 0}"
+            show_plan = st.checkbox("📋 SQL Plan", key=plan_key, value=False)
+
+    with col3:
+        # SQL Query checkbox
+        if sql_query:
+            query_key = f"show_sql_query_{hash(str(sql_query)[:100])}_{sub_index if sub_index is not None else 0}_{message_idx if message_idx is not None else 0}"
+            show_query = st.checkbox("🔍 SQL Query", key=query_key, value=False)
+
+    # Render SQL Plan content if expanded
+    if show_plan and sql_story and sql_story.strip():
+        safe_sql_story = html.escape(sql_story)
+        st.markdown(f"""
+        <div style="background-color: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 6px; padding: 12px; margin: 5px 0;">
+            <pre style="white-space: pre-wrap; font-family: inherit; margin: 0; font-size: 13px; line-height: 1.5;">{safe_sql_story}</pre>
         </div>
         """, unsafe_allow_html=True)
-    elif functional_names and not is_historical:
-        print(f"⏭️ SKIPPING functional_names display in SQL result (current session - already shown in selection_reasoning message)")
-    elif not functional_names:
-        print(f"⏭️ No functional_names to display")
-    
-    # SQL Query in collapsible section using HTML details/summary
-    if sql_query:
+
+    # Render SQL Query content if expanded
+    if show_query and sql_query:
         # Ensure sql_query is a string and clean it
         if not isinstance(sql_query, str):
             sql_query = str(sql_query)
-        
+
         # Remove any [object Object] artifacts that may have been injected
         sql_query = sql_query.replace('[object Object]', '').replace(',[object Object],', '')
-        
+
         # Escape HTML characters in SQL query to prevent rendering issues
         escaped_sql = html.escape(sql_query)
-        
-        # Use HTML details/summary for SQL query expander
+
         st.markdown(f"""
-        <details style="margin: 10px 0; border: 1px solid #e1e5e9; border-radius: 6px; padding: 0;">
-            <summary style="background-color: #f8f9fa; padding: 8px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; color: #495057;">
-                🔍 View SQL Query (Click to expand)
-            </summary>
-            <div style="padding: 12px; background-color: #f8f9fa; border-radius: 0 0 6px 6px;">
-                <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
-            </div>
-        </details>
+        <div style="padding: 12px; background-color: #f8f9fa; border-radius: 6px; margin: 5px 0;">
+            <pre style="background-color: #2d3748; color: #e2e8f0; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; margin: 0; white-space: pre-wrap; word-wrap: break-word;"><code>{escaped_sql}</code></pre>
+        </div>
         """, unsafe_allow_html=True)
     
     # Data table - show directly without expander
@@ -2026,11 +2027,11 @@ def add_selection_reasoning_message(functional_names, history_sql_used=False):
     
     st.session_state.messages.append(message)
 
-def add_sql_result_message(sql_result, rewritten_question=None, functional_names=None, powerbi_data=None, selected_dataset=None, sql_generation_story=None):
+def add_sql_result_message(sql_result, rewritten_question=None, functional_names=None, powerbi_data=None, selected_dataset=None, sql_generation_story=None, history_sql_used=False):
     """
     Add SQL result message to chat history for proper rendering
-    Adds functional_names, powerbi_data, selected_dataset, and sql_generation_story for session tracking and display
-    
+    Adds functional_names, powerbi_data, selected_dataset, sql_generation_story, and history_sql_used for session tracking and display
+
     Args:
         sql_result: SQL result dictionary
         rewritten_question: Rewritten question string
@@ -2038,6 +2039,7 @@ def add_sql_result_message(sql_result, rewritten_question=None, functional_names
         powerbi_data: Power BI report matching data
         selected_dataset: Technical table names (e.g., ["pbm_claims", "pbm_network"])
         sql_generation_story: Business-friendly explanation of SQL generation (2-3 lines)
+        history_sql_used: Boolean indicating if trusted SQL pattern was used
     """
     # Add functional_names to sql_result dict if not already present
     if functional_names and 'functional_names' not in sql_result:
@@ -2065,7 +2067,8 @@ def add_sql_result_message(sql_result, rewritten_question=None, functional_names
         "functional_names": functional_names,  # Store functional_names for historical rendering
         "powerbi_data": powerbi_data,  # Store Power BI data for rendering
         "selected_dataset": selected_dataset,  # Store technical table names for feedback tracking
-        "sql_generation_story": sql_generation_story  # Store SQL generation story for UI display
+        "sql_generation_story": sql_generation_story,  # Store SQL generation story for UI display
+        "history_sql_used": history_sql_used  # Store trusted SQL pattern indicator
     }
     
     st.session_state.messages.append(message)
@@ -4518,8 +4521,9 @@ def render_chat_message_enhanced(message, message_idx):
             functional_names = message.get('functional_names')  # Get functional_names from message
             powerbi_data = message.get('powerbi_data')  # Get Power BI data from message
             sql_generation_story = message.get('sql_generation_story')  # Get SQL story from message
+            history_sql_used = message.get('history_sql_used', False)  # Get trusted SQL pattern indicator
             if sql_result:
-                print(f"🔍 Rendering SQL result: type={type(sql_result)}, has_powerbi={powerbi_data is not None}, has_story={bool(sql_generation_story)}")
+                print(f"🔍 Rendering SQL result: type={type(sql_result)}, has_powerbi={powerbi_data is not None}, has_story={bool(sql_generation_story)}, history_sql_used={history_sql_used}")
                 if isinstance(sql_result, str):
                     print(f"    ⚠️ SQL result is string, not dict: {sql_result[:100]}...")
                     # Try to parse as JSON if it's a string
@@ -4530,14 +4534,14 @@ def render_chat_message_enhanced(message, message_idx):
                         print(f"    ❌ Failed to parse SQL result string as JSON: {e}")
                         st.error("Error: Could not parse SQL result data")
                         return
-                
+
                 # Ensure sql_generation_story is in sql_result (for historical messages)
                 if sql_generation_story and 'sql_generation_story' not in sql_result:
                     sql_result['sql_generation_story'] = sql_generation_story
                     print(f"    ✅ Added sql_generation_story to sql_result from message")
-                
+
                 # Feedback is only shown if the message is NOT historical
-                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical, message_idx=message_idx, functional_names=functional_names, powerbi_data=powerbi_data)
+                render_sql_results(sql_result, rewritten_question, show_feedback=not is_historical, message_idx=message_idx, functional_names=functional_names, powerbi_data=powerbi_data, history_sql_used=history_sql_used)
             return
         
         # Handle strategic analysis messages

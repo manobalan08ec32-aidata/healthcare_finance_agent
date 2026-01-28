@@ -1,27 +1,3 @@
-📊 Validation response: <validation>
-<classification>TOPIC_DRIFT</classification>
-<reasoning>The user's response "compare nov vs dec" doesn't address the clarification question about which period to compare July 2025 against, and introduces completely different months not mentioned in the original question or options provided.</reasoning>
-</validation>
-2026-01-28 12:15:37 | INFO    | [user=Unknown User, session=7b09f675...] [Router] LLM response received from follow-up validation
-✅ Validation complete: TOPIC_DRIFT
-
-✅ Validation Result:
-   Classification: TOPIC_DRIFT
-   Reasoning: The user's response "compare nov vs dec" doesn't address the clarification question about which period to compare July 2025 against, and introduces completely different months not mentioned in the original question or options provided.
-
-I need one clarification to calculate rate and volume variance:
-
-Selected Dataset: prd_optumrx_orxfdmprdsa.rag.ledger_actual_vs_forecast
-
-Rate variance and volume variance require comparing two time periods (current vs prior). You've specified July 2025 as the current period, but what should I use as the comparison period?
-
-Options:
-1. June 2025 - Compare July 2025 vs June 2025 (month-over-month)
-2. July 2024 - Compare July 2025 vs July 2024 (year-over-year)
-3. Other specific month - Please specify which month to compare against
-
-Which comparison period did you mean?
-
 SQL_FOLLOWUP_VALIDATION_PROMPT = """TASK: Classify the user's follow-up response to determine the next action.
 
 CONTEXT:
@@ -34,24 +10,26 @@ CLARIFICATION EXCHANGE:
 
 CLASSIFICATION RULES:
 
-1. **VALID_ANSWER**: User provides a valid response to the clarification question
-   - Affirmative: "yes", "ok", "looks good", "proceed", "that's correct", "go ahead", "sure", "approved", "confirm"
-   - Option selection: "option 1", "carrier_id", "revenue", "first one" (responses that pick from YOUR PREVIOUS QUESTION options)
-   - Grouping preference: "show separately", "individually", "break it down", "by each" when referring to values in the plan
-   - Provides specific values, filters, or criteria that answer the question
-   - Key: Response directly addresses the clarification question
+1. **VALID_ANSWER**: Response helps proceed with SQL generation
+   - Affirmative: "yes", "ok", "proceed", "looks good", "approved", "confirm"
+   - Selects from offered options OR provides alternative values of the SAME TYPE from the follow up question
+     (e.g., asked about July comparison, user says "nov vs dec" → still answering about months)
+   - Grouping preference: "show separately", "break it down", "by each"
+   Key: Response is RELEVANT to clarification topic, even if values differ from options
 
 2. **NEW_QUESTION**: User asks a completely different question instead of answering
-   - Ignores the clarification and asks something unrelated to it
-   - Examples: Asking about different metrics, different time periods not offered, different analysis entirely
-   - Key indicator: Question mark, new analytical intent
+   - Ignores the clarification and asks about a DIFFERENT TOPIC entirely
+   - Examples: Clarification was about time period, user asks about a different metric or different analysis
+   - Key indicator: Question mark with new analytical intent on UNRELATED topic
 
 3. **TOPIC_DRIFT**: User's response is off-topic or nonsensical
-   - Response doesn't relate to clarification or business context
-   - Examples: Random text, non-business content, completely unrelated response
+   - Response doesn't relate to business context at all
+   - Examples: Random text, non-business content, greetings without answer, completely unrelated response
+   - Key: NO connection to the clarification topic or business analysis
+
+IMPORTANT: If user provides alternative values for the SAME TYPE of question (e.g., different months when asked about months), classify as VALID_ANSWER, not TOPIC_DRIFT.
 
 OUTPUT FORMAT (return ONLY this XML, no other text):
-
 <validation>
 <classification>[VALID_ANSWER|NEW_QUESTION|TOPIC_DRIFT]</classification>
 <reasoning>[1 sentence explaining classification]</reasoning>
